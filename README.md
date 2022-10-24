@@ -4,7 +4,7 @@ A collection of utility functions to work with PyTorch sparse tensors
 ## Installation
 The provided package can be installed using:
 
-`pip install torchsparseutils` (TODO)
+`pip install torchsparsegradutils` (TODO)
 
 or
 

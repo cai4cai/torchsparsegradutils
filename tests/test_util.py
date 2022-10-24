@@ -2,7 +2,7 @@ import unittest
 
 # import torch
 
-import torchsparseutils
+import torchsparsegradutils
 
 # # set deterministic seed
 # torch.manual_seed(15)
@@ -10,7 +10,7 @@ import torchsparseutils
 
 class TestDummyInterface(unittest.TestCase):
     def test_dummy_shape(self):
-        torchsparseutils.dummy_interface()
+        torchsparsegradutils.dummy_interface()
 
 if __name__ == "__main__":
     unittest.main()
