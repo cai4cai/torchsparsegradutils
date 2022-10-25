@@ -1,5 +1,8 @@
 import torch
 
+def sparse_matmul(A, B):
+    return SparseMatMul.apply(A, B)
+
 class SparseMatMul(torch.autograd.Function):
     """
     Matrix multuplication between sparse matrix (A) 

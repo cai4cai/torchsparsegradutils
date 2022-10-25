@@ -1,5 +1,9 @@
 import torch
 
+def sparse_triangular_solve(A, B, upper=True):
+    return SparseTriangularSolve.apply(A, B, upper)
+    
+
 class SparseTriangularSolve(torch.autograd.Function):
     """
     Solves a system of equations with a square upper or lower triangular 
@@ -12,13 +16,13 @@ class SparseTriangularSolve(torch.autograd.Function):
     But, COO will internally be converted to CSR before solving.
     """
     @staticmethod
-    def forward(ctx, A, B, upper=True):
+    def forward(ctx, A, B, upper):
         ctx.csr = True
         ctx.upper = upper
         if A.layout == torch.sparse_coo:  
             A = A.to_sparse_csr() # triangular solve doesn't work with sparse coo
             ctx.csr = False      
-        x = torch.triangular_solve(B.detach(), A.detach())[0]
+        x = torch.triangular_solve(B.detach(), A.detach(), upper=upper)[0]
         x.requires_grad = True
         ctx.save_for_backward(A, x.detach())
         return x
@@ -44,4 +48,4 @@ class SparseTriangularSolve(torch.autograd.Function):
         else:
             gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
 
-        return gradA, gradB
+        return gradA, gradB, None
