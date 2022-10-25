@@ -1,6 +1,6 @@
 import torch
 import unittest
-from torchsparseutils.sparse_matmul import sparse_matmul
+from torchsparseutils.sparse_matmul import sparse_mm
 
 class SparseMatMulTest(unittest.TestCase):
     """Test Sparse COO x Dense matrix multiplication with back propagation"""
@@ -9,7 +9,7 @@ class SparseMatMulTest(unittest.TestCase):
         self.As_coo = self.Ad.to_sparse_coo()
         self.As_csr = self.Ad.to_sparse_csr()
         self.Bd = torch.randn(16, 4, dtype=torch.float64, requires_grad=True, device='cuda')
-        self.matmul = sparse_matmul
+        self.matmul = sparse_mm
         
     def test_matmul_forward_coo(self):
         x = self.matmul(self.As_coo, self.Bd)

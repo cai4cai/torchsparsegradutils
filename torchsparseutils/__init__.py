@@ -1,3 +1,4 @@
+from sparse_matmul import sparse_mm
+from sparse_solve import sparse_triangular_solve
 
-def dummy_interface():
-    print("called dummy_interface() function")
+__all__ ['sparse_mm', 'sparse_triangular_solve']

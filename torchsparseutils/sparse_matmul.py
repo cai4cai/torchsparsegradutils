@@ -1,6 +1,6 @@
 import torch
 
-def sparse_matmul(A, B):
+def sparse_mm(A, B):
     return SparseMatMul.apply(A, B)
 
 class SparseMatMul(torch.autograd.Function):
