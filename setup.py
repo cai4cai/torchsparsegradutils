@@ -4,7 +4,7 @@ def readme():
     with open('README.md') as f:
         return f.read()
 
-setuptools.setup(name='torchsparseutils',
+setuptools.setup(name='torchsparsegradutils',
       version='0.0.1',
       description='A collection of utility functions to work with PyTorch sparse tensors',
       long_description=readme(),
@@ -15,11 +15,11 @@ setuptools.setup(name='torchsparseutils',
         'Programming Language :: Python :: 3',
       ],
       keywords='sparse torch utility',
-      url='https://github.com/cai4cai/sparsitypreservingtorchutils',
-      author='TODO',
-      author_email='TODO',
+      url='https://github.com/cai4cai/torchsparsegradutils',
+      author='CAI4CAI research group',
+      author_email='contact@cai4cai.uk',
       license='Apache-2.0',
-      packages=['torchsparseutils'],
+      packages=['torchsparsegradutils'],
       install_requires=[
           'torch',
       ],
