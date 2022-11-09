@@ -1,14 +1,32 @@
 import torch
 import unittest
-from torchsparseutils.sparse_matmul import sparse_mm
+from random import randrange
+from torchsparsegradutils import sparse_mm
+
+
+def gencoordinates(nr, nc, ni, device='cuda'):
+    """Used to genererate ni random unique coordinates for sparse matrix with size [nr, nc]"""
+    coordinates = set()
+    while True:
+        r, c = randrange(nr), randrange(nc)
+        coordinates.add((r, c))
+        if len(coordinates) == ni:
+            return torch.stack([torch.tensor(co) for co in coordinates], dim=-1).to(device)
+
 
 class SparseMatMulTest(unittest.TestCase):
-    """Test Sparse COO x Dense matrix multiplication with back propagation"""
+    """Test Sparse x Dense matrix multiplication with back propagation for COO and CSR matrices"""
     def setUp(self) -> None:
-        self.Ad = torch.randn(16, 16, dtype=torch.float64, device='cuda', requires_grad=True)
-        self.As_coo = self.Ad.to_sparse_coo()
-        self.As_csr = self.Ad.to_sparse_csr()
-        self.Bd = torch.randn(16, 4, dtype=torch.float64, requires_grad=True, device='cuda')
+        self.A_shape = (8, 16)
+        self.B_shape = (self.A_shape[1], 10)
+        self.A_nnz = 32   
+        self.A_idx = gencoordinates(*self.A_shape, self.A_nnz, device='cuda')
+        self.A_val = torch.randn(self.A_nnz, dtype=torch.float64, device='cuda')
+        self.As_coo = torch.sparse_coo_tensor(self.A_idx, self.A_val, self.A_shape, requires_grad=True).coalesce()
+        self.As_csr = self.As_coo.to_sparse_csr()
+        self.Ad = self.As_coo.to_dense()
+        
+        self.Bd = torch.randn(*self.B_shape, dtype=torch.float64, requires_grad=True, device='cuda')
         self.matmul = sparse_mm
         
     def test_matmul_forward_coo(self):
@@ -43,7 +61,8 @@ class SparseMatMulTest(unittest.TestCase):
         loss_torch = x_torch.sum()
         loss_torch.backward()
         
-        self.assertTrue(torch.isclose(As1.grad.to_dense(), Ad2.grad).all())
+        nz_mask = As1.grad.to_dense() != 0.0
+        self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask]).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad).all())
                 
     def test_matmul_gradient_csr(self):
@@ -68,8 +87,8 @@ class SparseMatMulTest(unittest.TestCase):
         x_torch = Ad2 @ Bd2
         loss_torch = x_torch.sum()
         loss_torch.backward()
-        
-        self.assertTrue(torch.isclose(As1.grad.to_dense(), Ad2.grad).all())
+        nz_mask = As1.grad.to_dense() != 0.0
+        self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask]).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad).all())
         
 if __name__ == "__main__":
