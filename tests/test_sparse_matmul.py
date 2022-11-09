@@ -17,10 +17,9 @@ def gencoordinates(nr, nc, ni, device='cuda'):
 class SparseMatMulTest(unittest.TestCase):
     """Test Sparse x Dense matrix multiplication with back propagation for COO and CSR matrices"""
     def setUp(self) -> None:
-        self.device = torch.device('cpu')
-        if torch.cuda.is_available():
-            self.device = torch.device('cuda')
-        #print(f"Running test with device={self.device}")
+        # The device can be specialised by a daughter class
+        if not hasattr(self, 'device'):
+            self.device = torch.device('cpu')
         self.A_shape = (8, 16)
         self.B_shape = (self.A_shape[1], 10)
         self.A_nnz = 32   
@@ -94,6 +93,14 @@ class SparseMatMulTest(unittest.TestCase):
         nz_mask = As1.grad.to_dense() != 0.0
         self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask]).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad).all())
+
+class SparseMatMulTestCUDA(SparseMatMulTest):
+    """Override superclass setUp to run on CPU"""
+    def setUp(self) -> None:
+        if not torch.cuda.is_available():
+            self.skipTest('Skipping SparseMatMulTestCUDA since CUDA is not available')
+        self.device = torch.device('cuda')
+        super().setUp()
         
 if __name__ == "__main__":
     unittest.main()

@@ -23,10 +23,9 @@ def gencoordinates_square_diag(n, device='cuda'):
 class SparseLinearSolveTest(unittest.TestCase):
     """Test Triangular Linear Sparse Solver for COO and CSR formatted sparse matrices"""
     def setUp(self) -> None:
-        self.device = torch.device('cpu')
-        if torch.cuda.is_available():
-            self.device = torch.device('cuda')
-        #print(f"Running test with device={self.device}")
+        # The device can be specialised by a daughter class
+        if not hasattr(self, 'device'):
+            self.device = torch.device('cpu')
         self.RTOL = 1e-3
         self.A_shape = (16, 16)  # square matrix
         self.B_shape = (self.A_shape[1], 10)
@@ -175,6 +174,13 @@ class SparseLinearSolveTest(unittest.TestCase):
         self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad, rtol=self.RTOL).all())
 
+class SparseLinearSolveTestCUDA(SparseLinearSolveTest):
+    """Override superclass setUp to run on CPU"""
+    def setUp(self) -> None:
+        if not torch.cuda.is_available():
+            self.skipTest('Skipping SparseMatMulTestCUDA since CUDA is not available')
+        self.device = torch.device('cuda')
+        super().setUp()
     
 if __name__ == "__main__":
     unittest.main()
