@@ -17,16 +17,20 @@ def gencoordinates(nr, nc, ni, device='cuda'):
 class SparseMatMulTest(unittest.TestCase):
     """Test Sparse x Dense matrix multiplication with back propagation for COO and CSR matrices"""
     def setUp(self) -> None:
+        self.device = torch.device('cpu')
+        if torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        #print(f"Running test with device={self.device}")
         self.A_shape = (8, 16)
         self.B_shape = (self.A_shape[1], 10)
         self.A_nnz = 32   
-        self.A_idx = gencoordinates(*self.A_shape, self.A_nnz, device='cuda')
-        self.A_val = torch.randn(self.A_nnz, dtype=torch.float64, device='cuda')
+        self.A_idx = gencoordinates(*self.A_shape, self.A_nnz, device=self.device)
+        self.A_val = torch.randn(self.A_nnz, dtype=torch.float64, device=self.device)
         self.As_coo = torch.sparse_coo_tensor(self.A_idx, self.A_val, self.A_shape, requires_grad=True).coalesce()
         self.As_csr = self.As_coo.to_sparse_csr()
         self.Ad = self.As_coo.to_dense()
         
-        self.Bd = torch.randn(*self.B_shape, dtype=torch.float64, requires_grad=True, device='cuda')
+        self.Bd = torch.randn(*self.B_shape, dtype=torch.float64, requires_grad=True, device=self.device)
         self.matmul = sparse_mm
         
     def test_matmul_forward_coo(self):

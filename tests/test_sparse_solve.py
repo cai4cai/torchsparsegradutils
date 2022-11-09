@@ -23,14 +23,18 @@ def gencoordinates_square_diag(n, device='cuda'):
 class SparseLinearSolveTest(unittest.TestCase):
     """Test Triangular Linear Sparse Solver for COO and CSR formatted sparse matrices"""
     def setUp(self) -> None:
+        self.device = torch.device('cpu')
+        if torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        #print(f"Running test with device={self.device}")
         self.RTOL = 1e-3
         self.A_shape = (16, 16)  # square matrix
         self.B_shape = (self.A_shape[1], 10)
         self.A_nnz = 32  # excluding diagonal of A which will be + A_size nnz
-        self.A_idx = torch.cat([gencoordinates_square_diag(self.A_shape[0]),
-                                gencoordinates_square_tri(self.A_shape[0], self.A_nnz)], dim=1)
-        self.A_val = torch.cat([torch.rand(self.A_shape[0], dtype=torch.float64, device='cuda'),  # [0, 1) to avoid 0 on diag
-                                torch.randn(self.A_nnz, dtype=torch.float64, device='cuda')])
+        self.A_idx = torch.cat([gencoordinates_square_diag(self.A_shape[0], self.device),
+                                gencoordinates_square_tri(self.A_shape[0], self.A_nnz, device=self.device)], dim=1)
+        self.A_val = torch.cat([torch.rand(self.A_shape[0], dtype=torch.float64, device=self.device),  # [0, 1) to avoid 0 on diag
+                                torch.randn(self.A_nnz, dtype=torch.float64, device=self.device)])
         
         self.As_coo_triu = torch.sparse_coo_tensor(self.A_idx, self.A_val, self.A_shape, requires_grad=True).coalesce()
         self.As_coo_tril = self.As_coo_triu.t()
@@ -40,7 +44,7 @@ class SparseLinearSolveTest(unittest.TestCase):
         self.Ad_triu = self.As_coo_triu.to_dense()
         self.Ad_tril = self.As_coo_tril.to_dense()
         
-        self.Bd = torch.randn(16, 4, dtype=torch.float64, device='cuda')
+        self.Bd = torch.randn(16, 4, dtype=torch.float64, device=self.device)
         self.solve = sparse_triangular_solve
         
     def test_solver_result_coo_triu(self):
