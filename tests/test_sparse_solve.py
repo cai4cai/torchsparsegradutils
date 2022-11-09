@@ -1,19 +1,44 @@
 import torch
 import unittest
-from torchsparseutils.sparse_solve import sparse_triangular_solve
+from random import randrange
+from torchsparsegradutils import sparse_triangular_solve
+
+def gencoordinates_square_tri(n, ni, upper=True, device='cuda'):
+    """Used to genererate ni random unique off-diagonal coordinates 
+    for upper or lower triangular sparse matrix with size [n, n] """
+    coordinates = set()
+    while True:
+        r, c = randrange(n), randrange(n)
+        if (r < c and upper) or (r > c and not upper):
+            coordinates.add((r, c))
+        if len(coordinates) == ni:
+            return torch.stack([torch.tensor(co) for co in coordinates], dim=-1).to(device)
+        
+def gencoordinates_square_diag(n, device='cuda'):
+    """Generate diagonal indices for square matrix with size [n, n]"""
+    d_idx = torch.arange(n, device=device)
+    d_idx = torch.stack([d_idx, d_idx], dim=0).to(device)
+    return d_idx
 
 class SparseLinearSolveTest(unittest.TestCase):
-    """Test Triangular Linear Sparse Solving for COO formatted sparse matrices"""
+    """Test Triangular Linear Sparse Solver for COO and CSR formatted sparse matrices"""
     def setUp(self) -> None:
         self.RTOL = 1e-3
-        self.Ad = torch.randn(16, 16, dtype=torch.float64, device='cuda')   # upper triangular matrix
-        self.Ad[self.Ad == 0] = 1e-5  # avoid 0 values on the diagonal
-        self.Ad_triu = self.Ad.triu()
-        self.Ad_tril = self.Ad.tril()
-        self.As_coo_triu = self.Ad_triu.to_sparse_coo()
-        self.As_csr_triu = self.Ad_triu.to_sparse_csr()
-        self.As_coo_tril = self.Ad_tril.to_sparse_coo()
-        self.As_csr_tril = self.Ad_tril.to_sparse_csr()
+        self.A_shape = (16, 16)  # square matrix
+        self.B_shape = (self.A_shape[1], 10)
+        self.A_nnz = 32  # excluding diagonal of A which will be + A_size nnz
+        self.A_idx = torch.cat([gencoordinates_square_diag(self.A_shape[0]),
+                                gencoordinates_square_tri(self.A_shape[0], self.A_nnz)], dim=1)
+        self.A_val = torch.cat([torch.rand(self.A_shape[0], dtype=torch.float64, device='cuda'),  # [0, 1) to avoid 0 on diag
+                                torch.randn(self.A_nnz, dtype=torch.float64, device='cuda')])
+        
+        self.As_coo_triu = torch.sparse_coo_tensor(self.A_idx, self.A_val, self.A_shape, requires_grad=True).coalesce()
+        self.As_coo_tril = self.As_coo_triu.t()
+        self.As_csr_triu = self.As_coo_triu.to_sparse_csr()
+        self.As_csr_tril = self.As_coo_tril.to_sparse_csr()
+        
+        self.Ad_triu = self.As_coo_triu.to_dense()
+        self.Ad_tril = self.As_coo_tril.to_dense()
         
         self.Bd = torch.randn(16, 4, dtype=torch.float64, device='cuda')
         self.solve = sparse_triangular_solve
@@ -61,7 +86,8 @@ class SparseLinearSolveTest(unittest.TestCase):
         loss_torch = x2.sum()
         loss_torch.backward()
         
-        self.assertTrue(torch.isclose(As1.grad.to_dense(), Ad2.grad, rtol=self.RTOL).all())
+        nz_mask = As1.grad.to_dense() != 0.0
+        self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad, rtol=self.RTOL).all())
         
     def test_solver_gradient_coo_tril(self):
@@ -87,7 +113,8 @@ class SparseLinearSolveTest(unittest.TestCase):
         loss_torch = x2.sum()
         loss_torch.backward()
         
-        self.assertTrue(torch.isclose(As1.grad.to_dense(), Ad2.grad, rtol=self.RTOL).all())
+        nz_mask = As1.grad.to_dense() != 0.0
+        self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad, rtol=self.RTOL).all())
                 
     def test_solver_gradient_csr_triu(self):
@@ -113,7 +140,8 @@ class SparseLinearSolveTest(unittest.TestCase):
         loss_torch = x2.sum()
         loss_torch.backward()
         
-        self.assertTrue(torch.isclose(As1.grad.to_dense(), Ad2.grad, rtol=self.RTOL).all())
+        nz_mask = As1.grad.to_dense() != 0.0
+        self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad, rtol=self.RTOL).all())
         
     def test_solver_gradient_csr_tril(self):
@@ -139,17 +167,10 @@ class SparseLinearSolveTest(unittest.TestCase):
         loss_torch = x2.sum()
         loss_torch.backward()
         
-        self.assertTrue(torch.isclose(As1.grad.to_dense(), Ad2.grad, rtol=self.RTOL).all())
+        nz_mask = As1.grad.to_dense() != 0.0
+        self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad, rtol=self.RTOL).all())
-        
 
-    def test_solver_gradcheck_coo(self):
-        # gradcheck(self.solve, (self.As, self.B), check_sparse_nnz=True) 
-        pass  # getting jacobian mismatch....
-    
-    def test_solver_gradcheck_csr(self):
-        # gradcheck(self.solve, (self.As, self.B), check_sparse_nnz=True) 
-        pass  # getting jacobian mismatch....
     
 if __name__ == "__main__":
     unittest.main()
