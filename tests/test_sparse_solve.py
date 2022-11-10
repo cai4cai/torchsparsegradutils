@@ -226,8 +226,8 @@ class SparseUnitTriangularSolveTest(SparseTriangularSolveTest):
         self.A_shape = (16, 16)  # square matrix
         self.B_shape = (self.A_shape[1], 10)
         self.A_nnz = 32
-        self.A_idx = gencoordinates_square_tri(self.A_shape[0], self.A_nnz)
-        self.A_val = torch.randn(self.A_nnz, dtype=torch.float64, device="cuda")
+        self.A_idx = gencoordinates_square_tri(self.A_shape[0], self.A_nnz, device=self.device)
+        self.A_val = torch.randn(self.A_nnz, dtype=torch.float64, device=self.device)
 
         self.As_coo_triu = torch.sparse_coo_tensor(self.A_idx, self.A_val, self.A_shape, requires_grad=True).coalesce()
         self.As_coo_tril = self.As_coo_triu.t()
@@ -237,12 +237,12 @@ class SparseUnitTriangularSolveTest(SparseTriangularSolveTest):
         self.Ad_triu = self.As_coo_triu.to_dense()
         self.Ad_tril = self.As_coo_tril.to_dense()
 
-        self.Bd = torch.randn(16, 4, dtype=torch.float64, device="cuda")
+        self.Bd = torch.randn(16, 4, dtype=torch.float64, device=self.device)
         self.solve = sparse_triangular_solve
 
 
 class SparseUnitTriangularSolveTestCUDA(SparseUnitTriangularSolveTest):
-    """Override superclass setUp to run on CPU"""
+    """Override superclass setUp to run on GPU"""
 
     def setUp(self) -> None:
         if not torch.cuda.is_available():
