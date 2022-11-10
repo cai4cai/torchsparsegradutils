@@ -96,11 +96,11 @@ class SparseMatMulTest(unittest.TestCase):
 
 
 class SparseMatMulTestCUDA(SparseMatMulTest):
-    """Override superclass setUp to run on CPU"""
+    """Override superclass setUp to run on GPU"""
 
     def setUp(self) -> None:
         if not torch.cuda.is_available():
-            self.skipTest("Skipping SparseMatMulTestCUDA since CUDA is not available")
+            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
         self.device = torch.device("cuda")
         super().setUp()
 

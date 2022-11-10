@@ -23,7 +23,7 @@ def gencoordinates_square_diag(n, device="cuda"):
     return d_idx
 
 
-class SparseLinearSolveTest(unittest.TestCase):
+class SparseTriangularSolveTest(unittest.TestCase):
     """Test Triangular Linear Sparse Solver for COO and CSR formatted sparse matrices"""
 
     def setUp(self) -> None:
@@ -31,6 +31,7 @@ class SparseLinearSolveTest(unittest.TestCase):
         if not hasattr(self, "device"):
             self.device = torch.device("cpu")
         self.RTOL = 1e-3
+        self.unitriangular = False
         self.A_shape = (16, 16)  # square matrix
         self.B_shape = (self.A_shape[1], 10)
         self.A_nnz = 32  # excluding diagonal of A which will be + A_size nnz
@@ -61,22 +62,22 @@ class SparseLinearSolveTest(unittest.TestCase):
 
     def test_solver_result_coo_triu(self):
         x = self.solve(self.As_coo_triu, self.Bd, upper=True)
-        x2 = torch.linalg.solve_triangular(self.Ad_triu, self.Bd, upper=True)
+        x2 = torch.linalg.solve_triangular(self.Ad_triu, self.Bd, upper=True, unitriangular=self.unitriangular)
         self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
     def test_solver_result_coo_tril(self):
         x = self.solve(self.As_coo_tril, self.Bd, upper=False)
-        x2 = torch.linalg.solve_triangular(self.Ad_tril, self.Bd, upper=False)
+        x2 = torch.linalg.solve_triangular(self.Ad_tril, self.Bd, upper=False, unitriangular=self.unitriangular)
         self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
     def test_solver_result_csr_triu(self):
         x = self.solve(self.As_csr_triu, self.Bd, upper=True)
-        x2 = torch.linalg.solve_triangular(self.Ad_triu, self.Bd, upper=True)
+        x2 = torch.linalg.solve_triangular(self.Ad_triu, self.Bd, upper=True, unitriangular=self.unitriangular)
         self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
     def test_solver_result_csr_tril(self):
         x = self.solve(self.As_csr_tril, self.Bd, upper=False)
-        x2 = torch.linalg.solve_triangular(self.Ad_tril, self.Bd, upper=False)
+        x2 = torch.linalg.solve_triangular(self.Ad_tril, self.Bd, upper=False, unitriangular=self.unitriangular)
         self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
     def test_solver_gradient_coo_triu(self):
@@ -87,7 +88,7 @@ class SparseLinearSolveTest(unittest.TestCase):
         Bd1.requires_grad = True
         As1.retain_grad()
         Bd1.retain_grad()
-        x = self.solve(As1, Bd1, upper=True)
+        x = self.solve(As1, Bd1, upper=True, unitriangular=self.unitriangular)
         loss = x.sum()
         loss.backward()
 
@@ -98,7 +99,7 @@ class SparseLinearSolveTest(unittest.TestCase):
         Bd2.requires_grad = True
         Ad2.retain_grad()
         Bd2.retain_grad()
-        x2 = torch.linalg.solve_triangular(Ad2, Bd2, upper=True)
+        x2 = torch.linalg.solve_triangular(Ad2, Bd2, upper=True, unitriangular=self.unitriangular)
         loss_torch = x2.sum()
         loss_torch.backward()
 
@@ -114,7 +115,7 @@ class SparseLinearSolveTest(unittest.TestCase):
         Bd1.requires_grad = True
         As1.retain_grad()
         Bd1.retain_grad()
-        x = self.solve(As1, Bd1, upper=False)
+        x = self.solve(As1, Bd1, upper=False, unitriangular=self.unitriangular)
         loss = x.sum()
         loss.backward()
 
@@ -125,7 +126,7 @@ class SparseLinearSolveTest(unittest.TestCase):
         Bd2.requires_grad = True
         Ad2.retain_grad()
         Bd2.retain_grad()
-        x2 = torch.linalg.solve_triangular(Ad2, Bd2, upper=False)
+        x2 = torch.linalg.solve_triangular(Ad2, Bd2, upper=False, unitriangular=self.unitriangular)
         loss_torch = x2.sum()
         loss_torch.backward()
 
@@ -141,7 +142,7 @@ class SparseLinearSolveTest(unittest.TestCase):
         Bd1.requires_grad = True
         As1.retain_grad()
         Bd1.retain_grad()
-        x = self.solve(As1, Bd1, upper=True)
+        x = self.solve(As1, Bd1, upper=True, unitriangular=self.unitriangular)
         loss = x.sum()
         loss.backward()
 
@@ -152,7 +153,7 @@ class SparseLinearSolveTest(unittest.TestCase):
         Bd2.requires_grad = True
         Ad2.retain_grad()
         Bd2.retain_grad()
-        x2 = torch.linalg.solve_triangular(Ad2, Bd2, upper=True)
+        x2 = torch.linalg.solve_triangular(Ad2, Bd2, upper=True, unitriangular=self.unitriangular)
         loss_torch = x2.sum()
         loss_torch.backward()
 
@@ -168,7 +169,7 @@ class SparseLinearSolveTest(unittest.TestCase):
         Bd1.requires_grad = True
         As1.retain_grad()
         Bd1.retain_grad()
-        x = self.solve(As1, Bd1, upper=False)
+        x = self.solve(As1, Bd1, upper=False, unitriangular=self.unitriangular)
         loss = x.sum()
         loss.backward()
 
@@ -179,7 +180,7 @@ class SparseLinearSolveTest(unittest.TestCase):
         Bd2.requires_grad = True
         Ad2.retain_grad()
         Bd2.retain_grad()
-        x2 = torch.linalg.solve_triangular(Ad2, Bd2, upper=False)
+        x2 = torch.linalg.solve_triangular(Ad2, Bd2, upper=False, unitriangular=self.unitriangular)
         loss_torch = x2.sum()
         loss_torch.backward()
 
@@ -187,13 +188,65 @@ class SparseLinearSolveTest(unittest.TestCase):
         self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad, rtol=self.RTOL).all())
 
+    def test_solver_non_triangular_error(self):
+        """Test to check that solver throws an ValueError if a diagonal is specified in input
+        but unitriangular=True in solver arguments"""
+        if self.unitriangular == False:  # statement to stop test running in SparseUnitTriangularSolveTest
+            As1 = self.As_csr_triu.detach().clone()
+            As1.requires_grad = True
+            Bd1 = self.Bd.detach().clone()
+            Bd1.requires_grad = True
+            As1.retain_grad()
+            Bd1.retain_grad()
+            x = self.solve(As1, Bd1, upper=True, unitriangular=True)
+            loss = x.sum()
+            with self.assertRaises(ValueError):
+                loss.backward()
 
-class SparseLinearSolveTestCUDA(SparseLinearSolveTest):
+
+class SparseTriangularSolveTestCUDA(SparseTriangularSolveTest):
     """Override superclass setUp to run on CPU"""
 
     def setUp(self) -> None:
         if not torch.cuda.is_available():
-            self.skipTest("Skipping SparseMatMulTestCUDA since CUDA is not available")
+            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
+        self.device = torch.device("cuda")
+        super().setUp()
+
+
+class SparseUnitTriangularSolveTest(SparseTriangularSolveTest):
+    """Test Triangular Linear Sparse Solver for COO and CSR formatted sparse matrices
+    for unit triangular case, where unit diagonal is implicit in solver, provided unitriangular = True"""
+
+    def setUp(self) -> None:
+        if not hasattr(self, "device"):
+            self.device = torch.device("cpu")
+        self.RTOL = 1e-3
+        self.unitriangular = True
+        self.A_shape = (16, 16)  # square matrix
+        self.B_shape = (self.A_shape[1], 10)
+        self.A_nnz = 32
+        self.A_idx = gencoordinates_square_tri(self.A_shape[0], self.A_nnz, device=self.device)
+        self.A_val = torch.randn(self.A_nnz, dtype=torch.float64, device=self.device)
+
+        self.As_coo_triu = torch.sparse_coo_tensor(self.A_idx, self.A_val, self.A_shape, requires_grad=True).coalesce()
+        self.As_coo_tril = self.As_coo_triu.t()
+        self.As_csr_triu = self.As_coo_triu.to_sparse_csr()
+        self.As_csr_tril = self.As_coo_tril.to_sparse_csr()
+
+        self.Ad_triu = self.As_coo_triu.to_dense()
+        self.Ad_tril = self.As_coo_tril.to_dense()
+
+        self.Bd = torch.randn(16, 4, dtype=torch.float64, device=self.device)
+        self.solve = sparse_triangular_solve
+
+
+class SparseUnitTriangularSolveTestCUDA(SparseUnitTriangularSolveTest):
+    """Override superclass setUp to run on GPU"""
+
+    def setUp(self) -> None:
+        if not torch.cuda.is_available():
+            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
         self.device = torch.device("cuda")
         super().setUp()
 
