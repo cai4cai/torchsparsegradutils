@@ -61,22 +61,22 @@ class SparseTriangularSolveTest(unittest.TestCase):
         self.solve = sparse_triangular_solve
 
     def test_solver_result_coo_triu(self):
-        x = self.solve(self.As_coo_triu, self.Bd, upper=True)
+        x = self.solve(self.As_coo_triu, self.Bd, upper=True, unitriangular=self.unitriangular)
         x2 = torch.linalg.solve_triangular(self.Ad_triu, self.Bd, upper=True, unitriangular=self.unitriangular)
         self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
     def test_solver_result_coo_tril(self):
-        x = self.solve(self.As_coo_tril, self.Bd, upper=False)
+        x = self.solve(self.As_coo_tril, self.Bd, upper=False, unitriangular=self.unitriangular)
         x2 = torch.linalg.solve_triangular(self.Ad_tril, self.Bd, upper=False, unitriangular=self.unitriangular)
         self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
     def test_solver_result_csr_triu(self):
-        x = self.solve(self.As_csr_triu, self.Bd, upper=True)
+        x = self.solve(self.As_csr_triu, self.Bd, upper=True, unitriangular=self.unitriangular)
         x2 = torch.linalg.solve_triangular(self.Ad_triu, self.Bd, upper=True, unitriangular=self.unitriangular)
         self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
     def test_solver_result_csr_tril(self):
-        x = self.solve(self.As_csr_tril, self.Bd, upper=False)
+        x = self.solve(self.As_csr_tril, self.Bd, upper=False, unitriangular=self.unitriangular)
         x2 = torch.linalg.solve_triangular(self.Ad_tril, self.Bd, upper=False, unitriangular=self.unitriangular)
         self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
@@ -102,6 +102,8 @@ class SparseTriangularSolveTest(unittest.TestCase):
         x2 = torch.linalg.solve_triangular(Ad2, Bd2, upper=True, unitriangular=self.unitriangular)
         loss_torch = x2.sum()
         loss_torch.backward()
+
+        self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
         nz_mask = As1.grad.to_dense() != 0.0
         self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
@@ -130,6 +132,8 @@ class SparseTriangularSolveTest(unittest.TestCase):
         loss_torch = x2.sum()
         loss_torch.backward()
 
+        self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
+
         nz_mask = As1.grad.to_dense() != 0.0
         self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad, rtol=self.RTOL).all())
@@ -157,6 +161,8 @@ class SparseTriangularSolveTest(unittest.TestCase):
         loss_torch = x2.sum()
         loss_torch.backward()
 
+        self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
+
         nz_mask = As1.grad.to_dense() != 0.0
         self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
         self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad, rtol=self.RTOL).all())
@@ -183,6 +189,8 @@ class SparseTriangularSolveTest(unittest.TestCase):
         x2 = torch.linalg.solve_triangular(Ad2, Bd2, upper=False, unitriangular=self.unitriangular)
         loss_torch = x2.sum()
         loss_torch.backward()
+
+        self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
         nz_mask = As1.grad.to_dense() != 0.0
         self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
