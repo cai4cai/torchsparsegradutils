@@ -1,6 +1,7 @@
 import torch
 import unittest
 from random import randrange
+from sys import platform
 from torchsparsegradutils import sparse_triangular_solve
 
 
@@ -30,6 +31,8 @@ class SparseTriangularSolveTest(unittest.TestCase):
         # The device can be specialised by a daughter class
         if not hasattr(self, "device"):
             self.device = torch.device("cpu")
+            if platform == "win32":
+                self.skipTest(f"Skipping {self.__class__.__name__} CPU test as solver not implemented for Windows OS")
         self.RTOL = 1e-3
         self.unitriangular = False
         self.A_shape = (16, 16)  # square matrix
@@ -229,6 +232,8 @@ class SparseUnitTriangularSolveTest(SparseTriangularSolveTest):
     def setUp(self) -> None:
         if not hasattr(self, "device"):
             self.device = torch.device("cpu")
+            if platform == "win32":
+                self.skipTest(f"Skipping {self.__class__.__name__} CPU test as solver not implemented for Windows OS")
         self.RTOL = 1e-3
         self.unitriangular = True
         self.A_shape = (16, 16)  # square matrix
