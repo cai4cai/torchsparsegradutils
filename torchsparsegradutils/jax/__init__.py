@@ -12,5 +12,6 @@ else:
     have_jax = True
     from .jax_bindings import j2t
     from .jax_bindings import t2j
+    from .jax_bindings import spmm_t4j
 
-    __all__ = ["j2t", "t2j"]
+    __all__ = ["j2t", "t2j", "spmm_t4j"]
