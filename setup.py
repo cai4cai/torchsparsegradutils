@@ -26,5 +26,8 @@ setuptools.setup(
     install_requires=[
         "torch",
     ],
+    extras_require={
+        "extras": ["jax"],
+    },
     zip_safe=False,
 )
