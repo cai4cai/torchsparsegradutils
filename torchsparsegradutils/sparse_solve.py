@@ -44,15 +44,21 @@ class SparseTriangularSolve(torch.autograd.Function):
 
         # Backprop rule: gradB = a^{-T} grad
         # Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
-        workaround88890 = ( A.device==torch.device("cpu") and (not ctx.upper) and ctx.ut )
+        workaround88890 = A.device == torch.device("cpu") and (not ctx.upper) and ctx.ut
         if not workaround88890:
             gradB = torch.triangular_solve(grad, A, upper=ctx.upper, transpose=True, unitriangular=ctx.ut).solution
         else:
             # Not sure which workaround it best but for now let's assume we don't want to explicitly transpose A
             # but prefer to let torch.triangular_solve do this inernally
             n = A.shape[0]
-            id_csr = torch.sparse_csr_tensor(torch.arange(n+1), torch.arange(n), torch.ones(n, device=A.device, dtype=A.dtype), (n,n), device=A.device)
-            gradB = torch.triangular_solve(grad, A+id_csr, upper=ctx.upper, transpose=True).solution
+            id_csr = torch.sparse_csr_tensor(
+                torch.arange(n + 1),
+                torch.arange(n),
+                torch.ones(n, device=A.device, dtype=A.dtype),
+                (n, n),
+                device=A.device,
+            )
+            gradB = torch.triangular_solve(grad, A + id_csr, upper=ctx.upper, transpose=True).solution
 
         # The gradient with respect to the matrix a seen as a dense matrix would
         # lead to a backprop rule as follows
