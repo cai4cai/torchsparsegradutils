@@ -1,4 +1,5 @@
 import torchsparsegradutils.cupy as tsgucupy
+
 if tsgucupy.have_cupy:
     import cupy as cp
     import cupyx.scipy.sparse as csp
@@ -9,6 +10,7 @@ else:
 import torch
 
 import warnings
+
 
 def _get_array_modules(x):
     # Get cupy or numpy based on context
@@ -28,10 +30,11 @@ def _get_array_modules(x):
         xsp = nsp
     return xp, xsp
 
+
 def t2c_csr(x_torch):
     # Convert a torch CSR tensor to a cupy/numpy CSR array
     xp, xsp = _get_array_modules(x_torch)
-    
+
     data_c = xp.asarray(x_torch.values())
     col_idx_c = xp.asarray(x_torch.col_indices())
     ind_ptr_c = xp.asarray(x_torch.crow_indices())
@@ -51,9 +54,11 @@ def c2t_csr(x_cupy):
 def t2c_coo(x_torch):
     # Convert a torch COO tensor to a cupy/numpy COO array
     xp, xsp = _get_array_modules(x_torch)
-    
+
     if not x_torch.is_coalesced():
-        warnings.warn("Requested a conversion from torch to cupy/numpy on a non-coalesced tensor -> coalescing implicitly")
+        warnings.warn(
+            "Requested a conversion from torch to cupy/numpy on a non-coalesced tensor -> coalescing implicitly"
+        )
         x_torch = x_torch.coalesce()
     data_c = xp.asarray(x_torch.values())
     idx_cp = xp.asarray(x_torch.indices())

@@ -27,7 +27,7 @@ setuptools.setup(
         "torch",
     ],
     extras_require={
-        "extras": ["jax"],
+        "extras": ["jax", "cupy"],
     },
     zip_safe=False,
 )
