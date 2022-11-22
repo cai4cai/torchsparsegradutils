@@ -33,15 +33,15 @@ class J2TIOTest(unittest.TestCase):
     def test_t2j(self):
         x_j = tsgujax.t2j(self.x_t)
         self.assertTrue(x_j.shape == self.x_t.shape)
-        self.assertTrue(np.isclose(np.asarray(x_j), self.x_t.numpy()).all())
+        self.assertTrue(np.isclose(np.asarray(x_j), self.x_t.cpu().numpy()).all())
         x_t2j2t = tsgujax.j2t(x_j)
         self.assertTrue(x_t2j2t.shape == self.x_t.shape)
-        self.assertTrue(np.isclose(x_t2j2t.numpy(), self.x_t.numpy()).all())
+        self.assertTrue(np.isclose(x_t2j2t.cpu().numpy(), self.x_t.cpu().numpy()).all())
 
     def test_j2t(self):
         x_t = tsgujax.j2t(self.x_j)
         self.assertTrue(x_t.shape == self.x_j.shape)
-        self.assertTrue(np.isclose(np.asarray(self.x_j), x_t.numpy()).all())
+        self.assertTrue(np.isclose(np.asarray(self.x_j), x_t.cpu().numpy()).all())
         x_j2t2j = tsgujax.t2j(x_t)
         self.assertTrue(x_j2t2j.shape == self.x_j.shape)
         self.assertTrue(np.isclose(np.asarray(x_j2t2j), np.asarray(self.x_j)).all())
@@ -56,22 +56,22 @@ class J2TIOTest(unittest.TestCase):
         x_t = tsgujax.j2t(self.x_j)
         Ax_t = A_t @ x_t
         self.assertTrue(Ax_j.shape == Ax_t.shape)
-        self.assertTrue(np.isclose(np.asarray(Ax_j), Ax_t.numpy()).all())
+        self.assertTrue(np.isclose(np.asarray(Ax_j), Ax_t.cpu().numpy()).all())
 
     def test_t2j_coo(self):
         x_t_coo = self.x_t.to_sparse_coo()
         x_j_coo = tsgujax.t2j_coo(x_t_coo)
         self.assertTrue(x_j_coo.shape == x_t_coo.shape)
-        self.assertTrue(np.isclose(np.asarray(x_j_coo.todense()), x_t_coo.to_dense().numpy()).all())
+        self.assertTrue(np.isclose(np.asarray(x_j_coo.todense()), x_t_coo.to_dense().cpu().numpy()).all())
         x_t2j2t_coo = tsgujax.j2t_coo(x_j_coo)
         self.assertTrue(x_t2j2t_coo.shape == x_t_coo.shape)
-        self.assertTrue(np.isclose(x_t2j2t_coo.to_dense().numpy(), x_t_coo.to_dense().numpy()).all())
+        self.assertTrue(np.isclose(x_t2j2t_coo.to_dense().cpu().numpy(), x_t_coo.to_dense().cpu().numpy()).all())
 
     def test_j2t_coo(self):
         x_j_coo = jax.experimental.sparse.COO.fromdense(self.x_j)
         x_t_coo = tsgujax.j2t_coo(x_j_coo)
         self.assertTrue(x_j_coo.shape == x_t_coo.shape)
-        self.assertTrue(np.isclose(np.asarray(x_j_coo.todense()), x_t_coo.to_dense().numpy()).all())
+        self.assertTrue(np.isclose(np.asarray(x_j_coo.todense()), x_t_coo.to_dense().cpu().numpy()).all())
         x_j2t2j_coo = tsgujax.t2j_coo(x_t_coo)
         self.assertTrue(x_j2t2j_coo.shape == x_j_coo.shape)
         self.assertTrue(np.isclose(np.asarray(x_j2t2j_coo.todense()), np.asarray(x_j_coo.todense())).all())
@@ -80,16 +80,16 @@ class J2TIOTest(unittest.TestCase):
         x_t_csr = self.x_t.to_sparse_csr()
         x_j_csr = tsgujax.t2j_csr(x_t_csr)
         self.assertTrue(x_j_csr.shape == x_t_csr.shape)
-        self.assertTrue(np.isclose(np.asarray(x_j_csr.todense()), x_t_csr.to_dense().numpy()).all())
+        self.assertTrue(np.isclose(np.asarray(x_j_csr.todense()), x_t_csr.to_dense().cpu().numpy()).all())
         x_t2j2t_csr = tsgujax.j2t_csr(x_j_csr)
         self.assertTrue(x_t2j2t_csr.shape == x_t_csr.shape)
-        self.assertTrue(np.isclose(x_t2j2t_csr.to_dense().numpy(), x_t_csr.to_dense().numpy()).all())
+        self.assertTrue(np.isclose(x_t2j2t_csr.to_dense().cpu().numpy(), x_t_csr.to_dense().cpu().numpy()).all())
 
     def test_j2t_csr(self):
         x_j_csr = jax.experimental.sparse.CSR.fromdense(self.x_j)
         x_t_csr = tsgujax.j2t_csr(x_j_csr)
         self.assertTrue(x_j_csr.shape == x_t_csr.shape)
-        self.assertTrue(np.isclose(np.asarray(x_j_csr.todense()), x_t_csr.to_dense().numpy()).all())
+        self.assertTrue(np.isclose(np.asarray(x_j_csr.todense()), x_t_csr.to_dense().cpu().numpy()).all())
         x_j2t2j_csr = tsgujax.t2j_csr(x_t_csr)
         self.assertTrue(x_j2t2j_csr.shape == x_j_csr.shape)
         self.assertTrue(np.isclose(np.asarray(x_j2t2j_csr.todense()), np.asarray(x_j_csr.todense())).all())
