@@ -22,7 +22,7 @@ setuptools.setup(
     author="CAI4CAI research group",
     author_email="contact@cai4cai.uk",
     license="Apache-2.0",
-    packages=["torchsparsegradutils"],
+    packages=setuptools.find_packages(),
     install_requires=[
         "torch",
     ],
