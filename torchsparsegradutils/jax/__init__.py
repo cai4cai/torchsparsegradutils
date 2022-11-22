@@ -10,8 +10,8 @@ if jax_spec is None:
     )
 else:
     have_jax = True
-    from .jax_bindings import j2t
-    from .jax_bindings import t2j
-    from .jax_bindings import spmm_t4j
+    from .jax_bindings import j2t, t2j, spmm_t4j, j2t_coo, t2j_coo, j2t_csr, t2j_csr
 
-    __all__ = ["j2t", "t2j", "spmm_t4j"]
+    from .jax_sparse_solve import sparse_solve_j4t
+
+    __all__ = ["j2t", "t2j", "spmm_t4j", "j2t_coo", "t2j_coo", "j2t_csr", "t2j_csr", "sparse_solve_j4t"]
