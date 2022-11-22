@@ -3,9 +3,9 @@ import torchsparsegradutils.cupy as tsgucupy
 if tsgucupy.have_cupy:
     import cupy as cp
     import cupyx.scipy.sparse as csp
-else:
-    import numpy as np
-    import scipy.sparse as nsp
+
+import numpy as np
+import scipy.sparse as nsp
 
 import torch
 
