@@ -42,7 +42,7 @@ class SparseTriangularSolve(torch.autograd.Function):
     def backward(ctx, grad):
         A, x = ctx.saved_tensors
 
-        # Backprop rule: gradB = a^{-T} grad
+        # Backprop rule: gradB = A^{-T} grad
         # Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
         workaround88890 = A.device == torch.device("cpu") and (not ctx.upper) and ctx.ut
         if not workaround88890:
@@ -60,7 +60,7 @@ class SparseTriangularSolve(torch.autograd.Function):
             )
             gradB = torch.triangular_solve(grad, A + id_csr, upper=ctx.upper, transpose=True).solution
 
-        # The gradient with respect to the matrix a seen as a dense matrix would
+        # The gradient with respect to the matrix A seen as a dense matrix would
         # lead to a backprop rule as follows
         # gradA = -(A^{-T} grad)(A^{-1} B) = - gradB @ x.T
         # but we are only interested in the gradient with respect to
