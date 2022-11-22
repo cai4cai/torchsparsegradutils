@@ -10,11 +10,12 @@ if tsgucupy.have_cupy:
     import cupyx.scipy.sparse as csp
 else:
     import scipy.sparse as nsp
-    warnings.warn("Importing optional cupy-related module failed to find cupy -> cupy-related tests running as numpy only.")
+
+    warnings.warn(
+        "Importing optional cupy-related module failed to find cupy -> cupy-related tests running as numpy only."
+    )
 
 import numpy as np
-
-
 
 
 class C2TIOTest(unittest.TestCase):
@@ -26,13 +27,13 @@ class C2TIOTest(unittest.TestCase):
             self.device = torch.device("cpu")
             self.xp = np
             self.xsp = nsp
-        
+
         self.x_shape = (4, 2)
         self.x_t = torch.randn(self.x_shape, dtype=torch.float64, device=self.device)
         rng = np.random.default_rng()
         x_n = rng.standard_normal(self.x_shape, dtype=np.float64)
 
-        self.x_c = self.xp.asarray( x_n )
+        self.x_c = self.xp.asarray(x_n)
         self.A_shape = (4, 4)
         self.A = torch.randn(self.A_shape, dtype=torch.float64, device=self.device).relu().to_sparse_csr()
 
@@ -83,7 +84,7 @@ class C2TIOTestCUDA(C2TIOTest):
         self.xp = cp
         self.xsp = csp
         super().setUp()
-        
+
 
 if __name__ == "__main__":
     unittest.main()
