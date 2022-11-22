@@ -9,14 +9,19 @@ if tsgucupy.have_cupy:
     import cupy as cp
     import cupyx.scipy.sparse as csp
 else:
-    import scipy.sparse as nsp
-
     warnings.warn(
         "Importing optional cupy-related module failed to find cupy -> cupy-related tests running as numpy only."
     )
 
 import numpy as np
+import scipy.sparse as nsp
 
+def _c2n(x_cupy):
+    if tsgucupy.have_cupy:
+        return cp.asnumpy(x_cupy)
+    else:
+        return np.asarray(x_cupy)
+        
 
 class C2TIOTest(unittest.TestCase):
     """IO conversion tests between torch and cupy"""
@@ -41,7 +46,7 @@ class C2TIOTest(unittest.TestCase):
         x_t_coo = self.x_t.to_sparse_coo()
         x_c_coo = tsgucupy.t2c_coo(x_t_coo)
         self.assertTrue(x_c_coo.shape == x_t_coo.shape)
-        self.assertTrue(np.isclose(np.asarray(x_c_coo.todense()), x_t_coo.to_dense().numpy()).all())
+        self.assertTrue(np.isclose(_c2n(x_c_coo.todense()), x_t_coo.to_dense().numpy()).all())
         x_t2c2t_coo = tsgucupy.c2t_coo(x_c_coo)
         self.assertTrue(x_t2c2t_coo.shape == x_t_coo.shape)
         self.assertTrue(np.isclose(x_t2c2t_coo.to_dense().numpy(), x_t_coo.to_dense().numpy()).all())
@@ -50,16 +55,16 @@ class C2TIOTest(unittest.TestCase):
         x_c_coo = self.xsp.coo_matrix(self.x_c)
         x_t_coo = tsgucupy.c2t_coo(x_c_coo)
         self.assertTrue(x_c_coo.shape == x_t_coo.shape)
-        self.assertTrue(np.isclose(np.asarray(x_c_coo.todense()), x_t_coo.to_dense().numpy()).all())
+        self.assertTrue(np.isclose(_c2n(x_c_coo.todense()), x_t_coo.to_dense().numpy()).all())
         x_c2t2c_coo = tsgucupy.t2c_coo(x_t_coo)
         self.assertTrue(x_c2t2c_coo.shape == x_c_coo.shape)
-        self.assertTrue(np.isclose(np.asarray(x_c2t2c_coo.todense()), np.asarray(x_c_coo.todense())).all())
+        self.assertTrue(np.isclose(_c2n(x_c2t2c_coo.todense()), _c2n(x_c_coo.todense())).all())
 
     def test_t2c_csr(self):
         x_t_csr = self.x_t.to_sparse_csr()
         x_c_csr = tsgucupy.t2c_csr(x_t_csr)
         self.assertTrue(x_c_csr.shape == x_t_csr.shape)
-        self.assertTrue(np.isclose(np.asarray(x_c_csr.todense()), x_t_csr.to_dense().numpy()).all())
+        self.assertTrue(np.isclose(_c2n(x_c_csr.todense()), x_t_csr.to_dense().numpy()).all())
         x_t2c2t_csr = tsgucupy.c2t_csr(x_c_csr)
         self.assertTrue(x_t2c2t_csr.shape == x_t_csr.shape)
         self.assertTrue(np.isclose(x_t2c2t_csr.to_dense().numpy(), x_t_csr.to_dense().numpy()).all())
@@ -68,10 +73,10 @@ class C2TIOTest(unittest.TestCase):
         x_c_csr = self.xsp.csr_matrix(self.x_c)
         x_t_csr = tsgucupy.c2t_csr(x_c_csr)
         self.assertTrue(x_c_csr.shape == x_t_csr.shape)
-        self.assertTrue(np.isclose(np.asarray(x_c_csr.todense()), x_t_csr.to_dense().numpy()).all())
+        self.assertTrue(np.isclose(_c2n(x_c_csr.todense()), x_t_csr.to_dense().numpy()).all())
         x_c2t2c_csr = tsgucupy.t2c_csr(x_t_csr)
         self.assertTrue(x_c2t2c_csr.shape == x_c_csr.shape)
-        self.assertTrue(np.isclose(np.asarray(x_c2t2c_csr.todense()), np.asarray(x_c_csr.todense())).all())
+        self.assertTrue(np.isclose(_c2n(x_c2t2c_csr.todense()), _c2n(x_c_csr.todense())).all())
 
 
 class C2TIOTestCUDA(C2TIOTest):
