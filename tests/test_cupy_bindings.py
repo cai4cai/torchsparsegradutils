@@ -16,12 +16,13 @@ else:
 import numpy as np
 import scipy.sparse as nsp
 
+
 def _c2n(x_cupy):
     if tsgucupy.have_cupy:
         return cp.asnumpy(x_cupy)
     else:
         return np.asarray(x_cupy)
-        
+
 
 class C2TIOTest(unittest.TestCase):
     """IO conversion tests between torch and cupy"""
