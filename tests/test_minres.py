@@ -31,7 +31,7 @@ class TestMinres(unittest.TestCase):
         if shifts is not None:
             shifts = shifts.type_as(rhs)
 
-        settings = torchsparsegradutils.utils.MINRESSettings(minres_tolerance = 1e-6)
+        settings = torchsparsegradutils.utils.MINRESSettings(minres_tolerance=1e-6)
         solves = minres(matrix, rhs=rhs, value=-1, shifts=shifts, settings=settings)
 
         # Make sure that we're not getting weird batch dim effects
