@@ -7,15 +7,18 @@ import torch
 
 from typing import NamedTuple
 
+
 class LinearCGSettings(NamedTuple):
-    max_cg_iterations: int = 1000 # The maximum number of conjugate gradient iterations to perform (when computing
+    max_cg_iterations: int = 1000  # The maximum number of conjugate gradient iterations to perform (when computing
     # matrix solves). A higher value rarely results in more accurate solves -- instead, lower the CG tolerance.
-    max_lanczos_quadrature_iterations: int = 20 # The maximum number of Lanczos iterations to perform when doing stochastic
+    max_lanczos_quadrature_iterations: int = (
+        20  # The maximum number of Lanczos iterations to perform when doing stochastic
+    )
     # Lanczos quadrature. This is ONLY used for log determinant calculations and
     # computing Tr(K^{-1}dK/d\theta)
-    cg_tolerance: float = 1 # Relative residual tolerance to use for terminating CG.
-    terminate_cg_by_size: bool = False # If set to true, cg will terminate after n iterations for an n x n matrix.
-    verbose_linalg: bool = False # Print out information whenever running an expensive linear algebra routine
+    cg_tolerance: float = 1  # Relative residual tolerance to use for terminating CG.
+    terminate_cg_by_size: bool = False  # If set to true, cg will terminate after n iterations for an n x n matrix.
+    verbose_linalg: bool = False  # Print out information whenever running an expensive linear algebra routine
 
 
 def _default_preconditioner(x):
@@ -106,7 +109,7 @@ def linear_cg(
     max_tridiag_iter=None,
     initial_guess=None,
     preconditioner=None,
-    settings=LinearCGSettings()
+    settings=LinearCGSettings(),
 ):
     """
     Implements the linear conjugate gradients method for (approximately) solving systems of the form
@@ -191,10 +194,8 @@ def linear_cg(
 
     # Maybe log
     if settings.verbose_linalg:
-        #settings.verbose_linalg.logger.debug(
-        print(
-            f"Running CG on a {rhs.shape} RHS for {n_iter} iterations (tol={tolerance}). Output: {result.shape}."
-        )
+        # settings.verbose_linalg.logger.debug(
+        print(f"Running CG on a {rhs.shape} RHS for {n_iter} iterations (tol={tolerance}). Output: {result.shape}.")
 
     # Check for NaNs
     if not torch.equal(residual, residual):

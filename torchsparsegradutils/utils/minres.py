@@ -5,12 +5,13 @@ import torch
 
 from typing import NamedTuple
 
+
 class MINRESSettings(NamedTuple):
-    max_cg_iterations: int = 1000 # The maximum number of conjugate gradient iterations to perform (when computing
+    max_cg_iterations: int = 1000  # The maximum number of conjugate gradient iterations to perform (when computing
     # matrix solves). A higher value rarely results in more accurate solves -- instead, lower the CG tolerance.
-    minres_tolerance: float = 1e-4 # Relative update term tolerance to use for terminating MINRES.
-    verbose_linalg: bool = False # Print out information whenever running an expensive linear algebra routine
-    
+    minres_tolerance: float = 1e-4  # Relative update term tolerance to use for terminating MINRES.
+    verbose_linalg: bool = False  # Print out information whenever running an expensive linear algebra routine
+
 
 def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
     """
@@ -24,7 +25,16 @@ def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
     return obj.view(*new_shape)
 
 
-def minres(matmul_closure, rhs, eps=1e-25, shifts=None, value=None, max_iter=None, preconditioner=None, settings=MINRESSettings()):
+def minres(
+    matmul_closure,
+    rhs,
+    eps=1e-25,
+    shifts=None,
+    value=None,
+    max_iter=None,
+    preconditioner=None,
+    settings=MINRESSettings(),
+):
     r"""
     Perform MINRES to find solutions to :math:`(\mathbf K + \alpha \sigma \mathbf I) \mathbf x = \mathbf b`.
     Will find solutions for multiple shifts :math:`\sigma` at the same time.
@@ -126,7 +136,7 @@ def minres(matmul_closure, rhs, eps=1e-25, shifts=None, value=None, max_iter=Non
 
     # Maybe log
     if settings.verbose_linalg:
-        #settings.verbose_linalg.logger.debug(
+        # settings.verbose_linalg.logger.debug(
         print(
             f"Running MINRES on a {rhs.shape} RHS for {max_iter} iterations (tol={settings.minres_tolerance.value()}). "
             f"Output: {solution.shape}."

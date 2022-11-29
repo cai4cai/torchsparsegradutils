@@ -95,15 +95,14 @@ class SparseTriangularSolve(torch.autograd.Function):
         return gradA, gradB, None, None
 
 
-
-    
 def sparse_generic_solve(A, B, solve=None, transpose_solve=None):
-    if ( solve==None or transpose_solve==None):
+    if solve == None or transpose_solve == None:
         from .utils import minres
-        if solve==None:
+
+        if solve == None:
             solve = minres
-        if transpose_solve==None:
-            transpose_solve = lambda A, B : minres(torch.t(A), B)
+        if transpose_solve == None:
+            transpose_solve = lambda A, B: minres(torch.t(A), B)
     return SparseGenericSolve.apply(A, B, solve, transpose_solve)
 
 
@@ -131,7 +130,7 @@ class SparseGenericSolve(torch.autograd.Function):
         x = solve(A.detach(), B.detach())
 
         x.requires_grad = grad_flag
-        
+
         ctx.save_for_backward(A, x.detach())
         return x
 
