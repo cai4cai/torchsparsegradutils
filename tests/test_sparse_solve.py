@@ -275,7 +275,7 @@ class SparseGenericSolveTest(unittest.TestCase):
 
         self.A_shape = (4, 4)
         self.A = torch.randn(self.A_shape, dtype=torch.float64, device=self.device)
-        self.A = self.A + self.A.t() + 10.0 * torch.eye(4)
+        self.A = self.A + self.A.t() + 10.0 * torch.eye(4, device=self.device)
         self.A_csr = self.A.to_sparse_csr()
         self.B_shape = (4, 2)
         self.B = torch.randn(self.B_shape, dtype=torch.float64, device=self.device)
