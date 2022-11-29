@@ -1,12 +1,21 @@
-#!/usr/bin/env python3
+# MIT-licensed code imported from https://github.com/cornellius-gp/linear_operator
+# Minor modifications for torchsparsegradutils to remove dependencies
 
 import warnings
 
 import torch
 
-from .. import settings
-from .deprecation import bool_compat
-from .warnings import NumericalWarning
+from typing import NamedTuple
+
+class LinearCGSettings(NamedTuple):
+    max_cg_iterations: int = 1000 # The maximum number of conjugate gradient iterations to perform (when computing
+    # matrix solves). A higher value rarely results in more accurate solves -- instead, lower the CG tolerance.
+    max_lanczos_quadrature_iterations: int = 20 # The maximum number of Lanczos iterations to perform when doing stochastic
+    # Lanczos quadrature. This is ONLY used for log determinant calculations and
+    # computing Tr(K^{-1}dK/d\theta)
+    cg_tolerance: float = 1 # Relative residual tolerance to use for terminating CG.
+    terminate_cg_by_size: bool = False # If set to true, cg will terminate after n iterations for an n x n matrix.
+    verbose_linalg: bool = False # Print out information whenever running an expensive linear algebra routine
 
 
 def _default_preconditioner(x):
@@ -97,6 +106,7 @@ def linear_cg(
     max_tridiag_iter=None,
     initial_guess=None,
     preconditioner=None,
+    settings=LinearCGSettings()
 ):
     """
     Implements the linear conjugate gradients method for (approximately) solving systems of the form
@@ -128,9 +138,9 @@ def linear_cg(
 
     # Some default arguments
     if max_iter is None:
-        max_iter = settings.max_cg_iterations.value()
+        max_iter = settings.max_cg_iterations
     if max_tridiag_iter is None:
-        max_tridiag_iter = settings.max_lanczos_quadrature_iterations.value()
+        max_tridiag_iter = settings.max_lanczos_quadrature_iterations
     if initial_guess is None:
         initial_guess = torch.zeros_like(rhs)
     else:
@@ -139,7 +149,7 @@ def linear_cg(
         if is_vector:
             initial_guess = initial_guess.unsqueeze(-1)
     if tolerance is None:
-        tolerance = settings.cg_tolerance.value()
+        tolerance = settings.cg_tolerance
     if preconditioner is None:
         preconditioner = _default_preconditioner
         precond = False
@@ -158,7 +168,7 @@ def linear_cg(
 
     # Get some constants
     num_rows = rhs.size(-2)
-    n_iter = min(max_iter, num_rows) if settings.terminate_cg_by_size.on() else max_iter
+    n_iter = min(max_iter, num_rows) if settings.terminate_cg_by_size else max_iter
     n_tridiag_iter = min(max_tridiag_iter, num_rows)
     eps = torch.tensor(eps, dtype=rhs.dtype, device=rhs.device)
 
@@ -180,8 +190,9 @@ def linear_cg(
     result = initial_guess.expand_as(residual).contiguous()
 
     # Maybe log
-    if settings.verbose_linalg.on():
-        settings.verbose_linalg.logger.debug(
+    if settings.verbose_linalg:
+        #settings.verbose_linalg.logger.debug(
+        print(
             f"Running CG on a {rhs.shape} RHS for {n_iter} iterations (tol={tolerance}). Output: {result.shape}."
         )
 
@@ -208,14 +219,14 @@ def linear_cg(
         mul_storage = torch.empty_like(residual)
         alpha = torch.empty(*batch_shape, 1, rhs.size(-1), dtype=residual.dtype, device=residual.device)
         beta = torch.empty_like(alpha)
-        is_zero = torch.empty(*batch_shape, 1, rhs.size(-1), dtype=bool_compat, device=residual.device)
+        is_zero = torch.empty(*batch_shape, 1, rhs.size(-1), dtype=torch.bool, device=residual.device)
 
     # Define tridiagonal matrices, if applicable
     if n_tridiag:
         t_mat = torch.zeros(
             n_tridiag_iter, n_tridiag_iter, *batch_shape, n_tridiag, dtype=alpha.dtype, device=alpha.device
         )
-        alpha_tridiag_is_zero = torch.empty(*batch_shape, n_tridiag, dtype=bool_compat, device=t_mat.device)
+        alpha_tridiag_is_zero = torch.empty(*batch_shape, n_tridiag, dtype=torch.bool, device=t_mat.device)
         alpha_reciprocal = torch.empty(*batch_shape, n_tridiag, dtype=t_mat.dtype, device=t_mat.device)
         prev_alpha_reciprocal = torch.empty_like(alpha_reciprocal)
         prev_beta = torch.empty_like(alpha_reciprocal)
@@ -328,7 +339,7 @@ def linear_cg(
             " a linear_operator.settings.max_cg_iterations(value) context.".format(
                 k + 1, residual_norm.mean(), tolerance
             ),
-            NumericalWarning,
+            UserWarning,
         )
 
     if is_vector:
