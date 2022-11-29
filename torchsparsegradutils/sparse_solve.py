@@ -93,3 +93,86 @@ class SparseTriangularSolve(torch.autograd.Function):
             gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
 
         return gradA, gradB, None, None
+
+
+
+    
+def sparse_generic_solve(A, B, solve=None, transpose_solve=None):
+    if ( solve==None or transpose_solve==None):
+        from .utils import minres
+        if solve==None:
+            solve = minres
+        if transpose_solve==None:
+            transpose_solve = lambda A, B : minres(torch.t(A), B)
+    return SparseGenericSolve.apply(A, B, solve, transpose_solve)
+
+
+class SparseGenericSolve(torch.autograd.Function):
+    """
+    Solves a system of equations with a square
+    invertible sparse matrix A and dense right-hand side matrix B,
+    with backpropagation support
+
+    Solves: Ax = B
+
+    A can be in either COO or CSR format.
+    solve: higher level function that solves for solution to the linear equation. This function need not be differentiable.
+    transpose_solve: higher level function for solving the transpose linear equation. This function need not be differentiable.
+
+    This implementation preserves the sparsity of the gradient
+    """
+
+    @staticmethod
+    def forward(ctx, A, B, solve, transpose_solve):
+        grad_flag = A.requires_grad or B.requires_grad
+        ctx.solve = solve
+        ctx.transpose_solve = transpose_solve
+
+        x = solve(A.detach(), B.detach())
+
+        x.requires_grad = grad_flag
+        
+        ctx.save_for_backward(A, x.detach())
+        return x
+
+    @staticmethod
+    def backward(ctx, grad):
+        A, x = ctx.saved_tensors
+
+        # Backprop rule: gradB = A^{-T} grad
+        gradB = ctx.transpose_solve(A, grad)
+
+        # The gradient with respect to the matrix A seen as a dense matrix would
+        # lead to a backprop rule as follows
+        # gradA = -(A^{-T} grad)(A^{-1} B) = - gradB @ x.T
+        # but we are only interested in the gradient with respect to
+        # the (non-zero) values of A. To save memory, instead of computing the full
+        # dense matrix gradB @ x.T and then subsampling at the nnz locations in a,
+        # we can directly only compute the required values:
+        # gradA[i,j] = - dotprod(gradB[i,:], x[j,:])
+
+        # We start by getting the i and j indices:
+        if A.layout == torch.sparse_coo:
+            A_row_idx = A.indices()[0, :]
+            A_col_idx = A.indices()[1, :]
+        else:
+            A_col_idx = A.col_indices()
+            A_crow_idx = A.crow_indices()
+            # Uncompress row indices:
+            A_row_idx = torch.repeat_interleave(
+                torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
+            )
+
+        mgradbselect = -gradB.index_select(0, A_row_idx)  # -gradB[i, :]
+        xselect = x.index_select(0, A_col_idx)  # x[j, :]
+
+        # Dot product:
+        mgbx = mgradbselect * xselect
+        gradA = torch.sum(mgbx, dim=1)
+
+        if A.layout == torch.sparse_coo:
+            gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
+        else:
+            gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
+
+        return gradA, gradB, None, None
