@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# MIT-licensed code imported from https://github.com/cornellius-gp/linear_operator
+# Minor modifications for torchsparsegradutils to remove dependencies
 
 import os
 import random
@@ -6,7 +7,7 @@ import unittest
 
 import torch
 
-from linear_operator.utils.linear_cg import linear_cg
+from torchsparsegradutils.utils.linear_cg import linear_cg
 
 
 class TestLinearCG(unittest.TestCase):

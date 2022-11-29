@@ -1,12 +1,30 @@
-#!/usr/bin/env python3
+# MIT-licensed code imported from https://github.com/cornellius-gp/linear_operator
+# Minor modifications for torchsparsegradutils to remove dependencies
 
 import torch
 
-from .. import settings
-from .broadcasting import _pad_with_singletons
+from typing import NamedTuple
+
+class MINRESSettings(NamedTuple):
+    max_cg_iterations: int = 1000 # The maximum number of conjugate gradient iterations to perform (when computing
+    # matrix solves). A higher value rarely results in more accurate solves -- instead, lower the CG tolerance.
+    minres_tolerance: float = 1e-4 # Relative update term tolerance to use for terminating MINRES.
+    verbose_linalg: bool = False # Print out information whenever running an expensive linear algebra routine
+    
+
+def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
+    """
+    Pad obj with singleton dimensions on the left and right
+    Example:
+        >>> x = torch.randn(10, 5)
+        >>> _pad_width_singletons(x, 2, 3).shape
+        >>> # [1, 1, 10, 5, 1, 1, 1]
+    """
+    new_shape = [1] * num_singletons_before + list(obj.shape) + [1] * num_singletons_after
+    return obj.view(*new_shape)
 
 
-def minres(matmul_closure, rhs, eps=1e-25, shifts=None, value=None, max_iter=None, preconditioner=None):
+def minres(matmul_closure, rhs, eps=1e-25, shifts=None, value=None, max_iter=None, preconditioner=None, settings=MINRESSettings()):
     r"""
     Perform MINRES to find solutions to :math:`(\mathbf K + \alpha \sigma \mathbf I) \mathbf x = \mathbf b`.
     Will find solutions for multiple shifts :math:`\sigma` at the same time.
@@ -45,7 +63,7 @@ def minres(matmul_closure, rhs, eps=1e-25, shifts=None, value=None, max_iter=Non
 
     # Use the right number of iterations
     if max_iter is None:
-        max_iter = settings.max_cg_iterations.value()
+        max_iter = settings.max_cg_iterations
     max_iter = min(max_iter, rhs.size(-2) + 1)
 
     # Epsilon (to prevent nans)
@@ -107,8 +125,9 @@ def minres(matmul_closure, rhs, eps=1e-25, shifts=None, value=None, max_iter=Non
     search_update_norm = torch.zeros_like(solution_norm)
 
     # Maybe log
-    if settings.verbose_linalg.on():
-        settings.verbose_linalg.logger.debug(
+    if settings.verbose_linalg:
+        #settings.verbose_linalg.logger.debug(
+        print(
             f"Running MINRES on a {rhs.shape} RHS for {max_iter} iterations (tol={settings.minres_tolerance.value()}). "
             f"Output: {solution.shape}."
         )
@@ -171,7 +190,7 @@ def minres(matmul_closure, rhs, eps=1e-25, shifts=None, value=None, max_iter=Non
             torch.norm(search_update, dim=-2, out=search_update_norm)
             torch.norm(solution, dim=-2, out=solution_norm)
             conv = search_update_norm.div_(solution_norm).mean().item()
-            if conv < settings.minres_tolerance.value():
+            if conv < settings.minres_tolerance:
                 break
 
         # Update terms for next iteration
