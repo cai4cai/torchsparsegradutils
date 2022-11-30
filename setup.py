@@ -22,9 +22,9 @@ setuptools.setup(
     author="CAI4CAI research group",
     author_email="contact@cai4cai.uk",
     license="Apache-2.0",
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages(exclude=("tests",)),
     install_requires=[
-        "torch",
+        "torch>=1.13",
     ],
     extras_require={
         "extras": ["jax", "cupy"],
