@@ -13,8 +13,8 @@ class BICGSTABTest(unittest.TestCase):
             self.device = torch.device("cpu")
 
     def test_bicgstab(self):
-        size = 10
-        matrix_dense = torch.randn(size, size, dtype=torch.float64, device=self.device) +  torch.eye(size, device=self.device)
+        size = 100
+        matrix_dense = torch.randn(size, size, dtype=torch.float64, device=self.device) +  10*torch.eye(size, device=self.device)
         matrix_sparse = matrix_dense.to_sparse_csr()
 
         rhs = torch.randn(size, dtype=torch.float64, device=self.device)

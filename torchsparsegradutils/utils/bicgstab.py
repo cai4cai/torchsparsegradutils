@@ -9,7 +9,7 @@ import types
 
 
 class BICGSTABSettings(NamedTuple):
-    nsteps: int = None  # Number of steps of calculation
+    nsteps: int = 10000  # Number of steps of calculation
     tol: float = 1e-10  # Tolerance such that if ||r||^2 < tol * ||b||^2 then converged
     atol: float = 1e-16  # Tolerance such that if ||r||^2 < atol then converged
     
@@ -43,39 +43,43 @@ def _init_params(Ax_gen, b, x=None, nsteps=None, tol=1e-10, atol=1e-16):
     opt.omega = torch.tensor(1, dtype=opt.dtype, device=opt.device)
     opt.v = torch.zeros(b.shape[0], dtype=opt.dtype, device=opt.device)
     opt.p = torch.zeros(b.shape[0], dtype=opt.dtype, device=opt.device)
-    opt.r_hat = opt.r.detach().clone()
+    opt.r0_hat = opt.r.detach().clone()
 
     return opt
 
 
 def _check_convergence(opt):
     r = opt.b - opt.Ax_gen(opt.x)
+    #print("r",r)
     rdotr = torch.dot(r, r)
+    #print("rdotr",rdotr)
     if rdotr < opt.residual_tol or rdotr < opt.atol:
         return True, r
     else:
         return False, r
 
 def _step(opt):
-    rho = torch.dot(opt.r, opt.r_hat)  # rho_i <- <r0, r^>
+    rho = torch.dot(opt.r0_hat, opt.r)  # rho_i <- <r^, r_{i-1}>
     beta = (rho / opt.rho) * (opt.alpha / opt.omega)  # beta <- (rho_i/rho_{i-1}) x (alpha/omega_{i-1})
     opt.rho = rho  # rho_{i-1} <- rho_i  replaced self value
     opt.p = opt.r + beta * (
         opt.p - opt.omega * opt.v
     )  # p_i <- r_{i-1} + beta x (p_{i-1} - w_{i-1} v_{i-1}) replaced p self value
     opt.v = opt.Ax_gen(opt.p)  # v_i <- Ap_i
-    opt.alpha = opt.rho / torch.dot(opt.r_hat, opt.v)  # alpha <- rho_i/<r^, v_i>
-    # TODO compute h = opt.x + opt.alpha * opt.p
-    s = opt.r - opt.alpha * opt.v  # s <- r_{i-1} - alpha v_i
-    t = opt.Ax_gen(s)  # t <- As
-    opt.omega = torch.dot(t, s) / torch.dot(t, t)  # w_i <- <t, s>/<t, t>
-    opt.x = opt.x + opt.alpha * opt.p + opt.omega * s  # x_i <- x_{i-1} + alpha p + w_i s
+    opt.alpha = opt.rho / torch.dot(opt.r0_hat, opt.v)  # alpha <- rho_i/<r^, v_i>
+    opt.x = opt.x + opt.alpha * opt.p # (use x instead of h) x <- x_{i-1} + alpha p
     opt.status, opt.res = _check_convergence(opt)
     if opt.status:
         return True
-    else:
-        opt.r = s - opt.omega * t  # r_i <- s - w_i t
-        return False
+    s = opt.r - opt.alpha * opt.v  # s <- r_{i-1} - alpha v_i
+    t = opt.Ax_gen(s)  # t <- As
+    opt.omega = torch.dot(t, s) / torch.dot(t, t)  # w_i <- <t, s>/<t, t>
+    opt.x = opt.x + opt.omega * s  # x_i <- x_{i-1} + alpha p + w_i s
+    opt.status, opt.res = _check_convergence(opt)
+    if opt.status:
+        return True
+    opt.r = s - opt.omega * t  # r_i <- s - w_i t
+    return False
 
 def bicgstab(
     matmul_closure,
@@ -97,11 +101,13 @@ def bicgstab(
     if opt.status:
         return opt.x
     while opt.nsteps:
+        #print(f"step={opt.nsteps}")
         s = _step(opt)
         if s:
             return opt.x
         if opt.rho == 0:
+            warnings.warn(f"BICGSTAB stopped with opt.rho == 0")
             break
         opt.nsteps -= 1
-    warnings.warn("BICGSTAB convergence has failed :(")
+    warnings.warn(f"BICGSTAB convergence has failed. opt.nsteps={opt.nsteps}, settings.nsteps={settings.nsteps}, opt.res={opt.res}")
     return opt.x
