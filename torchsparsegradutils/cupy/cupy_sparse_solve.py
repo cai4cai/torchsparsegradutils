@@ -2,15 +2,16 @@ import torchsparsegradutils.cupy as tsgucupy
 import torch
 
 
-def sparse_solve_c4t(A, B):
-    return SparseSolveC4T.apply(A, B)
+def sparse_solve_c4t(A, B, solve=None, transpose_solve=None):
+    return SparseSolveC4T.apply(A, B, solve, transpose_solve)
 
 
 class SparseSolveC4T(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, A, B):
+    def forward(ctx, A, B, solve, transpose_solve):
         xp, xsp = tsgucupy._get_array_modules(A.data)
         grad_flag = A.requires_grad or B.requires_grad
+        ctx.transpose_solve = transpose_solve
 
         # Transfer data to cupy/scipy
         if A.layout == torch.sparse_coo:
@@ -23,7 +24,9 @@ class SparseSolveC4T(torch.autograd.Function):
 
         # Solve the sparse system
         ctx.factorisedsolver = None
-        if (B.ndim == 1) or (B.shape[1] == 1):
+        if solve is not None:
+            x_c = solve(A_c, B_c)
+        elif (B.ndim == 1) or (B.shape[1] == 1):
             # xp.sparse.linalg.spsolve only works if B is a vector but is fully on GPU with cupy
             x_c = xsp.linalg.spsolve(A_c, B_c)
         else:
@@ -35,6 +38,7 @@ class SparseSolveC4T(torch.autograd.Function):
         x = torch.as_tensor(x_c, device=A.device)
 
         ctx.save_for_backward(A, x)
+        ctx.A_c = A_c
         x.requires_grad = grad_flag
         return x
 
@@ -43,22 +47,15 @@ class SparseSolveC4T(torch.autograd.Function):
         A, x = ctx.saved_tensors
         xp, xsp = tsgucupy._get_array_modules(A.data)
 
-        if A.layout == torch.sparse_coo:
-            A_c = tsgucupy.t2c_coo(A.detach())
-        elif A.layout == torch.sparse_csr:
-            A_c = tsgucupy.t2c_csr(A.detach())
-        else:
-            raise TypeError(f"Unsupported layout type: {A.layout}")
-
-        x_c = xp.asarray(x.detach())
         grad_c = xp.asarray(grad.detach())
 
         # Backprop rule: gradB = A^{-T} grad
-        if ctx.factorisedsolver is None:
-            gradB_c = xsp.linalg.spsolve(xp.transpose(A_c), grad_c)
+        if ctx.transpose_solve is not None:
+            gradB_c = ctx.transpose_solve(ctx.A_c, grad_c)
+        elif ctx.factorisedsolver is None:
+            gradB_c = xsp.linalg.spsolve(xp.transpose(ctx.A_c), grad_c)
         else:
             # Re-use factorised solver from forward pass
-            grad_c = xp.asarray(grad)
             gradB_c = ctx.factorisedsolver(grad_c, trans="T")
 
         gradB = torch.as_tensor(gradB_c, device=A.device)
@@ -96,4 +93,4 @@ class SparseSolveC4T(torch.autograd.Function):
         else:
             gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
 
-        return gradA, gradB
+        return gradA, gradB, None, None
