@@ -16,8 +16,8 @@ def sparse_solve_j4t(A, B, solve=None, transpose_solve=None):
         if solve == None:
             solve = jax.scipy.sparse.linalg.bicgstab
         if transpose_solve == None:
-            transpose_solve = lambda A, B : jax.scipy.sparse.linalg.bicgstab(A.transpose(), B)
-            
+            transpose_solve = lambda A, B: jax.scipy.sparse.linalg.bicgstab(A.transpose(), B)
+
     return SparseSolveJ4T.apply(A, B, solve, transpose_solve)
 
 
