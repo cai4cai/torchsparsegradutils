@@ -102,7 +102,9 @@ def sparse_generic_solve(A, B, solve=None, transpose_solve=None):
         if solve == None:
             solve = minres
         if transpose_solve == None:
-            transpose_solve = lambda A, B: minres(torch.t(A), B)
+            # MINRES assumes A to be symmetric -> no need to transpose A
+            transpose_solve = minres
+            
     return SparseGenericSolve.apply(A, B, solve, transpose_solve)
 
 
@@ -124,7 +126,6 @@ class SparseGenericSolve(torch.autograd.Function):
     @staticmethod
     def forward(ctx, A, B, solve, transpose_solve):
         grad_flag = A.requires_grad or B.requires_grad
-        ctx.solve = solve
         ctx.transpose_solve = transpose_solve
 
         x = solve(A.detach(), B.detach())
