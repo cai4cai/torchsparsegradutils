@@ -104,7 +104,7 @@ def sparse_generic_solve(A, B, solve=None, transpose_solve=None):
         if transpose_solve == None:
             # MINRES assumes A to be symmetric -> no need to transpose A
             transpose_solve = minres
-            
+
     return SparseGenericSolve.apply(A, B, solve, transpose_solve)
 
 
