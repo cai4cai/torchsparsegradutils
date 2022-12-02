@@ -1,19 +1,37 @@
+# Code imported from https://github.com/PythonOptimizers/pykrylov/blob/master/pykrylov/bicgstab/bicgstab.py
+# Modifications to fit torchsparsegradutils
+# PyKrilov is licensed under LGPL -> use at your own risks 
 
-__docformat__ = 'restructuredtext'
+import torch
+import warnings
 
-import numpy as np
+from typing import NamedTuple
+import types
 
+import logging
 
-from pykrylov.generic import KrylovMethod
+# Default (null) logger.
+_null_log = logging.getLogger('bicgstab')
+_null_log.disabled = True
 
-class BiCGSTAB( KrylovMethod ):
+class BICGSTABSettings(NamedTuple):
+    matvec_max: int = None  # Max. number of matrix-vector produts (2n)
+    abstol: float = 1.0e-8 # absolute stopping tolerance
+    reltol: float = 1.0e-6 # absolute stopping tolerance
+    precon: any = None # optional preconditioner
+    logger: any = _null_log # a `logging.logger` instance.
+    
+        
+def bicgstab(
+    matmul_closure,
+    rhs,
+    settings=BICGSTABSettings(),
+):
     """
-    A pure Python implementation of the bi-conjugate gradient stabilized
+    A pytorch implementation of the bi-conjugate gradient stabilized
     (Bi-CGSTAB) algorithm. Bi-CGSTAB may be used to solve unsymmetric systems
     of linear equations, i.e., systems of the form
-
         A x = b
-
     where the operator A is unsymmetric and nonsingular.
 
     Bi-CGSTAB requires 2 operator-vector products, 6 dot products and 6 daxpys
@@ -22,130 +40,146 @@ class BiCGSTAB( KrylovMethod ):
     In addition, if a preconditioner is supplied, it needs to solve 2
     preconditioning systems per iteration.
 
-    The original description appears in [VdVorst92]_. Our implementation is a
+    The original description appears in [VdVorst92]_. This implementation is a
     preconditioned version of that given in [Kelley]_.
 
     Reference:
-
     .. [VdVorst92] H. Van der Vorst, *Bi-CGSTAB: A Fast and Smoothly Convergent
                    Variant of Bi-CG for the Solution of Nonsymmetric Linear
                    Systems*, SIAM Journal on Scientific and Statistical
                    Computing **13** (2), pp. 631--644, 1992.
+
+    
+    .. [Kelley] C. T. Kelley, *Iterative Methods for Linear and Nonlinear
+                Equations*, number 16 in *Frontiers in Applied Mathematics*,
+                SIAM, Philadelphia, 1995.
+
+    Solve a linear system with `rhs` as right-hand side by the Bi-CGSTAB
+    method. The vector `rhs` should be a Numpy array.
+
+    :keywords:
+        :guess:      Initial guess (Numpy array, default: 0)
+        :matvec_max: Max. number of matrix-vector produts (2n)
     """
+    n = rhs.shape[0]
+    nMatvec = 0
 
-    def __init__(self, op, **kwargs):
-        KrylovMethod.__init__(self, op, **kwargs)
+    if torch.is_tensor(matmul_closure):
+        op = matmul_closure.matmul
+    elif callable(matmul_closure):
+        op = matmul_closure
+    else:
+        raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
 
-        self.name = 'Bi-Conjugate Gradient Stabilized'
-        self.acronym = 'Bi-CGSTAB'
-        self.prefix = self.acronym + ': '
+    if settings.precon is None:
+        precon = None
+    elif torch.is_tensor(settings.precon):
+        precon = settings.precon.matmul
+    elif callable(settings.precon):
+        precon = settings.precon
+    else:
+        raise RuntimeError("settings.precon must be a tensor, or a callable object!")
 
-    def solve(self, rhs, **kwargs):
-        """
-        Solve a linear system with `rhs` as right-hand side by the Bi-CGSTAB
-        method. The vector `rhs` should be a Numpy array.
+    # Initial guess is zero unless one is supplied
+    res_device = rhs.device
+    res_dtype = rhs.dtype
+    
+    #guess_supplied = 'guess' in kwargs.keys()
+    guess_supplied = False
+    #x = kwargs.get('guess', np.zeros(n)).astype(result_type)
+    x = torch.zeros(n, dtype=res_dtype, device=res_device)
+    #matvec_max = kwargs.get('matvec_max', 2*n)
+    matvec_max = 2*n if settings.matvec_max is None else settings.matvec_max
 
-        :keywords:
-            :guess:      Initial guess (Numpy array, default: 0)
-            :matvec_max: Max. number of matrix-vector produts (2n)
-        """
-        n = rhs.shape[0]
-        nMatvec = 0
+    # Initial residual is the fixed vector
+    r0 = rhs.clone()
+    if guess_supplied:
+        r0 = rhs - op( x )
+        nMatvec += 1
 
-        # Initial guess is zero unless one is supplied
-        result_type = np.result_type(self.op.dtype, rhs.dtype)
-        guess_supplied = 'guess' in kwargs.keys()
-        x = kwargs.get('guess', np.zeros(n)).astype(result_type)
-        matvec_max = kwargs.get('matvec_max', 2*n)
+    rho = alpha = omega = 1.0
+    rho_next = torch.dot(r0,r0)
+    residNorm = residNorm0 = torch.abs(torch.sqrt(rho_next))
+    threshold = max( settings.abstol, settings.reltol * residNorm0 )
 
-        # Initial residual is the fixed vector
-        r0 = rhs
-        if guess_supplied:
-            r0 = rhs - self.op * x
-            nMatvec += 1
+    finished = (residNorm <= threshold or nMatvec >= matvec_max)
 
-        rho = alpha = omega = 1.0
-        rho_next = np.dot(r0,r0)
-        residNorm = self.residNorm0 = np.abs(np.sqrt(rho_next))
-        threshold = max( self.abstol, self.reltol * self.residNorm0 )
+    settings.logger.info('Initial residual = %8.2e' % residNorm0)
+    settings.logger.info('Threshold = %8.2e' % threshold)
+    hdr = '%6s  %8s' % ('Matvec', 'Residual')
+    settings.logger.info(hdr)
+    settings.logger.info('-' * len(hdr))
 
-        finished = (residNorm <= threshold or nMatvec >= matvec_max)
+    if not finished:
+        r = r0.clone()
+        p = torch.zeros(n, dtype=res_dtype, device=res_device)
+        v = torch.zeros(n, dtype=res_dtype, device=res_device)
 
-        self.logger.info('Initial residual = %8.2e' % self.residNorm0)
-        self.logger.info('Threshold = %8.2e' % threshold)
-        hdr = '%6s  %8s' % ('Matvec', 'Residual')
-        self.logger.info(hdr)
-        self.logger.info('-' * len(hdr))
+    while not finished:
 
-        if not finished:
-            r = r0.copy()
-            p = np.zeros(n, dtype=result_type)
-            v = np.zeros(n, dtype=result_type)
+        beta = rho_next/rho * alpha/omega
+        rho = rho_next
 
-        while not finished:
+        # Update p in-place
+        p *= beta
+        p -= beta * omega * v
+        p += r
+        
+        # Compute preconditioned search direction
+        if precon is not None:
+            q = precon( p )
+        else:
+            q = p
 
-            beta = rho_next/rho * alpha/omega
-            rho = rho_next
+        v = op( q ); nMatvec += 1
 
-            # Update p in-place
-            p *= beta
-            p -= beta * omega * v
-            p += r
+        alpha = rho/torch.dot(r0, v)
+        s = r - alpha * v
 
-            # Compute preconditioned search direction
-            if self.precon is not None:
-                q = self.precon * p
-            else:
-                q = p
+        # Check for CGS termination
+        residNorm = torch.linalg.norm(s)
 
-            v = self.op * q ; nMatvec += 1
+        settings.logger.info('%6d  %8.2e' % (nMatvec, residNorm))
 
-            alpha = rho/np.dot(r0, v)
-            s = r - alpha * v
-
-            # Check for CGS termination
-            residNorm = np.linalg.norm(s)
-
-            self.logger.info('%6d  %8.2e' % (nMatvec, residNorm))
-
-            if residNorm <= threshold:
-                x += alpha * q
-                finished = True
-                continue
-
-            if nMatvec >= matvec_max:
-                finished = True
-                continue
-
-            if self.precon is not None:
-                z = self.precon * s
-            else:
-                z = s
-
-            t = self.op * z ; nMatvec += 1
-            omega = np.dot(t,s)/np.dot(t,t)
-            rho_next = -omega * np.dot(r0,t)
-
-            # Update residual
-            r = s - omega * t
-
-            # Update solution in-place-ish. Note that 'z *= omega' alters s if
-            # precon = None. That's ok since s is no longer needed in this iter.
-            # 'q *= alpha' would alter p.
-            z *= omega
-            x += z
+        if residNorm <= threshold:
             x += alpha * q
+            finished = True
+            continue
 
-            residNorm = np.linalg.norm(r)
+        if nMatvec >= matvec_max:
+            finished = True
+            continue
 
-            self.logger.info('%6d  %8.2e' % (nMatvec, residNorm))
+        if precon is not None:
+            z = precon( s )
+        else:
+            z = s
 
-            if residNorm <= threshold or nMatvec >= matvec_max:
-                finished = True
-                continue
+        t = op( z ) ; nMatvec += 1
+        omega = torch.dot(t,s)/torch.dot(t,t)
+        rho_next = -omega * torch.dot(r0,t)
+
+        # Update residual
+        r = s - omega * t
+
+        # Update solution in-place-ish. Note that 'z *= omega' alters s if
+        # precon = None. That's ok since s is no longer needed in this iter.
+        # 'q *= alpha' would alter p.
+        z *= omega
+        x += z
+        x += alpha * q
+
+        residNorm = torch.linalg.norm(r)
+
+        settings.logger.info('%6d  %8.2e' % (nMatvec, residNorm))
+
+        if residNorm <= threshold or nMatvec >= matvec_max:
+            finished = True
+            continue
 
 
-        self.converged = residNorm <= threshold
-        self.nMatvec = nMatvec
-        self.bestSolution = self.x = x
-        self.residNorm = residNorm
+    converged = residNorm <= threshold
+    bestSolution = x
+    residNorm = residNorm
+
+    return bestSolution
