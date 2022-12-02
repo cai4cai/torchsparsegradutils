@@ -26,6 +26,7 @@ class BICGSTABSettings(NamedTuple):
 def bicgstab(
     matmul_closure,
     rhs,
+    initial_guess=None,
     settings=BICGSTABSettings(),
 ):
     """
@@ -85,16 +86,17 @@ def bicgstab(
     res_device = rhs.device
     res_dtype = rhs.dtype
 
-    # guess_supplied = 'guess' in kwargs.keys()
-    guess_supplied = False
-    # x = kwargs.get('guess', np.zeros(n)).astype(result_type)
-    x = torch.zeros(n, dtype=res_dtype, device=res_device)
+    if initial_guess is None:
+        x = torch.zeros(n, dtype=res_dtype, device=res_device)
+    else
+        x = initial_guess.clone()
+    
     # matvec_max = kwargs.get('matvec_max', 2*n)
     matvec_max = 2 * n if settings.matvec_max is None else settings.matvec_max
 
     # Initial residual is the fixed vector
     r0 = rhs.clone()
-    if guess_supplied:
+    if initial_guess is None:
         r0 = rhs - op(x)
         nMatvec += 1
 
