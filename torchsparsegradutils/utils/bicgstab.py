@@ -1,6 +1,6 @@
 # Code imported from https://github.com/PythonOptimizers/pykrylov/blob/master/pykrylov/bicgstab/bicgstab.py
 # Modifications to fit torchsparsegradutils
-# PyKrilov is licensed under LGPL -> use at your own risks 
+# PyKrilov is licensed under LGPL -> use at your own risks
 
 import torch
 import warnings
@@ -11,17 +11,18 @@ import types
 import logging
 
 # Default (null) logger.
-_null_log = logging.getLogger('bicgstab')
+_null_log = logging.getLogger("bicgstab")
 _null_log.disabled = True
+
 
 class BICGSTABSettings(NamedTuple):
     matvec_max: int = None  # Max. number of matrix-vector produts (2n)
-    abstol: float = 1.0e-8 # absolute stopping tolerance
-    reltol: float = 1.0e-6 # absolute stopping tolerance
-    precon: any = None # optional preconditioner
-    logger: any = _null_log # a `logging.logger` instance.
-    
-        
+    abstol: float = 1.0e-8  # absolute stopping tolerance
+    reltol: float = 1.0e-6  # absolute stopping tolerance
+    precon: any = None  # optional preconditioner
+    logger: any = _null_log  # a `logging.logger` instance.
+
+
 def bicgstab(
     matmul_closure,
     rhs,
@@ -49,7 +50,7 @@ def bicgstab(
                    Systems*, SIAM Journal on Scientific and Statistical
                    Computing **13** (2), pp. 631--644, 1992.
 
-    
+
     .. [Kelley] C. T. Kelley, *Iterative Methods for Linear and Nonlinear
                 Equations*, number 16 in *Frontiers in Applied Mathematics*,
                 SIAM, Philadelphia, 1995.
@@ -83,32 +84,32 @@ def bicgstab(
     # Initial guess is zero unless one is supplied
     res_device = rhs.device
     res_dtype = rhs.dtype
-    
-    #guess_supplied = 'guess' in kwargs.keys()
+
+    # guess_supplied = 'guess' in kwargs.keys()
     guess_supplied = False
-    #x = kwargs.get('guess', np.zeros(n)).astype(result_type)
+    # x = kwargs.get('guess', np.zeros(n)).astype(result_type)
     x = torch.zeros(n, dtype=res_dtype, device=res_device)
-    #matvec_max = kwargs.get('matvec_max', 2*n)
-    matvec_max = 2*n if settings.matvec_max is None else settings.matvec_max
+    # matvec_max = kwargs.get('matvec_max', 2*n)
+    matvec_max = 2 * n if settings.matvec_max is None else settings.matvec_max
 
     # Initial residual is the fixed vector
     r0 = rhs.clone()
     if guess_supplied:
-        r0 = rhs - op( x )
+        r0 = rhs - op(x)
         nMatvec += 1
 
     rho = alpha = omega = 1.0
-    rho_next = torch.dot(r0,r0)
+    rho_next = torch.dot(r0, r0)
     residNorm = residNorm0 = torch.abs(torch.sqrt(rho_next))
-    threshold = max( settings.abstol, settings.reltol * residNorm0 )
+    threshold = max(settings.abstol, settings.reltol * residNorm0)
 
-    finished = (residNorm <= threshold or nMatvec >= matvec_max)
+    finished = residNorm <= threshold or nMatvec >= matvec_max
 
-    settings.logger.info('Initial residual = %8.2e' % residNorm0)
-    settings.logger.info('Threshold = %8.2e' % threshold)
-    hdr = '%6s  %8s' % ('Matvec', 'Residual')
+    settings.logger.info("Initial residual = %8.2e" % residNorm0)
+    settings.logger.info("Threshold = %8.2e" % threshold)
+    hdr = "%6s  %8s" % ("Matvec", "Residual")
     settings.logger.info(hdr)
-    settings.logger.info('-' * len(hdr))
+    settings.logger.info("-" * len(hdr))
 
     if not finished:
         r = r0.clone()
@@ -117,29 +118,30 @@ def bicgstab(
 
     while not finished:
 
-        beta = rho_next/rho * alpha/omega
+        beta = rho_next / rho * alpha / omega
         rho = rho_next
 
         # Update p in-place
         p *= beta
         p -= beta * omega * v
         p += r
-        
+
         # Compute preconditioned search direction
         if precon is not None:
-            q = precon( p )
+            q = precon(p)
         else:
             q = p
 
-        v = op( q ); nMatvec += 1
+        v = op(q)
+        nMatvec += 1
 
-        alpha = rho/torch.dot(r0, v)
+        alpha = rho / torch.dot(r0, v)
         s = r - alpha * v
 
         # Check for CGS termination
         residNorm = torch.linalg.norm(s)
 
-        settings.logger.info('%6d  %8.2e' % (nMatvec, residNorm))
+        settings.logger.info("%6d  %8.2e" % (nMatvec, residNorm))
 
         if residNorm <= threshold:
             x += alpha * q
@@ -151,13 +153,14 @@ def bicgstab(
             continue
 
         if precon is not None:
-            z = precon( s )
+            z = precon(s)
         else:
             z = s
 
-        t = op( z ) ; nMatvec += 1
-        omega = torch.dot(t,s)/torch.dot(t,t)
-        rho_next = -omega * torch.dot(r0,t)
+        t = op(z)
+        nMatvec += 1
+        omega = torch.dot(t, s) / torch.dot(t, t)
+        rho_next = -omega * torch.dot(r0, t)
 
         # Update residual
         r = s - omega * t
@@ -171,12 +174,11 @@ def bicgstab(
 
         residNorm = torch.linalg.norm(r)
 
-        settings.logger.info('%6d  %8.2e' % (nMatvec, residNorm))
+        settings.logger.info("%6d  %8.2e" % (nMatvec, residNorm))
 
         if residNorm <= threshold or nMatvec >= matvec_max:
             finished = True
             continue
-
 
     converged = residNorm <= threshold
     bestSolution = x
