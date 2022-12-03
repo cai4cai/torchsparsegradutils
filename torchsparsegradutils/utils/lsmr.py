@@ -6,6 +6,7 @@ Copyright (C) 2010 David Fong and Michael Saunders
 """
 import torch
 
+
 def _sym_ortho(a, b, out):
     torch.hypot(a, b, out=out[2])
     torch.div(a, out[2], out=out[0])
@@ -14,8 +15,9 @@ def _sym_ortho(a, b, out):
 
 
 @torch.no_grad()
-def lsmr(A, b,  Armat=None, n=None, damp=0.,atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None,
-         x0=None, check_nonzero=True):
+def lsmr(
+    A, b, Armat=None, n=None, damp=0.0, atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None, x0=None, check_nonzero=True
+):
     """Iterative solver for least-squares problems.
 
     lsmr solves the system of linear equations ``Ax = b``. If the system
@@ -98,13 +100,13 @@ def lsmr(A, b,  Armat=None, n=None, damp=0.,atol=1e-6, btol=1e-6, conlim=1e8, ma
         Armat = Armat.matmul
     elif not callable(Armat):
         raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
-    
+
     b = torch.atleast_1d(b)
     if b.dim() > 1:
         b = b.squeeze()
     eps = torch.finfo(b.dtype).eps
     damp = torch.as_tensor(damp, dtype=b.dtype, device=b.device)
-    ctol = 1 / conlim if conlim > 0 else 0.
+    ctol = 1 / conlim if conlim > 0 else 0.0
     m = b.shape[0]
     if maxiter is None:
         maxiter = min(m, n)
@@ -159,8 +161,8 @@ def lsmr(A, b,  Armat=None, n=None, damp=0.,atol=1e-6, btol=1e-6, conlim=1e8, ma
     normA = normA2.sqrt()
     condA = b.new_tensor(1)
     normx = b.new_tensor(0)
-    #normar = b.new_tensor(0)
-    #normr = b.new_tensor(0)
+    # normar = b.new_tensor(0)
+    # normr = b.new_tensor(0)
 
     normr = beta.clone()
     normar = alpha * beta
@@ -189,9 +191,8 @@ def lsmr(A, b,  Armat=None, n=None, damp=0.,atol=1e-6, btol=1e-6, conlim=1e8, ma
     betacheck = b.new_tensor(0)
     taud = b.new_tensor(0)
 
-
     # Main iteration loop.
-    for itn in range(1, maxiter+1):
+    for itn in range(1, maxiter + 1):
 
         # Perform the next step of the bidiagonalization to obtain the
         # next  beta, u, alpha, v.  These satisfy the relations
@@ -276,17 +277,15 @@ def lsmr(A, b,  Armat=None, n=None, damp=0.,atol=1e-6, btol=1e-6, conlim=1e8, ma
         if itn > 1:
             torch.min(minrbar, rhobarold, out=minrbar)
 
-
         # ------- Test for convergence --------
 
-        #if itn % 10 == 0:
+        # if itn % 10 == 0:
         if True:
 
             # Compute norms for convergence testing.
             torch.abs(zetabar, out=normar)
             torch.norm(x, out=normx)
-            torch.div(torch.max(maxrbar, rhotemp), torch.min(minrbar, rhotemp),
-                      out=condA)
+            torch.div(torch.max(maxrbar, rhotemp), torch.min(minrbar, rhotemp), out=condA)
 
             # Now use these norms to estimate certain other quantities,
             # some of which will be small near a solution.
@@ -304,8 +303,14 @@ def lsmr(A, b,  Armat=None, n=None, damp=0.,atol=1e-6, btol=1e-6, conlim=1e8, ma
 
             # The second 3 tests allow for tolerances set by the user.
 
-            stop = ((1 + test3 <= 1) | (1 + test2 <= 1) | (1 + t1 <= 1)
-                    | (test3 <= ctol) | (test2 <= atol) | (test1 <= rtol))
+            stop = (
+                (1 + test3 <= 1)
+                | (1 + test2 <= 1)
+                | (1 + t1 <= 1)
+                | (test3 <= ctol)
+                | (test2 <= atol)
+                | (test1 <= rtol)
+            )
 
             if stop:
                 break
