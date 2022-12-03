@@ -90,7 +90,7 @@ def bicgstab(
         x = torch.zeros(n, dtype=res_dtype, device=res_device)
     else:
         x = initial_guess.clone()
-    
+
     # matvec_max = kwargs.get('matvec_max', 2*n)
     matvec_max = 2 * n if settings.matvec_max is None else settings.matvec_max
 
