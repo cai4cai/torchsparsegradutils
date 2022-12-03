@@ -1,12 +1,10 @@
 """
+Code adapted from https://github.com/rfeinman/pytorch-minimize/blob/master/torchmin/lstsq/lsmr.py
 Code modified from scipy.sparse.linalg.lsmr
 
 Copyright (C) 2010 David Fong and Michael Saunders
 """
 import torch
-
-from .linear_operator import aslinearoperator
-
 
 def _sym_ortho(a, b, out):
     torch.hypot(a, b, out=out[2])
@@ -16,7 +14,7 @@ def _sym_ortho(a, b, out):
 
 
 @torch.no_grad()
-def lsmr(A, b, damp=0., atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None,
+def lsmr(A, b,  Armat=None, n=None, damp=0.,atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None,
          x0=None, check_nonzero=True):
     """Iterative solver for least-squares problems.
 
@@ -84,14 +82,30 @@ def lsmr(A, b, damp=0., atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None,
         Number of iterations used.
 
     """
-    A = aslinearoperator(A)
+    if torch.is_tensor(A):
+        if n is None:
+            n = A.shape[1]
+        if Armat is None:
+            Armat = (torch.t(A)).matmul
+        A = A.matmul
+    elif not callable(A):
+        raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
+
+    if n is None:
+        raise RuntimeError("n needs to be provided of computed from A given as a tensor")
+
+    if torch.is_tensor(Armat):
+        Armat = Armat.matmul
+    elif not callable(Armat):
+        raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
+    
     b = torch.atleast_1d(b)
     if b.dim() > 1:
         b = b.squeeze()
     eps = torch.finfo(b.dtype).eps
     damp = torch.as_tensor(damp, dtype=b.dtype, device=b.device)
     ctol = 1 / conlim if conlim > 0 else 0.
-    m, n = A.shape
+    m = b.shape[0]
     if maxiter is None:
         maxiter = min(m, n)
 
@@ -102,12 +116,12 @@ def lsmr(A, b, damp=0., atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None,
         beta = normb.clone()
     else:
         x = torch.atleast_1d(x0).clone()
-        u.sub_(A.matvec(x))
+        u.sub_(A(x))
         beta = u.norm()
 
     if beta > 0:
         u.div_(beta)
-        v = A.rmatvec(u)
+        v = Armat(u)
         alpha = v.norm()
     else:
         v = b.new_zeros(n)
@@ -145,8 +159,17 @@ def lsmr(A, b, damp=0., atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None,
     normA = normA2.sqrt()
     condA = b.new_tensor(1)
     normx = b.new_tensor(0)
-    normar = b.new_tensor(0)
-    normr = b.new_tensor(0)
+    #normar = b.new_tensor(0)
+    #normr = b.new_tensor(0)
+
+    normr = beta.clone()
+    normar = alpha * beta
+    if normar == 0:
+        return x, 0
+
+    if normb == 0:
+        x[:] = 0
+        return x, 0
 
     # extra buffers (added by Reuben)
     c = b.new_tensor(0)
@@ -175,7 +198,7 @@ def lsmr(A, b, damp=0., atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None,
         #         beta*u  =  a*v   -  alpha*u,
         #        alpha*v  =  A'*u  -  beta*v.
 
-        u.mul_(-alpha).add_(A.matvec(v))
+        u.mul_(-alpha).add_(A(v))
         torch.norm(u, out=beta)
 
         if (not check_nonzero) or beta > 0:
@@ -183,7 +206,7 @@ def lsmr(A, b, damp=0., atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None,
             # synchronization of a `beta > 0` check. For most cases
             # beta == 0 is unlikely, but use this option with caution.
             u.div_(beta)
-            v.mul_(-beta).add_(A.rmatvec(u))
+            v.mul_(-beta).add_(Armat(u))
             torch.norm(v, out=alpha)
             v = torch.where(alpha > 0, v / alpha, v)
 
@@ -256,7 +279,8 @@ def lsmr(A, b, damp=0., atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None,
 
         # ------- Test for convergence --------
 
-        if itn % 10 == 0:
+        #if itn % 10 == 0:
+        if True:
 
             # Compute norms for convergence testing.
             torch.abs(zetabar, out=normar)
