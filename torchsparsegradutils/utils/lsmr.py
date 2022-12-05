@@ -88,7 +88,7 @@ def lsmr(
         if n is None:
             n = A.shape[1]
         if Armat is None:
-            Armat = (torch.t(A)).matmul
+            Armat = (torch.adjoint(A)).matmul
         A = A.matmul
     elif not callable(A):
         raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
@@ -101,11 +101,17 @@ def lsmr(
     elif not callable(Armat):
         raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
 
+    sdtype = b.dtype
+    if b.dtype == torch.complex64:
+        sdtype = torch.float32
+    elif b.dtype == torch.complex128:
+        sdtype = torch.float64
+
     b = torch.atleast_1d(b)
     if b.dim() > 1:
         b = b.squeeze()
-    eps = torch.finfo(b.dtype).eps
-    damp = torch.as_tensor(damp, dtype=b.dtype, device=b.device)
+    eps = torch.finfo(sdtype).eps
+    damp = torch.as_tensor(damp, dtype=sdtype, device=b.device)
     ctol = 1 / conlim if conlim > 0 else 0.0
     m = b.shape[0]
     if maxiter is None:
@@ -127,7 +133,7 @@ def lsmr(
         alpha = v.norm()
     else:
         v = b.new_zeros(n)
-        alpha = b.new_tensor(0)
+        alpha = b.new_tensor(0, dtype=sdtype)
 
     v = torch.where(alpha > 0, v / alpha, v)
 
@@ -135,10 +141,10 @@ def lsmr(
 
     zetabar = alpha * beta
     alphabar = alpha.clone()
-    rho = b.new_tensor(1)
-    rhobar = b.new_tensor(1)
-    cbar = b.new_tensor(1)
-    sbar = b.new_tensor(0)
+    rho = b.new_tensor(1, dtype=sdtype)
+    rhobar = b.new_tensor(1, dtype=sdtype)
+    cbar = b.new_tensor(1, dtype=sdtype)
+    sbar = b.new_tensor(0, dtype=sdtype)
 
     h = v.clone()
     hbar = b.new_zeros(n)
@@ -146,23 +152,23 @@ def lsmr(
     # Initialize variables for estimation of ||r||.
 
     betadd = beta.clone()
-    betad = b.new_tensor(0)
-    rhodold = b.new_tensor(1)
-    tautildeold = b.new_tensor(0)
-    thetatilde = b.new_tensor(0)
-    zeta = b.new_tensor(0)
-    d = b.new_tensor(0)
+    betad = b.new_tensor(0, dtype=sdtype)
+    rhodold = b.new_tensor(1, dtype=sdtype)
+    tautildeold = b.new_tensor(0, dtype=sdtype)
+    thetatilde = b.new_tensor(0, dtype=sdtype)
+    zeta = b.new_tensor(0, dtype=sdtype)
+    d = b.new_tensor(0, dtype=sdtype)
 
     # Initialize variables for estimation of ||A|| and cond(A)
 
     normA2 = alpha.square()
-    maxrbar = b.new_tensor(0)
-    minrbar = b.new_tensor(0.99 * torch.finfo(b.dtype).max)
+    maxrbar = b.new_tensor(0, dtype=sdtype)
+    minrbar = b.new_tensor(0.99 * torch.finfo(sdtype).max, dtype=sdtype)
     normA = normA2.sqrt()
-    condA = b.new_tensor(1)
-    normx = b.new_tensor(0)
-    # normar = b.new_tensor(0)
-    # normr = b.new_tensor(0)
+    condA = b.new_tensor(1, dtype=sdtype)
+    normx = b.new_tensor(0, dtype=sdtype)
+    # normar = b.new_tensor(0,dtype=sdtype)
+    # normr = b.new_tensor(0,dtype=sdtype)
 
     normr = beta.clone()
     normar = alpha * beta
@@ -174,22 +180,22 @@ def lsmr(
         return x, 0
 
     # extra buffers (added by Reuben)
-    c = b.new_tensor(0)
-    s = b.new_tensor(0)
-    chat = b.new_tensor(0)
-    shat = b.new_tensor(0)
-    alphahat = b.new_tensor(0)
-    ctildeold = b.new_tensor(0)
-    stildeold = b.new_tensor(0)
-    rhotildeold = b.new_tensor(0)
-    rhoold = b.new_tensor(0)
-    rhobarold = b.new_tensor(0)
-    zetaold = b.new_tensor(0)
-    thetatildeold = b.new_tensor(0)
-    betaacute = b.new_tensor(0)
-    betahat = b.new_tensor(0)
-    betacheck = b.new_tensor(0)
-    taud = b.new_tensor(0)
+    c = b.new_tensor(0, dtype=sdtype)
+    s = b.new_tensor(0, dtype=sdtype)
+    chat = b.new_tensor(0, dtype=sdtype)
+    shat = b.new_tensor(0, dtype=sdtype)
+    alphahat = b.new_tensor(0, dtype=sdtype)
+    ctildeold = b.new_tensor(0, dtype=sdtype)
+    stildeold = b.new_tensor(0, dtype=sdtype)
+    rhotildeold = b.new_tensor(0, dtype=sdtype)
+    rhoold = b.new_tensor(0, dtype=sdtype)
+    rhobarold = b.new_tensor(0, dtype=sdtype)
+    zetaold = b.new_tensor(0, dtype=sdtype)
+    thetatildeold = b.new_tensor(0, dtype=sdtype)
+    betaacute = b.new_tensor(0, dtype=sdtype)
+    betahat = b.new_tensor(0, dtype=sdtype)
+    betacheck = b.new_tensor(0, dtype=sdtype)
+    taud = b.new_tensor(0, dtype=sdtype)
 
     # Main iteration loop.
     for itn in range(1, maxiter + 1):

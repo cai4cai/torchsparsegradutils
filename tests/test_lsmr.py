@@ -58,7 +58,7 @@ class TestLSMR(unittest.TestCase):
         self.n = 10
         self.m = 10
         self.dtype = torch.float64
-        # self.cdtype = torch.cdouble
+        self.cdtype = torch.complex128
 
     def assertCompatibleSystem(self, A, xtrue):
         Afun = A.matmul
@@ -96,30 +96,40 @@ class TestLSMR(unittest.TestCase):
         x = lsmr(A, b)[0]
         self.assertTrue(torch.allclose(A.matmul(x), b, atol=1e-3, rtol=1e-4))
 
-    # def testComplexX(self):
-    #    A = torch.eye(self.n, dtype=self.cdtype, device=self.device)
-    #    xtrue = torch.t(torch.arange(self.n, 0, -1, dtype=self.dtype, device=self.device) * (1 + 1j))
-    #    self.assertCompatibleSystem(A, xtrue)
+    def testComplexX(self):
+        A = torch.eye(self.n, dtype=self.cdtype, device=self.device)
+        xtrue = torch.t(
+            torch.arange(self.n, 0, -1, dtype=self.dtype, device=self.device).to(dtype=self.cdtype) * (1 + 1j)
+        )
+        self.assertCompatibleSystem(A, xtrue)
 
-    # def testComplexX0(self):
-    #    A = 4 * torch.eye(self.n, dtype=self.dtype, device=self.device) + torch.ones((self.n, self.n), dtype=self.dtype, device=self.device)
-    #    xtrue = torch.t(torch.arange(self.n, 0, -1, dtype=self.dtype, device=self.device))
-    #    b = A.matmul(xtrue)
-    #    x0 = torch.zeros(self.n, dtype=complex, device=self.device)
-    #    x = lsmr(A, b, x0=x0)[0]
-    #    self.assertTrue(torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4))
+    def testComplexX0(self):
+        A = 4 * torch.eye(self.n, dtype=self.cdtype, device=self.device) + torch.ones(
+            (self.n, self.n), dtype=self.cdtype, device=self.device
+        )
+        xtrue = torch.t(torch.arange(self.n, 0, -1, dtype=self.dtype, device=self.device).to(dtype=self.cdtype))
+        b = A.matmul(xtrue)
+        x0 = torch.zeros(self.n, dtype=self.cdtype, device=self.device)
+        x = lsmr(A, b, x0=x0)[0]
+        self.assertTrue(torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4))
 
-    # def testComplexA(self):
-    #    A = 4 * torch.eye(self.n, dtype=self.dtype, device=self.device) + 1j * torch.ones((self.n, self.n), dtype=self.dtype, device=self.device)
-    #    xtrue = torch.t(torch.arange(self.n, 0, -1, dtype=self.dtype, device=self.device).astype(complex))
-    #    self.assertCompatibleSystem(A, xtrue)
+    def testComplexA(self):
+        A = 4 * torch.eye(self.n, dtype=self.cdtype, device=self.device) + 1j * torch.ones(
+            (self.n, self.n), dtype=self.cdtype, device=self.device
+        )
+        xtrue = torch.t(torch.arange(self.n, 0, -1, dtype=self.dtype, device=self.device).to(dtype=self.cdtype))
+        self.assertCompatibleSystem(A, xtrue)
 
-    # def testComplexB(self):
-    #    A = 4 * torch.eye(self.n, dtype=self.dtype, device=self.device) + torch.ones((self.n, self.n), dtype=self.dtype, device=self.device)
-    #    xtrue = torch.t(torch.arange(self.n, 0, -1, dtype=self.dtype, device=self.device) * (1 + 1j))
-    #    b = A.matmul(xtrue)
-    #    x = lsmr(A, b)[0]
-    #    self.assertTrue(torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4))
+    def testComplexB(self):
+        A = 4 * torch.eye(self.n, dtype=self.cdtype, device=self.device) + torch.ones(
+            (self.n, self.n), dtype=self.cdtype, device=self.device
+        )
+        xtrue = torch.t(
+            torch.arange(self.n, 0, -1, dtype=self.dtype, device=self.device).to(dtype=self.cdtype) * (1 + 1j)
+        )
+        b = A.matmul(xtrue)
+        x = lsmr(A, b)[0]
+        self.assertTrue(torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4))
 
     def testColumnB(self):
         A = torch.eye(self.n, dtype=self.dtype, device=self.device)
