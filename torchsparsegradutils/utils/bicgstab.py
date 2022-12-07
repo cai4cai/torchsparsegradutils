@@ -1,6 +1,5 @@
 # Code imported from https://github.com/PythonOptimizers/pykrylov/blob/master/pykrylov/bicgstab/bicgstab.py
 # Modifications to fit torchsparsegradutils
-# PyKrilov is licensed under LGPL -> use at your own risks
 
 import torch
 import warnings
