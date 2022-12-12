@@ -3,6 +3,7 @@ import unittest
 
 from torchsparsegradutils import sparse_generic_lstsq
 
+
 class SparseGenericLstsqTest(unittest.TestCase):
     def setUp(self) -> None:
         # The device can be specialised by a daughter class
@@ -21,8 +22,8 @@ class SparseGenericLstsqTest(unittest.TestCase):
 
     def test_generic_lstsq_default(self):
         x = sparse_generic_lstsq(self.A_csr, self.B)
-        #print("x",x)
-        #print("self.x_ref",self.x_ref)
+        # print("x",x)
+        # print("self.x_ref",self.x_ref)
         self.assertTrue(torch.isclose(x, self.x_ref, rtol=self.RTOL).all())
 
     def test_generic_lstsq_gradient_default(self):
@@ -48,15 +49,15 @@ class SparseGenericLstsqTest(unittest.TestCase):
         loss_torch = x2.sum()
         loss_torch.backward()
 
-        #print("x",x)
-        #print("x2",x2)
+        # print("x",x)
+        # print("x2",x2)
 
         self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
 
-        #print("Bd1.grad",Bd1.grad)
-        #print("Bd2.grad",Bd2.grad)
-        #print("As1.grad.to_dense()",As1.grad.to_dense())
-        #print("Ad2.grad",Ad2.grad)
+        # print("Bd1.grad",Bd1.grad)
+        # print("Bd2.grad",Bd2.grad)
+        # print("As1.grad.to_dense()",As1.grad.to_dense())
+        # print("Ad2.grad",Ad2.grad)
 
         nz_mask = As1.grad.to_dense() != 0.0
         self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())

@@ -6,10 +6,10 @@ def sparse_generic_lstsq(A, B, lstsq=None, transpose_lstsq=None):
         from .utils import lsmr
 
         if lstsq == None:
-            lstsq = lambda AA, BB : lsmr(AA,BB)[0]
+            lstsq = lambda AA, BB: lsmr(AA, BB)[0]
         if transpose_lstsq == None:
             # MINRES assumes A to be symmetric -> no need to transpose A
-            transpose_lstsq = lambda AA, BB : lsmr(torch.adjoint(AA), BB, AA)[0]
+            transpose_lstsq = lambda AA, BB: lsmr(torch.adjoint(AA), BB, AA)[0]
 
     return SparseGenericLstsq.apply(A, B, lstsq, transpose_lstsq)
 
@@ -94,7 +94,6 @@ class SparseGenericLstsq(torch.autograd.Function):
         # gradA_u2 = mresiduals @ torch.t(Apgb)
         # gradA = gradA_u1 + gradA_u2
         # return gradA, gradB, None, None
-        
 
         # We start by getting the i and j indices:
         if A.layout == torch.sparse_coo:
@@ -116,9 +115,9 @@ class SparseGenericLstsq(torch.autograd.Function):
         gradA_u1 = torch.sum(mgbx, dim=1)
 
         # residuals
-        mresiduals = B - A@x
+        mresiduals = B - A @ x
         mresidualsselect = mresiduals.index_select(0, A_row_idx)
-        Apgb = ctx.lstsq(A,gradB)
+        Apgb = ctx.lstsq(A, gradB)
         if Apgb.dim() == 1:
             Apgb = Apgb.unsqueeze(1)
         Apgbselect = Apgb.index_select(0, A_col_idx)
