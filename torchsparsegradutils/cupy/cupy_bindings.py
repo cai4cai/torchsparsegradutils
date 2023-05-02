@@ -25,8 +25,8 @@ def _get_array_modules(x):
                 xp = cp
                 xsp = csp
         else:
-            xp = cp.get_array_module(x_cupy)
-            xsp = cupyx.scipy.get_array_module(x_cupy)
+            xp = cp.get_array_module(x)
+            xsp = cupyx.scipy.get_array_module(x)
     else:
         xp = np
         xsp = nsp
