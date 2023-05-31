@@ -6,22 +6,22 @@ NOTE: Sparse CSR The index tensors crow_indices and col_indices should have elem
       If you want to use MKL-enabled matrix operations, use torch.int32. 
       This is as a result of the default linking of pytorch being with MKL LP64, which uses 32 bit integer indexing
 """
-# TODO: update doc strings
+import warnings
 import torch
 import random
 from torchsparsegradutils.utils.utils import compress_row_indices
 
 def _gen_indices_2d_coo(nr, nc, nnz, *, dtype=torch.int64, device=torch.device("cpu")):
-    """Used to genererate nnz random unique coordinates
-    
+    """Generates nnz random unique coordinates in COO format.
+
     Args:
-        nr (int): number of rows
-        nc (int): number of columns
-        nnz (int): number of pairs of coordinates to generate
-        device (torch.device, optional): device to generate coordinates on. Defaults to torch.device("cpu").
+        nr (int): Number of rows.
+        nc (int): Number of columns.
+        nnz (int): Number of pairs of coordinates to generate.
+        device (torch.device, optional): Device to generate coordinates on. Defaults to torch.device("cpu").
 
     Returns:
-        torch.tensor: tensor of shape [2, nnz] containing the generated coordinates
+        torch.tensor: Tensor of shape [2, nnz] containing the generated coordinates.
     """
     assert nnz <= nr * nc, "Number of elements (nnz) must be less than or equal to the total number of elements (nr * nc)."    
   
@@ -38,23 +38,25 @@ def _gen_indices_2d_coo(nr, nc, nnz, *, dtype=torch.int64, device=torch.device("
     
     
 def generate_random_sparse_coo_matrix(size, nnz, *, indices_dtype=torch.int64, values_dtype=torch.float32, device=torch.device("cpu")):
-    """Used to generate a random sparse COO matrix.
-    
+    """Generates a random sparse COO matrix.
+
     Args:
         size (tuple): Tuple specifying the dimensions of the batched sparse matrix. The size can be either ((nr, nc)) for a single batch or ((b), nr, nc) for a batched matrix, where (b) represents the number of batch elements.
         nnz (int): Number of elements the generated COO indices represent. This must be less than or equal to the total number of elements in the matrix.
-        dtype (torch.dtype, optional): Data type of the generated tensor. Defaults to torch.float32.
-        device (torch.device, optional): Device to generate the coordinates on. Defaults to torch.device("cpu").
+        indices_dtype (torch.dtype, optional): Data type of the generated indices tensor. Defaults to torch.int64.
+        values_dtype (torch.dtype, optional): Data type of the generated values tensor. Defaults to torch.float32.
+        device (torch.device, optional): Device to generate the tensor on. Defaults to torch.device("cpu").
 
     Raises:
         ValueError: Raised if size has less than 2 dimensions.
         ValueError: Raised if size has more than 3 dimensions, as this implementation only supports 1 batch dimension.
         ValueError: Raised if nnz is greater than the total number of elements (nr * nc).
+        UserWarning: Raised when `indices_dtype` is not `torch.int64`, as this is the only indices dtype supported for sparse COO tensors. The index type will be converted to `torch.int64`.
 
     Returns:
         torch.Tensor: Returns a sparse COO tensor of shape size with nnz elements.
     """
-    
+   
     if len(size) < 2:
         raise ValueError("size must have at least 2 dimensions")
     elif len(size) > 3:
@@ -62,6 +64,9 @@ def generate_random_sparse_coo_matrix(size, nnz, *, indices_dtype=torch.int64, v
 
     if nnz > size[-2] * size[-1]:
         raise ValueError("nnz must be less than or equal to nr * nc")
+    
+    if indices_dtype != torch.int64:
+        warnings.warn(f"Only indices of type torch.int64 supported for sparse COO tensors. Indices of type {indices_dtype} will be cast to torch.int64.", UserWarning)
     
     if len(size) == 2:
         coo_indices = _gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device)
@@ -77,22 +82,23 @@ def generate_random_sparse_coo_matrix(size, nnz, *, indices_dtype=torch.int64, v
 
 
 def generate_random_sparse_csr_matrix(size, nnz, *, indices_dtype=torch.int64, values_dtype=torch.float32, device=torch.device("cpu")):
-    """Used to generate nnz random unique CSR coordinates for a batched sparse matrix specified by size ((b), nr, nc).
-    As per the PyTorch documentation, batched sparse matrices must have the same number of elements (nnz) per batch element.
+    """Generates random unique CSR coordinates for a batched sparse matrix specified by size ((b), nr, nc).
 
     Args:
         size (tuple): Tuple specifying the dimensions of the batched sparse matrix. The size can be either ((nr, nc)) for a single batch or ((b), nr, nc) for a batched matrix, where (b) represents the number of batch elements.
         nnz (int): Number of elements the generated CSR indices represent. This must be less than or equal to the total number of elements in the matrix.
-        dtype (torch.dtype, optional): Data type of the generated tensor. Defaults to torch.int64.
-        device (torch.device, optional): Device to generate the coordinates on. Defaults to torch.device("cpu").
+        indices_dtype (torch.dtype, optional): Data type of the generated indices tensor. Defaults to torch.int64.
+        values_dtype (torch.dtype, optional): Data type of the generated values tensor. Defaults to torch.float32.
+        device (torch.device, optional): Device to generate the tensor on. Defaults to torch.device("cpu").
 
     Raises:
         ValueError: Raised if size has less than 2 dimensions.
         ValueError: Raised if size has more than 3 dimensions, as this implementation only supports 1 batch dimension.
         ValueError: Raised if nnz is greater than the total number of elements (nr * nc).
+        UserWarning: Raised when `indices_dtype` has a bit depth less than `torch.int32`, as this is not recommended.
 
     Returns:
-        torch.Tensor: Returns a tuple of tensors (crow_indices, col_indices) representing the generated CSR indices.
+        torch.Tensor: Returns a sparse CSR tensor of shape size with nnz elements.
     """
     if len(size) < 2:
         raise ValueError("size must have at least 2 dimensions")
@@ -101,6 +107,9 @@ def generate_random_sparse_csr_matrix(size, nnz, *, indices_dtype=torch.int64, v
 
     if nnz > size[-2] * size[-1]:
         raise ValueError("nnz must be less than or equal to nr * nc")
+    
+    if (indices_dtype != torch.int64) or (indices_dtype != torch.int32):
+        warnings.warn(f"A bit depth of less than torch.int32 is not recommended for sparse CSR tensors", UserWarning)
 
     row_indices, col_indices = _gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device)
     crow_indices = compress_row_indices(row_indices, size[-2])

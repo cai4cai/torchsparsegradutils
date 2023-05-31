@@ -29,19 +29,32 @@ class TestGenRandomCOO(unittest.TestCase):
         with self.assertRaises(ValueError):
             generate_random_sparse_coo_matrix(torch.Size([4, 4]), 17)
     
+    
+    @parameterized.expand([
+        ("int08", torch.int8),
+        ("int16", torch.int16),
+        ("int32", torch.int32),
+    ])
+    def test_incompatible_indices_dtype(self, _, indices_dtype):
+        with self.assertWarns(UserWarning):
+            generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype)
+    
     # basic properties:        
     def test_device(self):
         A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, device=self.device)
         self.assertEqual(A.device.type, self.device.type)
     
+    
     @parameterized.expand([
+        ("int08", torch.int8),
+        ("int16", torch.int16),
         ("int32", torch.int32),
         ("int64", torch.int64),
-    ])
+    ])  # NOTE: only torch.int64 is supported for COO indices, all other dtypes are casted to torch.int64
     def test_indices_dtype(self, _, indices_dtype):
         A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype, device=self.device)
         self.assertEqual(A.indices().dtype, torch.int64)
-        # NOTE: int32 is not supported for COO indices, it will be converted to int64
+        
     
     @parameterized.expand([
         ("float16", torch.float16),
@@ -51,6 +64,7 @@ class TestGenRandomCOO(unittest.TestCase):
     def test_values_dtype(self, _, values_dtype):
         A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, values_dtype=values_dtype, device=self.device)
         self.assertEqual(A.values().dtype, values_dtype)
+    
         
     @parameterized.expand([
         ("4x4", torch.Size([4, 4]), 12),
@@ -61,6 +75,7 @@ class TestGenRandomCOO(unittest.TestCase):
     def test_size(self, _, size, nnz):
         A = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
         self.assertEqual(A.size(), size)
+    
     
     @parameterized.expand([
         ("4x4", torch.Size([4, 4]), 12),
@@ -95,6 +110,14 @@ class TestGenRandomCSR(unittest.TestCase):
     def test_too_many_nnz(self):
         with self.assertRaises(ValueError):
             generate_random_sparse_csr_matrix(torch.Size([4, 4]), 17)
+            
+    @parameterized.expand([
+        ("int08", torch.int8),
+        ("int16", torch.int16),
+    ])
+    def test_incompatible_indices_dtype(self, _, indices_dtype):
+        with self.assertWarns(UserWarning):
+            generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype)
     
     # basic properties:        
     def test_device(self):
@@ -103,9 +126,11 @@ class TestGenRandomCSR(unittest.TestCase):
     
     
     @parameterized.expand([
+        ("int08", torch.int8),
+        ("int16", torch.int16),
         ("int32", torch.int32),
         ("int64", torch.int64),
-    ])
+    ])  # NOTE: All integer dtypes are supported for CSR indices, although below int32 is not recommended
     def test_indices_dtype(self, _, indices_dtype):
         A = generate_random_sparse_csr_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype, device=self.device)
         self.assertEqual(A.crow_indices().dtype, indices_dtype)
