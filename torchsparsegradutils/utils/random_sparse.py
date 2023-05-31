@@ -6,9 +6,10 @@ NOTE: Sparse CSR The index tensors crow_indices and col_indices should have elem
       If you want to use MKL-enabled matrix operations, use torch.int32. 
       This is as a result of the default linking of pytorch being with MKL LP64, which uses 32 bit integer indexing
 """
-
+# TODO: update doc strings
 import torch
 import random
+from torchsparsegradutils.utils.utils import compress_row_indices
 
 def _gen_indices_2d_coo(nr, nc, nnz, *, dtype=torch.int64, device=torch.device("cpu")):
     """Used to genererate nnz random unique coordinates
@@ -72,10 +73,10 @@ def generate_random_sparse_coo_matrix(size, nnz, *, indices_dtype=torch.int64, v
         coo_indices = torch.cat([batch_dim_indices, sparse_dim_indices])
         values = torch.rand(nnz*size[0], dtype=values_dtype, device=device)        
 
-    return torch.sparse_coo_tensor(coo_indices, values, size, device=device)
+    return torch.sparse_coo_tensor(coo_indices, values, size, device=device).coalesce()
 
 
-def generate_random_sparse_csr_matrix(size, nnz, *, dtype=torch.int64, device=torch.device("cpu")):
+def generate_random_sparse_csr_matrix(size, nnz, *, indices_dtype=torch.int64, values_dtype=torch.float32, device=torch.device("cpu")):
     """Used to generate nnz random unique CSR coordinates for a batched sparse matrix specified by size ((b), nr, nc).
     As per the PyTorch documentation, batched sparse matrices must have the same number of elements (nnz) per batch element.
 
@@ -101,13 +102,17 @@ def generate_random_sparse_csr_matrix(size, nnz, *, dtype=torch.int64, device=to
     if nnz > size[-2] * size[-1]:
         raise ValueError("nnz must be less than or equal to nr * nc")
 
-    row_idx, col_idx = _gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device)
+    row_indices, col_indices = _gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device)
+    crow_indices = compress_row_indices(row_indices, size[-2])
+    
     if len(size) == 2:
-        return crow_indices, col_indices
+        values = torch.rand(nnz, dtype=values_dtype, device=device)
     else:
         crow_indices = crow_indices.repeat(size[0], 1)
         col_indices = col_indices.repeat(size[0], 1)
-        return crow_indices, col_indices
+        values = torch.rand(nnz*size[0], dtype=values_dtype, device=device)
+        
+    return torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device)
 
 
 # # Square strictly Triangular:
