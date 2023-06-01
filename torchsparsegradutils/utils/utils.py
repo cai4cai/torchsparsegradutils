@@ -10,9 +10,11 @@ def compress_row_indices(row_indices, num_rows):
     Returns:
         torch.Tensor: Compressed CSR crow indices.
     """
-    counts = torch.bincount(row_indices)
-    crow_indices = torch.zeros(num_rows + 1, dtype=row_indices.dtype, device=row_indices.device)
-    crow_indices[1:] = torch.cumsum(counts, dim=0)
+    # Compute the number of non-zero elements in each row
+    counts = torch.bincount(row_indices, minlength=num_rows).to(row_indices.dtype)
+
+    # Compute the cumulative sum of counts to get CSR indices
+    crow_indices = torch.cat([torch.zeros(1, dtype=row_indices.dtype, device=counts.device), counts.cumsum(dim=0, dtype=row_indices.dtype)])
 
     return crow_indices
 
