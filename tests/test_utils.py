@@ -2,66 +2,93 @@ import torch
 import unittest
 from parameterized import parameterized_class, parameterized
 from torchsparsegradutils.utils.random_sparse import generate_random_sparse_coo_matrix, generate_random_sparse_strictly_triangular_coo_matrix
-from torchsparsegradutils.utils.utils import compress_row_indices, demcompress_crow_indices
+from torchsparsegradutils.utils.utils import _compress_row_indices, demcompress_crow_indices, convert_coo_to_csr
 
 from torchsparsegradutils.utils.utils import (
-    compress_row_indices,
+    _compress_row_indices,
     demcompress_crow_indices,
 )
+
 @parameterized_class(('name', 'device',), [
     ("CPU", torch.device("cpu")),
     ("CUDA", torch.device("cuda"),),
 ])
-class TestRowIndicesCompressionDecompression(unittest.TestCase):
+class TestCOOtoCSR(unittest.TestCase):
     def setUp(self) -> None:
-        self.A_coo = generate_random_sparse_coo_matrix(torch.Size([8, 8]), 12, device=self.device)
-        self.A_coo_tril = generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([8, 8]), 12, device=self.device)
-        self.A_csr = self.A_coo.to_sparse_csr()
-        self.A_csr_tril = self.A_coo_tril.to_sparse_csr()
-        
-    # row compression cannot be done without sorting the col indices and applying the same sort change to the values
+        if not torch.cuda.is_available() and self.device == torch.device("cuda"):
+            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
     
-    # TODO: these unit tests need to build a CSR from the compressed and then convert back
-    # as they do not check either the values or the column indices
     
-    # TODO: let's also check the other way around, i.e. CSR to COO
-    # I could just use to .to_sparse_coo() and .to_sparse_csr() methods
-    # however, that would force conversion to int64, which won't be ideal for my use case
-    # Having a way to convert COO - CSR indices, strictly in int32 is useful and will prevent the memory errors I have been having
-    # Would also be nice to be able to do this batched.
+    def batched_coo_to_csr(self, A_coo):
+        """      
+        Converts batched sparse COO matrix A with shape [B, N, M] 
+        to batched sparse CSR matrix with shape [B, N, M]
+        
+        Inneficient implementation as the COO tensors only support int64 indices.
+        Meaning that int32 indices cannot be maintained if a CSR matrix is created via to_sparse_csr() from COO.
+        """
+        A_crow_indices_list = []
+        A_row_indices_list = []
+        A_values_list = []
+        
+        size = A_coo.size()
+        
+        for a_coo in A_coo:
+            a_csr = a_coo.detach().to_sparse_csr()  # detach to prevent grad on indices
+            A_crow_indices_list.append(a_csr.crow_indices())
+            A_row_indices_list.append(a_csr.col_indices())
+            A_values_list.append(a_csr.values())
+            
+        A_crow_indices = torch.stack(A_crow_indices_list, dim=0)
+        A_row_indices = torch.stack(A_row_indices_list, dim=0)
+        A_values = torch.stack(A_values_list, dim=0)
     
-    def test_compress_row_indices(self):
-        row_idx, col_idx = self.A_coo.indices()
-        crow_idx = compress_row_indices(row_idx, self.A_coo.shape[0])
-        self.assertTrue(torch.allclose(crow_idx, self.A_csr.crow_indices()))
+        return torch.sparse_csr_tensor(A_crow_indices, A_row_indices, A_values, size=size)
+    
+    
+    @parameterized.expand([
+        ("4x4_12n", torch.Size([4, 4]), 12),
+        ("8x16_32n", torch.Size([8, 16]), 32),
+    ])
+    def test_compress_row_indices(self, _, size, nnz):
+        A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
+        A_csr = A_coo.to_sparse_csr()
+        A_csr_crow_indices = A_csr.crow_indices()
+        crow_indices = _compress_row_indices(A_coo.indices()[0], A_coo.size()[0])
+        self.assertTrue(torch.equal(A_csr_crow_indices, crow_indices))
+    
+    
+    @parameterized.expand([
+        ("4x4_12n", torch.Size([4, 4]), 12),
+        ("8x16_32n", torch.Size([8, 16]), 32),
+    ])
+    def test_coo_to_csr_indices(self, _, size, nnz):
+        A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
+        A_csr = convert_coo_to_csr(A_coo)
+        if len(size) == 2:
+            A_csr_2 = A_coo.to_sparse_csr()
+        elif len(size) == 3:
+            A_csr_2 = self.batched_coo_to_csr(A_coo)
+        else:
+            raise ValueError(f"Size {size} not supported")
         
-    def test_demcompress_crow_indices(self):
-        crow_idx = self.A_csr.crow_indices()
-        row_idx = demcompress_crow_indices(crow_idx, self.A_coo.shape[0])
-        self.assertTrue(torch.allclose(row_idx, self.A_coo.indices()[0]))
+        self.assertTrue(torch.equal(A_csr.crow_indices(), A_csr_2.crow_indices()))
+        self.assertTrue(torch.equal(A_csr.col_indices(), A_csr_2.col_indices()))
         
-    def test_compress_row_indices_tril(self):
-        row_idx, col_idx = self.A_coo_tril.indices()
-        crow_idx = compress_row_indices(row_idx, self.A_coo_tril.shape[0])
-        self.assertTrue(torch.allclose(crow_idx, self.A_csr_tril.crow_indices()))
-        
-    def test_demcompress_crow_indices_tril(self):
-        crow_idx = self.A_csr_tril.crow_indices()
-        row_idx = demcompress_crow_indices(crow_idx, self.A_coo_tril.shape[0])
-        self.assertTrue(torch.allclose(row_idx, self.A_coo_tril.indices()[0]))
         
     @parameterized.expand([
-        ("int32", torch.int32),
-        ("int64", torch.int64),
+        ("4x4_12n", torch.Size([4, 4]), 12),
+        ("8x16_32n", torch.Size([8, 16]), 32),
     ])
-    def test_indices_dtype(self, _, indices_dtype):
-        num_rows = 4
-        row_idx  = torch.tensor([0, 0, 0, 1, 2, 2, 2, 2, 3, 3, 3, 3], dtype=indices_dtype, device=self.device)
-        crow_idx = compress_row_indices(row_idx, num_rows)
-        self.assertEqual(crow_idx.dtype, indices_dtype)
+    def test_coo_to_csr_values(self, _, size, nnz):
+        A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
+        A_csr = convert_coo_to_csr(A_coo)
+        if len(size) == 2:
+            A_csr_2 = A_coo.to_sparse_csr()
+        elif len(size) == 3:
+            A_csr_2 = self.batched_coo_to_csr(A_coo)
+        else:
+            raise ValueError(f"Size {size} not supported")
         
-    def test_device(self):
-        num_rows = 4
-        row_idx  = torch.tensor([0, 0, 0, 1, 2, 2, 2, 2, 3, 3, 3, 3], dtype=torch.int32, device=self.device)
-        crow_idx = compress_row_indices(row_idx, num_rows)
-        self.assertEqual(crow_idx.device.type, self.device.type)
+        self.assertTrue(torch.equal(A_csr.values(), A_csr_2.values()))
+        

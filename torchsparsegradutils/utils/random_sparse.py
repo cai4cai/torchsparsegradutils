@@ -9,7 +9,7 @@ NOTE: Sparse CSR The index tensors crow_indices and col_indices should have elem
 import warnings
 import torch
 import random
-from torchsparsegradutils.utils.utils import compress_row_indices
+from torchsparsegradutils.utils.utils import _compress_row_indices
 
 def _gen_indices_2d_coo(nr, nc, nnz, *, dtype=torch.int64, device=torch.device("cpu")):
     """Generates nnz random unique coordinates in COO format.
@@ -111,7 +111,7 @@ def generate_random_sparse_csr_matrix(size, nnz, *, indices_dtype=torch.int64, v
         warnings.warn(f"A bit depth of less than torch.int32 is not recommended for sparse CSR tensors", UserWarning)
 
     row_indices, col_indices = _gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device)
-    crow_indices = compress_row_indices(row_indices, size[-2])
+    crow_indices = _compress_row_indices(row_indices, size[-2])
     
     if len(size) == 2:
         values = torch.rand(nnz, dtype=values_dtype, device=device)
@@ -232,7 +232,7 @@ def generate_random_sparse_strictly_triangular_csr_matrix(size, nnz, *, upper=Tr
         warnings.warn(f"A bit depth of less than torch.int32 is not recommended for sparse CSR tensors", UserWarning)
 
     row_indices, col_indices = _gen_indices_2d_coo_strictly_tri(size[-2], nnz, upper=upper, dtype=indices_dtype, device=device)
-    crow_indices = compress_row_indices(row_indices, size[-2])
+    crow_indices = _compress_row_indices(row_indices, size[-2])
     
     if len(size) == 2:
         values = torch.rand(nnz, dtype=values_dtype, device=device)
