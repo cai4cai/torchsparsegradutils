@@ -1,13 +1,13 @@
 import torch
 import unittest
 from parameterized import parameterized_class, parameterized
-from torchsparsegradutils.utils.random_sparse import generate_random_sparse_coo_matrix, generate_random_sparse_strictly_triangular_coo_matrix
-from torchsparsegradutils.utils.utils import _compress_row_indices, demcompress_crow_indices, convert_coo_to_csr
+from torchsparsegradutils.utils.random_sparse import generate_random_sparse_coo_matrix, generate_random_sparse_csr_matrix
 
 from torchsparsegradutils.utils.utils import (
     _compress_row_indices,
-    demcompress_crow_indices,
+    _demcompress_crow_indices,
     _sort_coo_indices,
+    convert_coo_to_csr
 )
 
 
@@ -102,6 +102,8 @@ class TestCOOtoCSR(unittest.TestCase):
     @parameterized.expand([
         ("4x4_12n", torch.Size([4, 4]), 12),
         ("8x16_32n", torch.Size([8, 16]), 32),
+        ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
+        ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
     ])
     def test_coo_to_csr_indices(self, _, size, nnz):
         A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
@@ -120,6 +122,8 @@ class TestCOOtoCSR(unittest.TestCase):
     @parameterized.expand([
         ("4x4_12n", torch.Size([4, 4]), 12),
         ("8x16_32n", torch.Size([8, 16]), 32),
+        ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
+        ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
     ])
     def test_coo_to_csr_values(self, _, size, nnz):
         A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
@@ -133,3 +137,24 @@ class TestCOOtoCSR(unittest.TestCase):
         
         self.assertTrue(torch.equal(A_csr.values(), A_csr_2.values()))
         
+
+@parameterized_class(('name', 'device',), [
+    ("CPU", torch.device("cpu")),
+    ("CUDA", torch.device("cuda"),),
+])
+class TestCSRtoCOO(unittest.TestCase):
+    def setUp(self) -> None:
+        if not torch.cuda.is_available() and self.device == torch.device("cuda"):
+            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
+    
+    
+    @parameterized.expand([
+        ("4x4_12n", torch.Size([4, 4]), 12),
+        ("8x16_32n", torch.Size([8, 16]), 32),
+    ])
+    def test_compress_row_indices(self, _, size, nnz):
+        A_csr = generate_random_sparse_csr_matrix(size, nnz, device=self.device)
+        A_coo = A_csr.to_sparse_coo()
+        A_coo_row_indices = A_coo.indices()[0]
+        row_indices = _demcompress_crow_indices(A_csr.crow_indices(), A_coo.size()[0])
+        self.assertTrue(torch.equal(A_coo_row_indices, row_indices))
