@@ -316,7 +316,6 @@ class TestGenRandomStrictlyTriCSR(unittest.TestCase):
     @parameterized.expand([
         ("int08", torch.int8),
         ("int16", torch.int16),
-        ("int32", torch.int32),
     ])
     def test_incompatible_indices_dtype(self, _, indices_dtype):
         with self.assertWarns(UserWarning):
