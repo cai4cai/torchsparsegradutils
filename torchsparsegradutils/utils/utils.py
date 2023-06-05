@@ -34,10 +34,8 @@ def _compress_row_indices(row_indices, num_rows):
     # Compute the number of non-zero elements in each row
     counts = torch.bincount(row_indices, minlength=num_rows).to(row_indices.dtype)
 
-
     # Compute the cumulative sum of counts to get CSR indices
     crow_indices = torch.cat([torch.zeros(1, dtype=row_indices.dtype, device=counts.device), counts.cumsum_(dim=0)])
-
 
     return crow_indices
 
@@ -61,38 +59,50 @@ def convert_coo_to_csr_indices_values(coo_indices, num_rows, values=None):
         torch.Tensor: Permutation indices from sorting COO indices. Or permuted values if values are provided.
     """
     if coo_indices.shape[0] < 2:
-        raise ValueError(f"Indices tensor must have at least 2 rows (row and column indices). Got {coo_indices.shape[0]} rows.")
+        raise ValueError(
+            f"Indices tensor must have at least 2 rows (row and column indices). Got {coo_indices.shape[0]} rows."
+        )
     elif coo_indices.shape[0] > 3:
-        raise ValueError(f"Current implementation only supports single batch diomension, therefore indices tensor must have at most 3 rows (batch, row and column indices). Got {coo_indices.shape[0]} rows.")
-    
+        raise ValueError(
+            f"Current implementation only supports single batch diomension, therefore indices tensor must have at most 3 rows (batch, row and column indices). Got {coo_indices.shape[0]} rows."
+        )
+
     if coo_indices[-2].max() >= num_rows:
-        raise ValueError(f"Row indices must be less than num_rows ({num_rows}). Got max row index {coo_indices[-2].max()}")
-    
+        raise ValueError(
+            f"Row indices must be less than num_rows ({num_rows}). Got max row index {coo_indices[-2].max()}"
+        )
+
     if values != None and values.shape[0] != coo_indices.shape[1]:
-        raise ValueError(f"Number of values ({values.shape[0]}) does not match number of indices ({coo_indices.shape[1]})")
-    
+        raise ValueError(
+            f"Number of values ({values.shape[0]}) does not match number of indices ({coo_indices.shape[1]})"
+        )
+
     coo_indices, permutation = _sort_coo_indices(coo_indices)
 
     if coo_indices.shape[0] == 2:
         row_indices, col_indices = coo_indices
         crow_indices = _compress_row_indices(row_indices, num_rows)
-        
+
         values = values[permutation] if values is not None else permutation
-        
+
     else:
         batch_indices, row_indices, col_indices = coo_indices
-        crow_indices = torch.cat([_compress_row_indices(row_indices[batch_indices == batch], num_rows) for batch in torch.unique(batch_indices)])
+        crow_indices = torch.cat(
+            [
+                _compress_row_indices(row_indices[batch_indices == batch], num_rows)
+                for batch in torch.unique(batch_indices)
+            ]
+        )
         num_batches = torch.unique(batch_indices).shape[0]
-        
+
         crow_indices = crow_indices.reshape(num_batches, -1)
         col_indices = col_indices.reshape(num_batches, -1)
-        
-        values = values[permutation] if values is not None else permutation
-        
-        values = values.reshape(num_batches, -1)
-        
-    return crow_indices, col_indices, values
 
+        values = values[permutation] if values is not None else permutation
+
+        values = values.reshape(num_batches, -1)
+
+    return crow_indices, col_indices, values
 
 
 def convert_coo_to_csr(sparse_coo_tensor):
@@ -106,11 +116,12 @@ def convert_coo_to_csr(sparse_coo_tensor):
         torch.Tensor: CSR sparse tensor.
     """
     if sparse_coo_tensor.layout == torch.sparse_coo:
-        crow_indices, col_indices, values = convert_coo_to_csr_indices_values(sparse_coo_tensor.indices(), sparse_coo_tensor.size()[-2], sparse_coo_tensor.values())
+        crow_indices, col_indices, values = convert_coo_to_csr_indices_values(
+            sparse_coo_tensor.indices(), sparse_coo_tensor.size()[-2], sparse_coo_tensor.values()
+        )
         return torch.sparse_csr_tensor(crow_indices, col_indices, values, sparse_coo_tensor.size())
     else:
         raise ValueError(f"Unsupported layout: {sparse_coo_tensor.layout}")
-   
 
 
 def _demcompress_crow_indices(crow_indices, num_rows):
@@ -125,9 +136,10 @@ def _demcompress_crow_indices(crow_indices, num_rows):
     Returns:
         torch.Tensor: Decompressed COO row indices.
     """
-   
+
     row_indices = torch.repeat_interleave(
-                torch.arange(num_rows, dtype=crow_indices.dtype, device=crow_indices.device), crow_indices[1:] - crow_indices[:-1]
-            )
-   
+        torch.arange(num_rows, dtype=crow_indices.dtype, device=crow_indices.device),
+        crow_indices[1:] - crow_indices[:-1],
+    )
+
     return row_indices

@@ -1,20 +1,32 @@
 import torch
 import unittest
 from parameterized import parameterized_class, parameterized
-from torchsparsegradutils.utils.random_sparse import generate_random_sparse_coo_matrix, generate_random_sparse_csr_matrix
+from torchsparsegradutils.utils.random_sparse import (
+    generate_random_sparse_coo_matrix,
+    generate_random_sparse_csr_matrix,
+)
 
 from torchsparsegradutils.utils.utils import (
     _compress_row_indices,
     _demcompress_crow_indices,
     _sort_coo_indices,
-    convert_coo_to_csr
+    convert_coo_to_csr,
 )
 
 
-@parameterized_class(('name', 'device',), [
-    ("CPU", torch.device("cpu")),
-    ("CUDA", torch.device("cuda"),),
-])
+@parameterized_class(
+    (
+        "name",
+        "device",
+    ),
+    [
+        ("CPU", torch.device("cpu")),
+        (
+            "CUDA",
+            torch.device("cuda"),
+        ),
+    ],
+)
 class TestSortCOOIndices(unittest.TestCase):
     def setUp(self) -> None:
         if not torch.cuda.is_available() and self.device == torch.device("cuda"):
@@ -50,61 +62,71 @@ class TestSortCOOIndices(unittest.TestCase):
         self.assertTrue(torch.equal(coalesce_permutation, permutation))
 
 
-@parameterized_class(('name', 'device',), [
-    ("CPU", torch.device("cpu")),
-    ("CUDA", torch.device("cuda"),),
-])
+@parameterized_class(
+    (
+        "name",
+        "device",
+    ),
+    [
+        ("CPU", torch.device("cpu")),
+        (
+            "CUDA",
+            torch.device("cuda"),
+        ),
+    ],
+)
 class TestCOOtoCSR(unittest.TestCase):
     def setUp(self) -> None:
         if not torch.cuda.is_available() and self.device == torch.device("cuda"):
             self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
-    
-    
+
     def batched_coo_to_csr(self, A_coo):
-        """      
-        Converts batched sparse COO matrix A with shape [B, N, M] 
+        """
+        Converts batched sparse COO matrix A with shape [B, N, M]
         to batched sparse CSR matrix with shape [B, N, M]
-        
+
         Inneficient implementation as the COO tensors only support int64 indices.
         Meaning that int32 indices cannot be maintained if a CSR matrix is created via to_sparse_csr() from COO.
         """
         A_crow_indices_list = []
         A_row_indices_list = []
         A_values_list = []
-        
+
         size = A_coo.size()
-        
+
         for a_coo in A_coo:
             a_csr = a_coo.detach().to_sparse_csr()  # detach to prevent grad on indices
             A_crow_indices_list.append(a_csr.crow_indices())
             A_row_indices_list.append(a_csr.col_indices())
             A_values_list.append(a_csr.values())
-            
+
         A_crow_indices = torch.stack(A_crow_indices_list, dim=0)
         A_row_indices = torch.stack(A_row_indices_list, dim=0)
         A_values = torch.stack(A_values_list, dim=0)
-    
+
         return torch.sparse_csr_tensor(A_crow_indices, A_row_indices, A_values, size=size)
-    
-    
-    @parameterized.expand([
-        ("4x4_12n", torch.Size([4, 4]), 12),
-        ("8x16_32n", torch.Size([8, 16]), 32),
-    ])
+
+    @parameterized.expand(
+        [
+            ("4x4_12n", torch.Size([4, 4]), 12),
+            ("8x16_32n", torch.Size([8, 16]), 32),
+        ]
+    )
     def test_compress_row_indices(self, _, size, nnz):
         A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
         A_csr = A_coo.to_sparse_csr()
         A_csr_crow_indices = A_csr.crow_indices()
         crow_indices = _compress_row_indices(A_coo.indices()[0], A_coo.size()[0])
         self.assertTrue(torch.equal(A_csr_crow_indices, crow_indices))
-    
-    
-    @parameterized.expand([
-        ("4x4_12n", torch.Size([4, 4]), 12),
-        ("8x16_32n", torch.Size([8, 16]), 32),
-        ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
-        ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
-    ])
+
+    @parameterized.expand(
+        [
+            ("4x4_12n", torch.Size([4, 4]), 12),
+            ("8x16_32n", torch.Size([8, 16]), 32),
+            ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
+            ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
+        ]
+    )
     def test_coo_to_csr_indices(self, _, size, nnz):
         A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
         A_csr = convert_coo_to_csr(A_coo)
@@ -114,17 +136,18 @@ class TestCOOtoCSR(unittest.TestCase):
             A_csr_2 = self.batched_coo_to_csr(A_coo)
         else:
             raise ValueError(f"Size {size} not supported")
-        
+
         self.assertTrue(torch.equal(A_csr.crow_indices(), A_csr_2.crow_indices()))
         self.assertTrue(torch.equal(A_csr.col_indices(), A_csr_2.col_indices()))
-        
-        
-    @parameterized.expand([
-        ("4x4_12n", torch.Size([4, 4]), 12),
-        ("8x16_32n", torch.Size([8, 16]), 32),
-        ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
-        ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
-    ])
+
+    @parameterized.expand(
+        [
+            ("4x4_12n", torch.Size([4, 4]), 12),
+            ("8x16_32n", torch.Size([8, 16]), 32),
+            ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
+            ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
+        ]
+    )
     def test_coo_to_csr_values(self, _, size, nnz):
         A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
         A_csr = convert_coo_to_csr(A_coo)
@@ -134,24 +157,34 @@ class TestCOOtoCSR(unittest.TestCase):
             A_csr_2 = self.batched_coo_to_csr(A_coo)
         else:
             raise ValueError(f"Size {size} not supported")
-        
-        self.assertTrue(torch.equal(A_csr.values(), A_csr_2.values()))
-        
 
-@parameterized_class(('name', 'device',), [
-    ("CPU", torch.device("cpu")),
-    ("CUDA", torch.device("cuda"),),
-])
+        self.assertTrue(torch.equal(A_csr.values(), A_csr_2.values()))
+
+
+@parameterized_class(
+    (
+        "name",
+        "device",
+    ),
+    [
+        ("CPU", torch.device("cpu")),
+        (
+            "CUDA",
+            torch.device("cuda"),
+        ),
+    ],
+)
 class TestCSRtoCOO(unittest.TestCase):
     def setUp(self) -> None:
         if not torch.cuda.is_available() and self.device == torch.device("cuda"):
             self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
-    
-    
-    @parameterized.expand([
-        ("4x4_12n", torch.Size([4, 4]), 12),
-        ("8x16_32n", torch.Size([8, 16]), 32),
-    ])
+
+    @parameterized.expand(
+        [
+            ("4x4_12n", torch.Size([4, 4]), 12),
+            ("8x16_32n", torch.Size([8, 16]), 32),
+        ]
+    )
     def test_compress_row_indices(self, _, size, nnz):
         A_csr = generate_random_sparse_csr_matrix(size, nnz, device=self.device)
         A_coo = A_csr.to_sparse_coo()
