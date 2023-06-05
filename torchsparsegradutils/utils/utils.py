@@ -1,6 +1,25 @@
 import torch
 
 
+def _sort_coo_indices(indices):
+    """
+    Sorts COO (Coordinate List Format) indices in ascending order and returns a permutation tensor that indicates
+    the indices in the original data that result in a sorted tensor.
+
+    This function can support both unbatched and batched COO indices, and essentially performs the same operation as .coalesce() called on a COO tensor.
+    The advantage is that COO coordinates can be sorted prior to conversion to CSR, without having to use the torch.sparse_coo_tensor object which only supports int64 indices.
+
+    Args:
+        indices (torch.Tensor): The input indices in COO format to be sorted.
+
+    Returns:
+        torch.Tensor: A tensor containing sorted indices.
+        torch.Tensor: A permutation tensor that contains the indices in the original tensor that give the sorted tensor.
+    """
+    indices_sorted, permutation = torch.unique(indices, dim=-1, sorted=True, return_inverse=True)
+    return indices_sorted, torch.argsort(permutation)
+
+
 def _compress_row_indices(row_indices, num_rows):
     """Compresses COO row indices to CSR crow indices.
 
@@ -27,8 +46,8 @@ def _compress_row_indices(row_indices, num_rows):
 # TODO: add support for batched
 def covert_coo_to_csr_indices_values(coo_indices, num_rows, values=None):
     """Converts COO row and column indices to CSR crow and col indices.
-    This function compressed the row indices and sorts the column indices.
-    If values are provided, the tensor is permuted according to the sorted column indices.
+    This function sorts the row and column indices (similar to torch.sparse_coo_tensor.coalesce()) and then compresses the row indices to CSR crow indices.
+    If values are provided, the tensor is permuted according to the sorted COO indices.
     If no values are provided, the permutation indices are returned.
 
 
@@ -43,16 +62,14 @@ def covert_coo_to_csr_indices_values(coo_indices, num_rows, values=None):
         torch.Tensor: Compressed CSR col indices.
         torch.Tensor: Permutation indices from sorting the col indices. Or permuted values if values are provided.
     """
+    coo_indices, permutation = _sort_coo_indices(coo_indices)
     row_indices, col_indices = coo_indices
     crow_indices = _compress_row_indices(row_indices, num_rows)
-    return crow_indices, col_indices, values
 
-    # col_indices, permutation = torch.sort(col_indices)
-   
-    # if values == None:
-    #     return crow_indices, col_indices, permutation
-    # else:
-    #     return crow_indices, col_indices, values[permutation]
+    if values == None:
+        return crow_indices, col_indices, permutation
+    else:
+        return crow_indices, col_indices, values[permutation]
 
 
 # TODO: add support for batched

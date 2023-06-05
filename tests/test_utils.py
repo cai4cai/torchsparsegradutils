@@ -7,7 +7,48 @@ from torchsparsegradutils.utils.utils import _compress_row_indices, demcompress_
 from torchsparsegradutils.utils.utils import (
     _compress_row_indices,
     demcompress_crow_indices,
+    _sort_coo_indices,
 )
+
+
+@parameterized_class(('name', 'device',), [
+    ("CPU", torch.device("cpu")),
+    ("CUDA", torch.device("cuda"),),
+])
+class TestSortCOOIndices(unittest.TestCase):
+    def setUp(self) -> None:
+        if not torch.cuda.is_available() and self.device == torch.device("cuda"):
+            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
+
+    def test_unbatched_sort(self):
+        nr, nc = 4, 4
+        indices = torch.randperm(nr * nc, device=self.device)
+        indices = torch.stack([indices // nc, indices % nc])
+
+        values = torch.arange(16, device=self.device)
+        sorted_indices_coalesced = torch.sparse_coo_tensor(indices, values).coalesce().indices()
+        coalesce_permutation = torch.sparse_coo_tensor(indices, values).coalesce().values()
+        sorted_indices, permutation = _sort_coo_indices(indices)
+        self.assertTrue(torch.equal(sorted_indices_coalesced, sorted_indices))
+        self.assertTrue(torch.equal(coalesce_permutation, permutation))
+
+    def test_batched_sort(self):
+        nr, nc = 4, 4
+        batch_size = 3
+        indices = torch.randperm(nr * nc, device=self.device)
+        indices = torch.stack([indices // nc, indices % nc])
+        sparse_indices = torch.cat([indices] * batch_size, dim=-1)
+        batch_indices = torch.arange(batch_size, device=self.device).repeat(16).unsqueeze(0)
+        batched_sparse_indices = torch.cat([batch_indices, sparse_indices])
+
+        values = torch.arange(nr * nc * batch_size, device=self.device)
+        sorted_indices_coalesced = torch.sparse_coo_tensor(batched_sparse_indices, values).coalesce().indices()
+        coalesce_permutation = torch.sparse_coo_tensor(batched_sparse_indices, values).coalesce().values()
+
+        sorted_indices, permutation = _sort_coo_indices(batched_sparse_indices)
+        self.assertTrue(torch.equal(sorted_indices_coalesced, sorted_indices))
+        self.assertTrue(torch.equal(coalesce_permutation, permutation))
+
 
 @parameterized_class(('name', 'device',), [
     ("CPU", torch.device("cpu")),
