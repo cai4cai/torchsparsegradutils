@@ -8,6 +8,8 @@ from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_strictly_triangular_csr_matrix,
 )
 
+# https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html#torch.sparse.check_sparse_tensor_invariants
+torch.sparse.check_sparse_tensor_invariants.enable()
 
 @parameterized_class(
     (
@@ -48,7 +50,7 @@ class TestGenRandomCOO(unittest.TestCase):
         ]
     )
     def test_incompatible_indices_dtype(self, _, indices_dtype):
-        with self.assertWarns(UserWarning):
+        with self.assertRaises(ValueError):
             generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype)
 
     # basic properties:
@@ -58,15 +60,12 @@ class TestGenRandomCOO(unittest.TestCase):
 
     @parameterized.expand(
         [
-            ("int08", torch.int8),
-            ("int16", torch.int16),
-            ("int32", torch.int32),
             ("int64", torch.int64),
         ]
     )  # NOTE: only torch.int64 is supported for COO indices, all other dtypes are casted to torch.int64
     def test_indices_dtype(self, _, indices_dtype):
         A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype, device=self.device)
-        self.assertEqual(A.indices().dtype, torch.int64)
+        self.assertEqual(A.indices().dtype, indices_dtype)
 
     @parameterized.expand(
         [
@@ -79,6 +78,7 @@ class TestGenRandomCOO(unittest.TestCase):
         A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, values_dtype=values_dtype, device=self.device)
         self.assertEqual(A.values().dtype, values_dtype)
 
+    
     @parameterized.expand(
         [
             ("4x4", torch.Size([4, 4]), 12),
@@ -143,7 +143,7 @@ class TestGenRandomCSR(unittest.TestCase):
         ]
     )
     def test_incompatible_indices_dtype(self, _, indices_dtype):
-        with self.assertWarns(UserWarning):
+        with self.assertRaises(ValueError):
             generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype)
 
     # basic properties:
@@ -153,12 +153,10 @@ class TestGenRandomCSR(unittest.TestCase):
 
     @parameterized.expand(
         [
-            ("int08", torch.int8),
-            ("int16", torch.int16),
             ("int32", torch.int32),
             ("int64", torch.int64),
         ]
-    )  # NOTE: All integer dtypes are supported for CSR indices, although below int32 is not recommended
+    )  # NOTE: Only int32 and int64 are supported for CSR indices
     def test_indices_dtype(self, _, indices_dtype):
         A = generate_random_sparse_csr_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype, device=self.device)
         self.assertEqual(A.crow_indices().dtype, indices_dtype)
@@ -241,7 +239,7 @@ class TestGenRandomStrictlyTriCOO(unittest.TestCase):
         ]
     )
     def test_incompatible_indices_dtype(self, _, indices_dtype):
-        with self.assertWarns(UserWarning):
+        with self.assertRaises(ValueError):
             generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([4, 4]), 5, indices_dtype=indices_dtype)
 
     # basic properties:
@@ -251,9 +249,6 @@ class TestGenRandomStrictlyTriCOO(unittest.TestCase):
 
     @parameterized.expand(
         [
-            ("int08", torch.int8),
-            ("int16", torch.int16),
-            ("int32", torch.int32),
             ("int64", torch.int64),
         ]
     )  # NOTE: only torch.int64 is supported for COO indices, all other dtypes are casted to torch.int64
@@ -261,7 +256,7 @@ class TestGenRandomStrictlyTriCOO(unittest.TestCase):
         A = generate_random_sparse_strictly_triangular_coo_matrix(
             torch.Size([4, 4]), 5, indices_dtype=indices_dtype, device=self.device
         )
-        self.assertEqual(A.indices().dtype, torch.int64)
+        self.assertEqual(A.indices().dtype, indices_dtype)
 
     @parameterized.expand(
         [
@@ -381,7 +376,7 @@ class TestGenRandomStrictlyTriCSR(unittest.TestCase):
         ]
     )
     def test_incompatible_indices_dtype(self, _, indices_dtype):
-        with self.assertWarns(UserWarning):
+        with self.assertRaises(ValueError):
             generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([4, 4]), 5, indices_dtype=indices_dtype)
 
     # basic properties:
@@ -391,12 +386,10 @@ class TestGenRandomStrictlyTriCSR(unittest.TestCase):
 
     @parameterized.expand(
         [
-            ("int08", torch.int8),
-            ("int16", torch.int16),
             ("int32", torch.int32),
             ("int64", torch.int64),
         ]
-    )  # NOTE: only torch.int64 is supported for COO indices, all other dtypes are casted to torch.int64
+    )
     def test_indices_dtype(self, _, indices_dtype):
         A = generate_random_sparse_strictly_triangular_csr_matrix(
             torch.Size([4, 4]), 5, indices_dtype=indices_dtype, device=self.device

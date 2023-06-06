@@ -16,7 +16,7 @@ def _sort_coo_indices(indices):
         torch.Tensor: A permutation tensor that contains the indices in the original tensor that give the sorted tensor.
     """
     indices_sorted, permutation = torch.unique(indices, dim=-1, sorted=True, return_inverse=True)
-    return indices_sorted, torch.argsort(permutation)
+    return indices_sorted.contiguous(), torch.argsort(permutation)
 
 
 def _compress_row_indices(row_indices, num_rows):

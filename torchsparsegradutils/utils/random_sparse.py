@@ -58,7 +58,7 @@ def generate_random_sparse_coo_matrix(
         ValueError: Raised if size has less than 2 dimensions.
         ValueError: Raised if size has more than 3 dimensions, as this implementation only supports 1 batch dimension.
         ValueError: Raised if nnz is greater than the total number of elements (size[-2] * size[-3]).
-        UserWarning: Raised when `indices_dtype` is not `torch.int64`, as this is the only indices dtype supported for sparse COO tensors. Any other index dtype will be converted to `torch.int64`.
+        ValueError: Raised if indices_dtype is not torch.int64 for sparse COO tensors.
 
     Returns:
         torch.Tensor: Returns a sparse COO tensor of shape size with nnz non-zero elements.
@@ -73,10 +73,7 @@ def generate_random_sparse_coo_matrix(
         raise ValueError("nnz must be less than or equal to nr * nc")
 
     if indices_dtype != torch.int64:
-        warnings.warn(
-            f"Only indices of type torch.int64 supported for sparse COO tensors. Indices of type {indices_dtype} will be cast to torch.int64.",
-            UserWarning,
-        )
+        raise ValueError("indices_dtype must be torch.int64 for sparse COO tensors")
 
     if len(size) == 2:
         coo_indices = _gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device)
@@ -111,7 +108,7 @@ def generate_random_sparse_csr_matrix(
         ValueError: Raised if size has less than 2 dimensions.
         ValueError: Raised if size has more than 3 dimensions, as this implementation only supports 1 batch dimension.
         ValueError: Raised if nnz is greater than the total number of elements (size[-2] * size[-3]).
-        UserWarning: Raised when `indices_dtype` has a bit depth less than `torch.int32`, as this is not recommended.
+        ValueError: Raised if indices_dtype is not torch.int64 or torch.int32, as these are the only indices dtypes supported for sparse CSR tensors.
 
     Returns:
         torch.Tensor: Returns a sparse CSR tensor of shape size with nnz non-zero elements.
@@ -125,7 +122,7 @@ def generate_random_sparse_csr_matrix(
         raise ValueError("nnz must be less than or equal to nr * nc")
 
     if (indices_dtype != torch.int64) and (indices_dtype != torch.int32):
-        warnings.warn(f"A bit depth of less than torch.int32 is not recommended for sparse CSR tensors", UserWarning)
+        raise ValueError("indices_dtype must be torch.int64 or torch.int32 for sparse CSR tensors")
 
     coo_indices = _gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device)
     crow_indices, col_indices, _ = convert_coo_to_csr_indices_values(coo_indices, size[-2], values=None)
@@ -135,7 +132,7 @@ def generate_random_sparse_csr_matrix(
     else:
         crow_indices = crow_indices.repeat(size[0], 1)
         col_indices = col_indices.repeat(size[0], 1)
-        values = torch.rand(nnz * size[0], dtype=values_dtype, device=device)
+        values = torch.rand((size[0], nnz), dtype=values_dtype, device=device)
 
     return torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device)
 
@@ -187,7 +184,7 @@ def generate_random_sparse_strictly_triangular_coo_matrix(
         ValueError: Raised if size has more than 3 dimensions, as this implementation only supports 1 batch dimension.
         ValueError: Raised if size is not a square matrix (n, n) or batched square matrix (b, n, n).
         ValueError: Raised if nnz is greater than (n * n-1)/2, where n is the number of rows or columns.
-        UserWarning: Raised when `indices_dtype` is not `torch.int64`, as this is the only indices dtype supported for sparse COO tensors. Any other index dtype will be converted to `torch.int64`.
+        ValueError: Raised if indices_dtype is not torch.int64 for sparse COO tensors.
 
     Returns:
         torch.Tensor: Returns a square strictly upper or lower sparse COO tensor of shape size with nnz non-zero elements.
@@ -204,10 +201,7 @@ def generate_random_sparse_strictly_triangular_coo_matrix(
         raise ValueError("nnz must be less than or equal to (n * n-1)/2, where n is the number of rows or columns")
 
     if indices_dtype != torch.int64:
-        warnings.warn(
-            f"Only indices of type torch.int64 supported for sparse COO tensors. Indices of type {indices_dtype} will be cast to torch.int64.",
-            UserWarning,
-        )
+        raise ValueError("indices_dtype must be torch.int64 for sparse COO tensors")
 
     if len(size) == 2:
         coo_indices = _gen_indices_2d_coo_strictly_tri(size[-2], nnz, upper=upper, dtype=indices_dtype, device=device)
@@ -247,7 +241,7 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
         ValueError: Raised if size has more than 3 dimensions, as this implementation only supports 1 batch dimension.
         ValueError: Raised if size is not a square matrix (n, n) or batched square matrix (b, n, n).
         ValueError: Raised if nnz is greater than (n * n-1)/2, where n is the number of rows or columns.
-        UserWarning: Raised when `indices_dtype` has a bit depth less than `torch.int32`, as this is not recommended.
+        ValueError: Raised if indices_dtype is not torch.int64 or torch.int32, as these are the only indices dtypes supported for sparse CSR tensors.
 
     Returns:
         torch.Tensor: Returns a square strictly upper or lower sparse CSR tensor of shape size with nnz non-zero elements.
@@ -264,7 +258,7 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
         raise ValueError("nnz must be less than or equal to (n * n-1)/2, where n is the number of rows or columns")
 
     if (indices_dtype != torch.int64) and (indices_dtype != torch.int32):
-        warnings.warn(f"A bit depth of less than torch.int32 is not recommended for sparse CSR tensors", UserWarning)
+        raise ValueError("indices_dtype must be torch.int64 or torch.int32 for sparse CSR tensors")
 
     coo_indices = _gen_indices_2d_coo_strictly_tri(size[-2], nnz, upper=upper, dtype=indices_dtype, device=device)
     crow_indices, col_indices, _ = convert_coo_to_csr_indices_values(coo_indices, size[-2], values=None)
@@ -274,6 +268,6 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
     else:
         crow_indices = crow_indices.repeat(size[0], 1)
         col_indices = col_indices.repeat(size[0], 1)
-        values = torch.rand(nnz * size[0], dtype=values_dtype, device=device)
+        values = torch.rand((size[0], nnz), dtype=values_dtype, device=device)
 
     return torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device)

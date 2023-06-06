@@ -13,6 +13,8 @@ from torchsparsegradutils.utils.utils import (
     convert_coo_to_csr,
 )
 
+# https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html#torch.sparse.check_sparse_tensor_invariants
+torch.sparse.check_sparse_tensor_invariants.enable()
 
 @parameterized_class(
     (
