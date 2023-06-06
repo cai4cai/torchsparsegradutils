@@ -11,6 +11,7 @@ from torchsparsegradutils.utils.random_sparse import (
 # https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html#torch.sparse.check_sparse_tensor_invariants
 torch.sparse.check_sparse_tensor_invariants.enable()
 
+
 @parameterized_class(
     (
         "name",
@@ -78,7 +79,6 @@ class TestGenRandomCOO(unittest.TestCase):
         A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, values_dtype=values_dtype, device=self.device)
         self.assertEqual(A.values().dtype, values_dtype)
 
-    
     @parameterized.expand(
         [
             ("4x4", torch.Size([4, 4]), 12),

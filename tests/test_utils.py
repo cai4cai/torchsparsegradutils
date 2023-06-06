@@ -16,6 +16,7 @@ from torchsparsegradutils.utils.utils import (
 # https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html#torch.sparse.check_sparse_tensor_invariants
 torch.sparse.check_sparse_tensor_invariants.enable()
 
+
 @parameterized_class(
     (
         "name",
