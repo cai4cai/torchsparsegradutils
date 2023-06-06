@@ -67,3 +67,7 @@ class SparseMatMul(torch.autograd.Function):
         # Now compute the dense gradient with respect to B
         gradB = torch.sparse.mm(A.t(), grad)
         return gradA, gradB
+    
+    
+def sparse_bmm(A, B):
+    pass

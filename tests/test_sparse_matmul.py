@@ -1,7 +1,9 @@
 import torch
 import unittest
+from parameterized import parameterized_class, parameterized
 from random import randrange
-from torchsparsegradutils import sparse_mm
+from torchsparsegradutils import sparse_mm, sparse_bmm
+from torchsparsegradutils.utils.random_sparse import generate_random_sparse_csr_matrix, generate_random_sparse_coo_matrix
 
 
 def gencoordinates(nr, nc, ni, device="cuda"):
@@ -103,6 +105,37 @@ class SparseMatMulTestCUDA(SparseMatMulTest):
             self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
         self.device = torch.device("cuda")
         super().setUp()
+        
+        
+@parameterized_class(
+    (
+        "name",
+        "device",
+    ),
+    [
+        ("CPU", torch.device("cpu")),
+        (
+            "CUDA",
+            torch.device("cuda"),
+        ),
+    ],
+)
+class TestBatchedSparseMatMul(unittest.TestCase):
+    def setUp(self) -> None:
+        if not torch.cuda.is_available() and self.device == torch.device("cuda"):
+            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
+    
+    
+    @parameterized.expand([
+        ("1", (4, 8, 16), (4, 16, 10), 32),
+    ])
+    def test_batched_sparse_matmul_coo(self, _, A_shape, B_shape, A_nnz):
+        A = generate_random_sparse_coo_matrix(A_shape, A_nnz, indices_dtype=torch.int64, values_dtype=torch.float64, device=self.device)
+        B = torch.randn(*B_shape, dtype=torch.float64, device=self.device)
+        Ad = A.to_dense()
+        res_sparse = sparse_bmm(A, B)
+        res_dense = torch.bmm(Ad, B)
+        self.assertTrue(torch.allclose(res_sparse, res_dense))
 
 
 if __name__ == "__main__":
