@@ -143,3 +143,44 @@ def _demcompress_crow_indices(crow_indices, num_rows):
     )
 
     return row_indices
+
+
+def sparse_block_diag(*sparse_tensors):
+    if len(sparse_tensors) == 0:
+        raise ValueError("At least one sparse tensor must be provided.")
+    elif len(sparse_tensors) == 1:
+        return sparse_tensors[0]
+
+    if all(sparse_tensor.layout == torch.sparse_coo for sparse_tensor in sparse_tensors):
+        
+        row_indices_list = []
+        col_indices_list = []
+        values_list = []
+        
+        for i, sparse_tensor in enumerate(sparse_tensors):            
+            
+            sparse_tensor = sparse_tensor.coalesce()
+            row_indices, col_indices = sparse_tensor.indices()
+            
+            # calculate block offsets
+            row_indices += i * sparse_tensor.size()[-2]
+            col_indices += i * sparse_tensor.size()[-1]
+            
+            row_indices_list.append(row_indices)
+            col_indices_list.append(col_indices)
+            values_list.append(sparse_tensor.values())
+            
+            
+        row_indices = torch.cat(row_indices_list)
+        col_indices = torch.cat(col_indices_list)
+        values = torch.cat(values_list)
+        return torch.sparse_coo_tensor(torch.stack([row_indices, col_indices]), 
+                                       values, 
+                                       torch.Size([sparse_tensor.size()[-2] * len(sparse_tensors), 
+                                                   sparse_tensor.size()[-1] * len(sparse_tensors)]))
+            
+    elif all(sparse_tensor.layout == torch.sparse_csr for sparse_tensor in sparse_tensors):
+        pass # sparse_csr method
+    else:
+        raise ValueError("Sparse tensors must either be all sparse_coo or sparse_csr.")
+

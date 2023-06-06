@@ -11,6 +11,7 @@ from torchsparsegradutils.utils.utils import (
     _demcompress_crow_indices,
     _sort_coo_indices,
     convert_coo_to_csr,
+    sparse_block_diag,
 )
 
 # https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html#torch.sparse.check_sparse_tensor_invariants
@@ -194,3 +195,35 @@ class TestCSRtoCOO(unittest.TestCase):
         A_coo_row_indices = A_coo.indices()[0]
         row_indices = _demcompress_crow_indices(A_csr.crow_indices(), A_coo.size()[0])
         self.assertTrue(torch.equal(A_coo_row_indices, row_indices))
+
+
+@parameterized_class(
+    (
+        "name",
+        "device",
+    ),
+    [
+        ("CPU", torch.device("cpu")),
+        (
+            "CUDA",
+            torch.device("cuda"),
+        ),
+    ],
+)
+class TestSparseBlockDiag(unittest.TestCase):
+    def setUp(self) -> None:
+        if not torch.cuda.is_available() and self.device == torch.device("cuda"):
+            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
+            
+        
+    @parameterized.expand(
+        [
+            ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
+            ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
+        ]
+    )
+    def test_sparse_block_diag_coo(self, _, size, nnz):
+        A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
+        A_coo_block_diag = sparse_block_diag(*[a for a in A_coo])
+        Ad_block_diag = torch.block_diag(*[a.to_dense() for a in A_coo])
+        self.assertTrue(torch.equal(A_coo_block_diag.to_dense(), Ad_block_diag))
