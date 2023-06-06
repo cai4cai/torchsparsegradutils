@@ -1,15 +1,17 @@
 """
 utility functions for generating random sparse matrices
 
-NOTE: sparse COO tensors have indices tensor of size (ndim, nse) and with element type torch.int64
+NOTE: sparse COO tensors have indices tensor of size (ndim, nse) and with indices type torch.int64
 NOTE: Sparse CSR The index tensors crow_indices and col_indices should have element type either torch.int64 (default) or torch.int32. 
       If you want to use MKL-enabled matrix operations, use torch.int32. 
       This is as a result of the default linking of pytorch being with MKL LP64, which uses 32 bit integer indexing
+NOTE: The batches of sparse CSR tensors are dependent: the number of specified elements in all batches must be the same. 
+      This somewhat  artificial constraint allows efficient storage of the indices of different CSR batches.
 """
 import warnings
 import torch
 import random
-from torchsparsegradutils.utils.utils import _compress_row_indices, convert_coo_to_csr_indices_values
+from torchsparsegradutils.utils.utils import convert_coo_to_csr_indices_values
 
 
 def _gen_indices_2d_coo(nr, nc, nnz, *, dtype=torch.int64, device=torch.device("cpu")):
@@ -46,8 +48,8 @@ def generate_random_sparse_coo_matrix(
     """Generates a random sparse COO matrix of the specified size and number of non-zero elements.
 
     Args:
-        size (tuple): Tuple specifying the dimensions of the batched sparse matrix. The size can be either (num_rows, num_cols) for a unbatched matrix or (batch_size, num_rows, num_cols) for a batched matrix.
-        nnz (int): Number of non-zero values in sparse matrix (number of sparse elements). This must be less than or equal to the total number of elements in the matrix.
+        size (tuple): Tuple specifying the dimensions of the sparse matrix. The size can be either (num_rows, num_cols) for an unbatched matrix or (batch_size, num_rows, num_cols) for a batched matrix.
+        nnz (int): Number of non-zero values in sparse matrix (number of sparse elements), per batch element. This must be less than or equal to the total number of elements in the matrix of each batch element.
         indices_dtype (torch.dtype, optional): Data type for indices of sparse tensor. Defaults to torch.int64.
         values_dtype (torch.dtype, optional): Data type for values of sparse tensor. Defaults to torch.float32.
         device (torch.device, optional): Device to generate the tensor on. Defaults to torch.device("cpu").
@@ -99,8 +101,8 @@ def generate_random_sparse_csr_matrix(
     """Generates a random sparse CSR matrix of the specified size and number of non-zero elements.
 
     Args:
-        size (tuple): Tuple specifying the dimensions of the batched sparse matrix. The size can be either (num_rows, num_cols) for a unbatched matrix or (batch_size, num_rows, num_cols) for a batched matrix.
-        nnz (int): Number of non-zero values in sparse matrix (number of sparse elements). This must be less than or equal to the total number of elements in the matrix.
+        size (tuple): Tuple specifying the dimensions of the sparse matrix. The size can be either (num_rows, num_cols) for an unbatched matrix or (batch_size, num_rows, num_cols) for a batched matrix.
+        nnz (int): Number of non-zero values in sparse matrix (number of sparse elements), per batch element. This must be less than or equal to the total number of elements in the matrix.
         indices_dtype (torch.dtype, optional): Data type for indices of sparse tensor. Defaults to torch.int64.
         values_dtype (torch.dtype, optional): Data type for values of sparse tensor. Defaults to torch.float32.
         device (torch.device, optional): Device to generate the tensor on. Defaults to torch.device("cpu").
@@ -147,7 +149,7 @@ def _gen_indices_2d_coo_strictly_tri(n, nnz, *, upper=True, dtype=torch.int64, d
     Args:
         n (int): Size of the square matrix (number of rows and columns).
         nnz (int): Number of elements the generated COO indices represent.
-        upper (bool, optional): Flag indicating whether to generate strictly upper triangular coordinates. Defaults to True.
+        upper (bool, optional): Flag indicating whether to generate strictly upper triangular coordinates, or strictly lower triangular coordinates. Defaults to True.
         dtype (torch.dtype, optional): Data type of the tensors. Defaults to torch.int64.
         device (torch.device, optional): Device to generate coordinates on. Defaults to torch.device("cpu").
 
@@ -173,8 +175,8 @@ def generate_random_sparse_strictly_triangular_coo_matrix(
     """Generates a random sparse COO square matrix with strictly upper or lower triangular coordinates.
 
     Args:
-        size (tuple): Tuple specifying the dimensions of the batched sparse matrix. The size can be either (num_rows, num_cols) for a unbatched matrix or (batch_size, num_rows, num_cols) for a batched matrix. The number of rows and columns must be equal.
-        nnz (int): Number of non-zero values in sparse matrix (number of sparse elements). nnz must be less than or equal to (n * n-1)/2, where n is the number of rows or columns. # TODO: per batch element...
+        size (tuple): Tuple specifying the dimensions of the sparse matrix. The size can be either (num_rows, num_cols) for an unbatched matrix or (batch_size, num_rows, num_cols) for a batched matrix. The number of rows and columns must be equal.
+        nnz (int): Number of non-zero values in sparse matrix (number of sparse elements), per batch element. nnz must be less than or equal to (n * n-1)/2, where n is the number of rows or columns.
         upper (bool, optional): If True, generates strictly upper triangular indices. If False, generates strictly lower triangular indices. Defaults to True.
         indices_dtype (torch.dtype, optional): Data type for indices of sparse tensor. Defaults to torch.int64.
         values_dtype (torch.dtype, optional): Data type for values of sparse tensor. Defaults to torch.float32.
@@ -233,8 +235,8 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
     """Generates a random sparse CSR square matrix with strictly upper or lower triangular coordinates.
 
     Args:
-        size (tuple): Tuple specifying the dimensions of the batched sparse matrix. The size can be either (num_rows, num_cols) for a unbatched matrix or (batch_size, num_rows, num_cols) for a batched matrix. The number of rows and columns must be equal.
-        nnz (int): Number of non-zero values in sparse matrix (number of sparse elements). nnz must be less than or equal to (n * n-1)/2, where n is the number of rows or columns.
+        size (tuple): Tuple specifying the dimensions of the sparse matrix. The size can be either (num_rows, num_cols) for an unbatched matrix or (batch_size, num_rows, num_cols) for a batched matrix. The number of rows and columns must be equal.
+        nnz (int): Number of non-zero values in sparse matrix (number of sparse elements), per batch element. nnz must be less than or equal to (n * n-1)/2, where n is the number of rows or columns.
         upper (bool, optional): If True, generates strictly upper triangular indices. If False, generates strictly lower triangular indices. Defaults to True.
         indices_dtype (torch.dtype, optional): Data type for indices of sparse tensor. Defaults to torch.int64.
         values_dtype (torch.dtype, optional): Data type for values of sparse tensor. Defaults to torch.float32.
@@ -275,31 +277,3 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
         values = torch.rand(nnz * size[0], dtype=values_dtype, device=device)
 
     return torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device)
-
-
-# # unit test and move to contraints
-# def is_strictly_triangular(crow_indices, col_indices, upper=True):
-#     """Check whether the given crow_indices and col_indices represent strictly upper triangular or strictly lower triangular indices.
-
-#     Args:
-#         crow_indices (torch.Tensor): Tensor of shape [nr+1] containing the crow_indices.
-#         col_indices (torch.Tensor): Tensor of shape [nnz] containing the col_indices.
-#         upper (bool, optional): Flag indicating whether to check for strictly upper triangular indices. Defaults to True.
-
-#     Returns:
-#         bool: True if the indices are strictly upper triangular or strictly lower triangular, False otherwise.
-#     """
-#     assert crow_indices.dim() == 1 and col_indices.dim() == 1, "Input tensors must be 1-dimensional."
-#     assert crow_indices.size(0) == crow_indices[-1], "crow_indices must represent a valid compressed sparse row structure."
-#     assert col_indices.size(0) == crow_indices[-1], "col_indices must have the same length as crow_indices[-1]."
-
-#     if upper:
-#         for i in range(crow_indices.size(0) - 1):
-#             if (col_indices[crow_indices[i]:crow_indices[i+1]] <= i).any():
-#                 return False
-#         return True
-#     else:
-#         for i in range(crow_indices.size(0) - 1):
-#             if (col_indices[crow_indices[i]:crow_indices[i+1]] >= i+1).any():
-#                 return False
-#         return True
