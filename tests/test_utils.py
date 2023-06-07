@@ -14,7 +14,7 @@ from torchsparsegradutils.utils.utils import (
     sparse_block_diag,
 )
 
-# https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html#torch.sparse.check_sparse_tensor_invariants
+# https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html
 torch.sparse.check_sparse_tensor_invariants.enable()
 
 
@@ -224,6 +224,21 @@ class TestSparseBlockDiag(unittest.TestCase):
     )
     def test_sparse_block_diag_coo(self, _, size, nnz):
         A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
-        A_coo_block_diag = sparse_block_diag(*[a for a in A_coo])
-        Ad_block_diag = torch.block_diag(*[a.to_dense() for a in A_coo])
+        A_d = A_coo.to_dense()
+        A_coo_block_diag = sparse_block_diag(*A_coo)
+        Ad_block_diag = torch.block_diag(*A_d)
         self.assertTrue(torch.equal(A_coo_block_diag.to_dense(), Ad_block_diag))
+
+    @parameterized.expand(
+        [
+            ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
+            ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
+        ]
+    )
+    def test_sparse_block_diag_csr(self, _, size, nnz):
+        A_csr = generate_random_sparse_csr_matrix(size, nnz, device=self.device)
+        A_d = A_csr.to_dense()
+        A_csr_block_diag = sparse_block_diag(*A_csr)
+        Ad_block_diag = torch.block_diag(*A_d)
+        self.assertTrue(torch.equal(A_csr_block_diag.to_dense(), Ad_block_diag))
+        # TODO: sparse_block_diag changes (in place) the indices of the input CSR tensor
