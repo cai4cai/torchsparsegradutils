@@ -146,13 +146,32 @@ def _demcompress_crow_indices(crow_indices, num_rows):
 
 
 def sparse_block_diag(*sparse_tensors):
-    if not isinstance(sparse_tensors, (list, tuple)):
-        raise TypeError('sparse_tensors must be a list or a tuple')
+    """
+    Function to create a block diagonal sparse matrix from provided sparse tensors.
+    This function is designed to replicate torch.block_diag(), but for sparse tensors,
+    but only supports 2D sparse tensors 
+    (whereas torch.block_diag() supports dense tensors of 0, 1 or 2 dimensions).
+
+    Args:
+        *sparse_tensors (torch.Tensor): Variable length list of sparse tensors. All input tensors must either be all 
+                                        sparse_coo or all sparse_csr format. The input sparse tensors must have exactly 
+                                        two sparse dimensions and no dense dimensions.
+
+    Returns:
+        A block diagonal sparse tensor in the same format (either sparse_coo or sparse_csr) as the input tensors.
+
+    Raises:
+        TypeError: If the inputs are not provided as a list or tuple.
+        ValueError: If no tensors are provided or if the provided tensors are not all of the same sparse format.
+        ValueError: If all sparse tensors do not have two sparse dimensions and zero dense dimensions.
+    """
+
+    for i, sparse_tensor in enumerate(sparse_tensors):
+        if not isinstance(sparse_tensor, torch.Tensor):
+            raise TypeError(f"TypeError: expected Tensor as element {i} in argument 0, but got {type(sparse_tensor).__name__}")
 
     if len(sparse_tensors) == 0:
         raise ValueError("At least one sparse tensor must be provided.")
-    elif len(sparse_tensors) == 1:
-        return sparse_tensors[0]
     
     if all(sparse_tensor.layout == torch.sparse_coo for sparse_tensor in sparse_tensors):
         layout = torch.sparse_coo
@@ -167,6 +186,9 @@ def sparse_block_diag(*sparse_tensors):
     if not all(sparse_tensor.dense_dim() == 0 for sparse_tensor in sparse_tensors):
         raise ValueError("All sparse tensors must have zero dense dimensions.")
 
+    if len(sparse_tensors) == 1:
+        return sparse_tensors[0]
+    
     if layout == torch.sparse_coo:
         
         row_indices_list = []
