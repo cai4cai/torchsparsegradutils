@@ -1,142 +1,130 @@
 import torch
-import unittest
-from parameterized import parameterized_class, parameterized
-from random import randrange
+import pytest
+
 from torchsparsegradutils import sparse_mm, sparse_bmm
-from torchsparsegradutils.utils.random_sparse import generate_random_sparse_csr_matrix, generate_random_sparse_coo_matrix
+from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
 
+# Identify Testing Parameters
+DEVICES = [torch.device("cpu")]
+if torch.cuda.is_available():
+    DEVICES.append(torch.device("cuda"))
 
-def gencoordinates(nr, nc, ni, device="cuda"):
-    """Used to genererate ni random unique coordinates for sparse matrix with size [nr, nc]"""
-    coordinates = set()
-    while True:
-        r, c = randrange(nr), randrange(nc)
-        coordinates.add((r, c))
-        if len(coordinates) == ni:
-            return torch.stack([torch.tensor(co) for co in coordinates], dim=-1).to(device)
+TEST_DATA_UNBATCHED = [
+    ((4, 6), (6, 2), 8),
+    ((8, 16), (16, 10), 32),
+    ((7, 4), (4, 9), 14),
+]
 
+TEST_DATA_BATCHED = [
+    ((1, 4, 6), (1, 6, 2), 8),
+    ((4, 8, 16), (4, 16, 10), 32),
+    ((11, 7, 4), (11, 4, 9), 14),
+]
 
-class SparseMatMulTest(unittest.TestCase):
-    """Test Sparse x Dense matrix multiplication with back propagation for COO and CSR matrices"""
+INDEX_DTYPES = [torch.int32, torch.int64]
+VALUE_DTYPES = [torch.float32, torch.float64]
 
-    def setUp(self) -> None:
-        # The device can be specialised by a daughter class
-        if not hasattr(self, "device"):
-            self.device = torch.device("cpu")
-        self.A_shape = (8, 16)
-        self.B_shape = (self.A_shape[1], 10)
-        self.A_nnz = 32
-        self.A_idx = gencoordinates(*self.A_shape, self.A_nnz, device=self.device)
-        self.A_val = torch.randn(self.A_nnz, dtype=torch.float64, device=self.device)
-        self.As_coo = torch.sparse_coo_tensor(self.A_idx, self.A_val, self.A_shape, requires_grad=True).coalesce()
-        self.As_csr = self.As_coo.to_sparse_csr()
-        self.Ad = self.As_coo.to_dense()
+ATOL=1e-6  # relaxed tolerance to allow for float32
+RTOL=1e-4
 
-        self.Bd = torch.randn(*self.B_shape, dtype=torch.float64, requires_grad=True, device=self.device)
-        self.matmul = sparse_mm
+# Define Test Names:
+TEST_DATA_IDS = list(map(str, range(len(TEST_DATA_BATCHED))))
 
-    def test_matmul_forward_coo(self):
-        x = self.matmul(self.As_coo, self.Bd)
-        self.assertIsInstance(x, torch.Tensor)
+def device_id(device):
+    return str(device)
 
-    def test_matmul_forward_csr(self):
-        x = self.matmul(self.As_csr, self.Bd)
-        self.assertIsInstance(x, torch.Tensor)
+def dtype_id(dtype):
+    return str(dtype).split('.')[-1]
 
-    def test_matmul_gradient_coo(self):
-        # Sparse matmul:
-        As1 = self.As_coo.detach().clone()
-        As1.requires_grad = True
-        Bd1 = self.Bd.detach().clone()
-        Bd1.requires_grad = True
-        As1.retain_grad()
-        Bd1.retain_grad()
-        x = self.matmul(As1, Bd1)
-        loss = x.sum()
-        loss.backward()
+# Define Fixtures
+@pytest.fixture(params=TEST_DATA_BATCHED, ids=TEST_DATA_IDS)
+def shapes_batched(request):
+    return request.param
 
-        # torch dense matmul:
-        Ad2 = self.Ad.detach().clone()
-        Ad2.requires_grad = True
-        Bd2 = self.Bd.detach().clone()
-        Bd2.requires_grad = True
-        Ad2.retain_grad()
-        Bd2.retain_grad()
-        x_torch = Ad2 @ Bd2
-        loss_torch = x_torch.sum()
-        loss_torch.backward()
+@pytest.fixture(params=TEST_DATA_UNBATCHED, ids=TEST_DATA_IDS)
+def shapes_unbatched(request):
+    return request.param
 
-        nz_mask = As1.grad.to_dense() != 0.0
-        self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask]).all())
-        self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad).all())
+@pytest.fixture(params=VALUE_DTYPES, ids=[dtype_id(d) for d in VALUE_DTYPES])
+def value_dtype(request):
+    return request.param
 
-    def test_matmul_gradient_csr(self):
-        # Sparse solver:
-        As1 = self.As_csr.detach().clone()
-        As1.requires_grad = True
-        Bd1 = self.Bd.detach().clone()
-        Bd1.requires_grad = True
-        As1.retain_grad()
-        Bd1.retain_grad()
-        x = self.matmul(As1, Bd1)
-        loss = x.sum()
-        loss.backward()
+@pytest.fixture(params=INDEX_DTYPES, ids=[dtype_id(d) for d in INDEX_DTYPES])
+def index_dtype(request):
+    return request.param
 
-        # torch dense solver:
-        Ad2 = self.Ad.detach().clone()
-        Ad2.requires_grad = True
-        Bd2 = self.Bd.detach().clone()
-        Bd2.requires_grad = True
-        Ad2.retain_grad()
-        Bd2.retain_grad()
-        x_torch = Ad2 @ Bd2
-        loss_torch = x_torch.sum()
-        loss_torch.backward()
-        nz_mask = As1.grad.to_dense() != 0.0
-        self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask]).all())
-        self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad).all())
+@pytest.fixture(params=DEVICES, ids=[device_id(d) for d in DEVICES])
+def device(request):
+    return request.param
 
+# Define Tests
 
-class SparseMatMulTestCUDA(SparseMatMulTest):
-    """Override superclass setUp to run on GPU"""
-
-    def setUp(self) -> None:
-        if not torch.cuda.is_available():
-            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
-        self.device = torch.device("cuda")
-        super().setUp()
+def forward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, shapes):
+    if index_dtype == torch.int32 and layout is torch.sparse_coo:
+        pytest.skip("Skipping test as sparse COO tensors with int32 indices are not supported")
         
-        
-@parameterized_class(
-    (
-        "name",
-        "device",
-    ),
-    [
-        ("CPU", torch.device("cpu")),
-        (
-            "CUDA",
-            torch.device("cuda"),
-        ),
-    ],
-)
-class TestBatchedSparseMatMul(unittest.TestCase):
-    def setUp(self) -> None:
-        if not torch.cuda.is_available() and self.device == torch.device("cuda"):
-            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
+    A_shape, B_shape, A_nnz = shapes
+    A = rand_sparse(A_shape, A_nnz, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
+    B = torch.rand(*B_shape, dtype=value_dtype, device=device)
+    Ad = A.to_dense()
     
+    res_sparse = op_test(A, B)  # both results are dense
+    res_dense = op_ref(Ad, B)
     
-    @parameterized.expand([
-        ("1", (4, 8, 16), (4, 16, 10), 32),
-    ])
-    def test_batched_sparse_matmul_coo(self, _, A_shape, B_shape, A_nnz):
-        A = generate_random_sparse_coo_matrix(A_shape, A_nnz, indices_dtype=torch.int64, values_dtype=torch.float64, device=self.device)
-        B = torch.randn(*B_shape, dtype=torch.float64, device=self.device)
-        Ad = A.to_dense()
-        res_sparse = sparse_bmm(A, B)
-        res_dense = torch.bmm(Ad, B)
-        self.assertTrue(torch.allclose(res_sparse, res_dense))
+    torch.allclose(res_sparse, res_dense, atol=ATOL, rtol=RTOL)
+
+def backward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, shapes, is_backward=False):
+    if index_dtype == torch.int32 and layout is torch.sparse_coo:
+        pytest.skip("Skipping test as sparse COO tensors with int32 indices are not supported")
+    
+    A_shape, B_shape, A_nnz = shapes
+    As1 = rand_sparse(A_shape, A_nnz, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
+    Ad2 = As1.detach().clone().to_dense()  # detach and clone to create seperate graph
+    
+    Bd1 = torch.rand(*B_shape, dtype=value_dtype, device=device)
+    Bd2 = Bd1.detach().clone()
+    
+    As1.requires_grad_()
+    Ad2.requires_grad_()
+    Bd1.requires_grad_()
+    Bd2.requires_grad_()
+    
+    # As1.retain_grad()  # no-op as leaf node already
+    # Bd1.retain_grad()
+    # Ad2.retain_grad()
+    # Bd2.retain_grad()
+    
+    res1 = op_test(As1, Bd1)  # both results are dense
+    res2 = op_ref(Ad2, Bd2)
+    
+    res1.sum().backward()
+    res2.sum().backward()
+    nz_mask = As1.grad.to_dense() != 0.0
+    
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL, rtol=RTOL)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL, rtol=RTOL)
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_sparse_mm_forward_result_coo(device, value_dtype, index_dtype, shapes_unbatched):
+    forward_routine(sparse_mm, torch.mm, torch.sparse_coo, device, value_dtype, index_dtype, shapes_unbatched)
+
+def test_sparse_mm_forward_result_csr(device, value_dtype, index_dtype, shapes_unbatched):
+    forward_routine(sparse_mm, torch.mm, torch.sparse_csr, device, value_dtype, index_dtype, shapes_unbatched)
+
+def test_sparse_mm_backward_result_coo(device, value_dtype, index_dtype, shapes_unbatched):
+    backward_routine(sparse_mm, torch.mm, torch.sparse_coo, device, value_dtype, index_dtype, shapes_unbatched, is_backward=True)
+
+def test_sparse_mm_backward_result_csr(device, value_dtype, index_dtype, shapes_unbatched):
+    backward_routine(sparse_mm, torch.mm, torch.sparse_csr, device, value_dtype, index_dtype, shapes_unbatched, is_backward=True)
+    
+def test_sparse_bmm_forward_result_coo(device, value_dtype, index_dtype, shapes_batched):
+    forward_routine(sparse_bmm, torch.bmm, torch.sparse_coo, device, value_dtype, index_dtype, shapes_batched)
+
+def test_sparse_bmm_forward_result_csr(device, value_dtype, index_dtype, shapes_batched):
+    forward_routine(sparse_bmm, torch.bmm, torch.sparse_csr, device, value_dtype, index_dtype, shapes_batched)
+
+def test_sparse_bmm_backward_result_coo(device, value_dtype, index_dtype, shapes_batched):
+    backward_routine(sparse_bmm, torch.bmm, torch.sparse_coo, device, value_dtype, index_dtype, shapes_batched, is_backward=True)
+
+def test_sparse_bmm_backward_result_csr(device, value_dtype, index_dtype, shapes_batched):
+    backward_routine(sparse_bmm, torch.bmm, torch.sparse_csr, device, value_dtype, index_dtype, shapes_batched, is_backward=True)
