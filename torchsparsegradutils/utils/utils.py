@@ -144,7 +144,7 @@ def _demcompress_crow_indices(crow_indices, num_rows):
 
     return row_indices
 
-
+# TODO: use @torch.jit.script ??
 def sparse_block_diag(*sparse_tensors):
     """
     Function to create a block diagonal sparse matrix from provided sparse tensors.
@@ -204,8 +204,8 @@ def sparse_block_diag(*sparse_tensors):
             row_indices, col_indices = sparse_tensor.indices()
             
             # calculate block offsets
-            row_indices += i * sparse_tensor.size()[-2]
-            col_indices += i * sparse_tensor.size()[-1]
+            row_indices = row_indices + i * sparse_tensor.size()[-2]
+            col_indices = col_indices + i * sparse_tensor.size()[-1]
 
             # accumulate indices and values:
             row_indices_list.append(row_indices)
@@ -233,15 +233,15 @@ def sparse_block_diag(*sparse_tensors):
         num_col = 0
         
         for i, sparse_tensor in enumerate(sparse_tensors):
-
-            crow_indices = sparse_tensor.crow_indices()
-            col_indices = sparse_tensor.col_indices()            
+            
+            crow_indices = sparse_tensor.crow_indices()#.detach()
+            col_indices = sparse_tensor.col_indices()#.detach()           
             
             # Calculate block offsets
             if i > 0:
                 crow_indices = crow_indices[1:]
-                crow_indices += crow_indices_list[-1][-1]
-            col_indices += i * sparse_tensor.size()[-1]
+                crow_indices = crow_indices + crow_indices_list[-1][-1]
+            col_indices = col_indices + i * sparse_tensor.size()[-1]
 
             # accumulate tensor sizes:
             num_row += sparse_tensor.size()[-2]
