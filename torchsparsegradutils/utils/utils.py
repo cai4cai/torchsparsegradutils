@@ -204,6 +204,7 @@ def sparse_block_diag(*sparse_tensors):
             row_indices, col_indices = sparse_tensor.indices()
             
             # calculate block offsets
+            # not in-place addition to avoid modifying original indices
             row_indices = row_indices + i * sparse_tensor.size()[-2]
             col_indices = col_indices + i * sparse_tensor.size()[-1]
 
@@ -234,14 +235,15 @@ def sparse_block_diag(*sparse_tensors):
         
         for i, sparse_tensor in enumerate(sparse_tensors):
             
-            crow_indices = sparse_tensor.crow_indices()#.detach()
-            col_indices = sparse_tensor.col_indices()#.detach()           
+            crow_indices = sparse_tensor.crow_indices()
+            col_indices = sparse_tensor.col_indices()
             
             # Calculate block offsets
+            # not in-place addition to avoid modifying original indices
             if i > 0:
                 crow_indices = crow_indices[1:]
                 crow_indices = crow_indices + crow_indices_list[-1][-1]
-            col_indices = col_indices + i * sparse_tensor.size()[-1]
+            col_indices = col_indices + i * sparse_tensor.size()[-1]  # THE BACKWARDS BUG IS HERE
 
             # accumulate tensor sizes:
             num_row += sparse_tensor.size()[-2]
