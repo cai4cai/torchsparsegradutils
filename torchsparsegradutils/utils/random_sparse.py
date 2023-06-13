@@ -14,6 +14,24 @@ import random
 from torchsparsegradutils.utils.utils import convert_coo_to_csr_indices_values
 
 
+def rand_sparse(size, nnz, layout=torch.sparse_coo, *, indices_dtype=torch.int64, values_dtype=torch.float32, device=torch.device("cpu")):
+    if layout == torch.sparse_coo:
+        return generate_random_sparse_coo_matrix(size, nnz, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device)
+    elif layout == torch.sparse_csr:
+        return generate_random_sparse_csr_matrix(size, nnz, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device)
+    else:
+        raise ValueError("Unsupported layout type. It should be either torch.sparse_coo or torch.sparse_csr")
+
+
+def rand_sparse_tri(size, nnz, layout=torch.sparse_coo, *, upper=True, indices_dtype=torch.int64, values_dtype=torch.float32, device=torch.device("cpu")):
+    if layout == torch.sparse_coo:
+        return generate_random_sparse_strictly_triangular_coo_matrix(size, nnz, upper=upper, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device)
+    elif layout == torch.sparse_csr:
+        return generate_random_sparse_strictly_triangular_csr_matrix(size, nnz, upper=upper, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device)
+    else:
+        raise ValueError("Unsupported layout type. It should be either torch.sparse_coo or torch.sparse_csr")
+    
+
 def _gen_indices_2d_coo(nr, nc, nnz, *, dtype=torch.int64, device=torch.device("cpu")):
     """Generates nnz random unique coordinates in COO format.
 
