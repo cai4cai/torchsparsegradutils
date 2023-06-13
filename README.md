@@ -30,5 +30,5 @@ or
 A number of unittests are provided, which can be run as:
 
 ```
-python -m unittest
+python -m pytest
 ```
