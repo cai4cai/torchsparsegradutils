@@ -203,7 +203,7 @@ class TestLSMRReturns(unittest.TestCase):
 
     def test_unchanged_x0(self):
         # x, istop, itn, normr, normar, normA, condA, normx = self.returnValuesX0
-        x = self.returnValuesX0[0]
+        # x = self.returnValuesX0[0]  # variable unused
         self.assertTrue(torch.allclose(self.x00, self.x0, atol=1e-3, rtol=1e-4))
 
     def testNormr(self):
@@ -283,7 +283,7 @@ def lsmrtest(m, n, damp, dtype, device):
     btol = 1.0e-7
     conlim = 1.0e10
     itnlim = 10 * n
-    show = 1
+    # show = 1  # variable unused
 
     # x, istop, itn, normr, normar, norma, conda, normx \
     #  = lsmr(A, b, damp, atol, btol, conlim, itnlim, show)

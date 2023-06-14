@@ -203,7 +203,7 @@ class SparseTriangularSolveTest(unittest.TestCase):
     def test_solver_non_triangular_error(self):
         """Test to check that solver throws an ValueError if a diagonal is specified in input
         but unitriangular=True in solver arguments"""
-        if self.unitriangular == False:  # statement to stop test running in SparseUnitTriangularSolveTest
+        if self.unitriangular is False:  # statement to stop test running in SparseUnitTriangularSolveTest
             As1 = self.As_csr_triu.detach().clone()
             As1.requires_grad = True
             Bd1 = self.Bd.detach().clone()

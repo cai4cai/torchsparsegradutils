@@ -118,7 +118,6 @@ def bicgstab(
         v = torch.zeros(n, dtype=res_dtype, device=res_device)
 
     while not finished:
-
         beta = rho_next / rho * alpha / omega
         rho = rho_next
 
@@ -181,7 +180,7 @@ def bicgstab(
             finished = True
             continue
 
-    converged = residNorm <= threshold
+    # converged = residNorm <= threshold  # variable unused
     bestSolution = x
     residNorm = residNorm
 

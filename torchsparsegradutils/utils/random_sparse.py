@@ -2,10 +2,10 @@
 utility functions for generating random sparse matrices
 
 NOTE: sparse COO tensors have indices tensor of size (ndim, nse) and with indices type torch.int64
-NOTE: Sparse CSR The index tensors crow_indices and col_indices should have element type either torch.int64 (default) or torch.int32. 
-      If you want to use MKL-enabled matrix operations, use torch.int32. 
+NOTE: Sparse CSR The index tensors crow_indices and col_indices should have element type either torch.int64 (default) or torch.int32.
+      If you want to use MKL-enabled matrix operations, use torch.int32.
       This is as a result of the default linking of pytorch being with MKL LP64, which uses 32 bit integer indexing
-NOTE: The batches of sparse CSR tensors are dependent: the number of specified elements in all batches must be the same. 
+NOTE: The batches of sparse CSR tensors are dependent: the number of specified elements in all batches must be the same.
       This somewhat  artificial constraint allows efficient storage of the indices of different CSR batches.
 """
 import warnings
@@ -14,23 +14,48 @@ import random
 from torchsparsegradutils.utils.utils import convert_coo_to_csr_indices_values
 
 
-def rand_sparse(size, nnz, layout=torch.sparse_coo, *, indices_dtype=torch.int64, values_dtype=torch.float32, device=torch.device("cpu")):
+def rand_sparse(
+    size,
+    nnz,
+    layout=torch.sparse_coo,
+    *,
+    indices_dtype=torch.int64,
+    values_dtype=torch.float32,
+    device=torch.device("cpu"),
+):
     if layout == torch.sparse_coo:
-        return generate_random_sparse_coo_matrix(size, nnz, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device)
+        return generate_random_sparse_coo_matrix(
+            size, nnz, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device
+        )
     elif layout == torch.sparse_csr:
-        return generate_random_sparse_csr_matrix(size, nnz, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device)
+        return generate_random_sparse_csr_matrix(
+            size, nnz, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device
+        )
     else:
         raise ValueError("Unsupported layout type. It should be either torch.sparse_coo or torch.sparse_csr")
 
 
-def rand_sparse_tri(size, nnz, layout=torch.sparse_coo, *, upper=True, indices_dtype=torch.int64, values_dtype=torch.float32, device=torch.device("cpu")):
+def rand_sparse_tri(
+    size,
+    nnz,
+    layout=torch.sparse_coo,
+    *,
+    upper=True,
+    indices_dtype=torch.int64,
+    values_dtype=torch.float32,
+    device=torch.device("cpu"),
+):
     if layout == torch.sparse_coo:
-        return generate_random_sparse_strictly_triangular_coo_matrix(size, nnz, upper=upper, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device)
+        return generate_random_sparse_strictly_triangular_coo_matrix(
+            size, nnz, upper=upper, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device
+        )
     elif layout == torch.sparse_csr:
-        return generate_random_sparse_strictly_triangular_csr_matrix(size, nnz, upper=upper, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device)
+        return generate_random_sparse_strictly_triangular_csr_matrix(
+            size, nnz, upper=upper, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device
+        )
     else:
         raise ValueError("Unsupported layout type. It should be either torch.sparse_coo or torch.sparse_csr")
-    
+
 
 def _gen_indices_2d_coo(nr, nc, nnz, *, dtype=torch.int64, device=torch.device("cpu")):
     """Generates nnz random unique coordinates in COO format.

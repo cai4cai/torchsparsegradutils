@@ -81,7 +81,7 @@ class SparseTriangularSolve(torch.autograd.Function):
         xselect = x.index_select(0, A_col_idx)  # x[j, :]
 
         if ctx.ut is True and torch.any(A_row_idx == A_col_idx):
-            raise ValueError(f"First input should be strictly triangular (i.e. unit diagonals is implicit)")
+            raise ValueError("First input should be strictly triangular (i.e. unit diagonals is implicit)")
 
         # Dot product:
         mgbx = mgradbselect * xselect
@@ -96,12 +96,12 @@ class SparseTriangularSolve(torch.autograd.Function):
 
 
 def sparse_generic_solve(A, B, solve=None, transpose_solve=None):
-    if solve == None or transpose_solve == None:
+    if solve is None or transpose_solve is None:
         from .utils import minres
 
-        if solve == None:
+        if solve is None:
             solve = minres
-        if transpose_solve == None:
+        if transpose_solve is None:
             # MINRES assumes A to be symmetric -> no need to transpose A
             transpose_solve = minres
 

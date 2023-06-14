@@ -2,12 +2,12 @@ import torch
 
 
 def sparse_generic_lstsq(A, B, lstsq=None, transpose_lstsq=None):
-    if lstsq == None or transpose_lstsq == None:
+    if lstsq is None or transpose_lstsq is None:
         from .utils import lsmr
 
-        if lstsq == None:
+        if lstsq is None:
             lstsq = lambda AA, BB: lsmr(AA, BB)[0]
-        if transpose_lstsq == None:
+        if transpose_lstsq is None:
             # MINRES assumes A to be symmetric -> no need to transpose A
             transpose_lstsq = lambda AA, BB: lsmr(torch.adjoint(AA), BB, AA)[0]
 

@@ -11,11 +11,11 @@ from .jax_bindings import t2j_csr as _t2j_csr
 
 
 def sparse_solve_j4t(A, B, solve=None, transpose_solve=None):
-    if solve == None or transpose_solve == None:
+    if solve is None or transpose_solve is None:
         # Use bicgstab by default
-        if solve == None:
+        if solve is None:
             solve = jax.scipy.sparse.linalg.bicgstab
-        if transpose_solve == None:
+        if transpose_solve is None:
             transpose_solve = lambda A, B: jax.scipy.sparse.linalg.bicgstab(A.transpose(), B)
 
     return SparseSolveJ4T.apply(A, B, solve, transpose_solve)

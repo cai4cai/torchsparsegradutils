@@ -39,8 +39,7 @@ class TestStackCSR(unittest.TestCase):
     def setUp(self) -> None:
         if not torch.cuda.is_available() and self.device == torch.device("cuda"):
             self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
-            
-    
+
     @parameterized.expand(
         [
             ("4x4_12n_d0", torch.Size([4, 4]), 12, 0),
@@ -55,6 +54,7 @@ class TestStackCSR(unittest.TestCase):
         csr_stacked = stack_csr(csr_list)
         dense_stacked = torch.stack(dense_list)
         self.assertTrue(torch.equal(csr_stacked.to_dense(), dense_stacked))
+
 
 @parameterized_class(
     (
@@ -234,6 +234,7 @@ class TestCSRtoCOO(unittest.TestCase):
         row_indices = _demcompress_crow_indices(A_csr.crow_indices(), A_coo.size()[0])
         self.assertTrue(torch.equal(A_coo_row_indices, row_indices))
 
+
 @parameterized_class(
     (
         "name",
@@ -251,10 +252,9 @@ class TestSparseBlockDiag(unittest.TestCase):
     def setUp(self) -> None:
         if not torch.cuda.is_available() and self.device == torch.device("cuda"):
             self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
-            
-        
+
     @parameterized.expand(
-        [            
+        [
             ("1x4x4_12n", torch.Size([1, 4, 4]), 12),
             ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
             ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
@@ -266,8 +266,7 @@ class TestSparseBlockDiag(unittest.TestCase):
         A_coo_block_diag = sparse_block_diag(*A_coo)
         Ad_block_diag = torch.block_diag(*A_d)
         self.assertTrue(torch.equal(A_coo_block_diag.to_dense(), Ad_block_diag))
-        
-        
+
     @parameterized.expand(
         [
             ("1x4x4_12n", torch.Size([1, 4, 4]), 12),
@@ -278,20 +277,19 @@ class TestSparseBlockDiag(unittest.TestCase):
     def test_sparse_block_diag_coo_backward(self, _, size, nnz):
         A_coo = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
         A_d = A_coo.detach().clone().to_dense()
-        
+
         A_coo.requires_grad_(True)
         A_d.requires_grad_(True)
-        
+
         A_coo_block_diag = sparse_block_diag(*A_coo)
         A_d_block_diag = torch.block_diag(*A_d)
-        
+
         A_coo_block_diag.sum().backward()
         A_d_block_diag.sum().backward()
-        
-        nz_mask = A_coo.grad.to_dense() != 0.0
-        
-        self.assertTrue(torch.allclose(A_coo.grad.to_dense()[nz_mask], A_d.grad[nz_mask]))
 
+        nz_mask = A_coo.grad.to_dense() != 0.0
+
+        self.assertTrue(torch.allclose(A_coo.grad.to_dense()[nz_mask], A_d.grad[nz_mask]))
 
     @parameterized.expand(
         [
@@ -306,7 +304,7 @@ class TestSparseBlockDiag(unittest.TestCase):
         A_csr_block_diag = sparse_block_diag(*A_csr)
         Ad_block_diag = torch.block_diag(*A_d)
         self.assertTrue(torch.equal(A_csr_block_diag.to_dense(), Ad_block_diag))
-        
+
     @parameterized.expand(
         [
             ("1x4x4_12n", torch.Size([1, 4, 4]), 12),  # passes for this case
@@ -315,52 +313,57 @@ class TestSparseBlockDiag(unittest.TestCase):
         ]
     )
     def test_sparse_block_diag_csr_backward_dense_grad(self, _, size, nnz):
-        self.skipTest(reason="This test is not passing due to a BUG in PyTorch, which tries to differential CSR indices and results in: RuntimeError: isDifferentiableType(variable.scalar_type())")
+        self.skipTest(
+            reason="This test is not passing due to a BUG in PyTorch, which tries to differential CSR indices and results in: RuntimeError: isDifferentiableType(variable.scalar_type())"
+        )
         A_csr = generate_random_sparse_csr_matrix(size, nnz, device=self.device)
         A_d = A_csr.detach().clone().to_dense()
-        
+
         A_csr.requires_grad_(True)
         A_d.requires_grad_(True)
-        
+
         A_csr_block_diag = sparse_block_diag(*A_csr)
         A_d_block_diag = torch.block_diag(*A_d)
-        
+
         A_csr_block_diag.sum().backward()
         A_d_block_diag.sum().backward()
-        
+
         nz_mask = A_csr.grad.to_dense() != 0.0
-        
+
         self.assertTrue(torch.allclose(A_csr.grad.to_dense()[nz_mask], A_d.grad[nz_mask]))
-        
+
     @parameterized.expand(
         [
-            ("1x4x4_12n", torch.Size([1, 4, 4]), 12), # Fails with is_conitous error
-            ("4x4x4_12n", torch.Size([4, 4, 4]), 12), # Fails with differentiably error
+            ("1x4x4_12n", torch.Size([1, 4, 4]), 12),  # Fails with is_conitous error
+            ("4x4x4_12n", torch.Size([4, 4, 4]), 12),  # Fails with differentiably error
             ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
         ]
     )
     def test_sparse_block_diag_csr_backward(self, _, size, nnz):
-        self.skipTest(reason="This test is not passing due to a BUG in PyTorch, which tries to differential CSR indices and results in: RuntimeError: isDifferentiableType(variable.scalar_type())")
+        self.skipTest(
+            reason="This test is not passing due to a BUG in PyTorch, which tries to differential CSR indices and results in: RuntimeError: isDifferentiableType(variable.scalar_type())"
+        )
         A_csr = generate_random_sparse_csr_matrix(size, nnz, device=self.device)
         A_d = A_csr.detach().clone().to_dense()
-        
+
         A_csr.requires_grad_(True)
         A_d.requires_grad_(True)
-        
+
         A_csr_block_diag = sparse_block_diag(*A_csr)
         A_d_block_diag = torch.block_diag(*A_d)
-        
+
         # generate a sparse CSR tensor of the same sparsity pattern as A_csr_block_diag, but all values are unique:
-        grad_output = torch.sparse_csr_tensor(crow_indices=A_csr_block_diag.crow_indices(), 
-                                              col_indices=A_csr_block_diag.col_indices(), 
-                                              values=torch.arange(A_csr_block_diag._nnz(), 
-                                                                  dtype=torch.float), 
-                                              size=A_csr_block_diag.shape).to(self.device)
+        grad_output = torch.sparse_csr_tensor(
+            crow_indices=A_csr_block_diag.crow_indices(),
+            col_indices=A_csr_block_diag.col_indices(),
+            values=torch.arange(A_csr_block_diag._nnz(), dtype=torch.float),
+            size=A_csr_block_diag.shape,
+        ).to(self.device)
 
         # set the gradient manually
         A_csr_block_diag.backward(grad_output)
         A_d_block_diag.backward(grad_output.to_dense())
-        
+
         nz_mask = A_csr.grad.to_dense() != 0.0
 
         self.assertTrue(torch.allclose(A_csr.grad.to_dense()[nz_mask], A_d.grad[nz_mask]))
@@ -480,8 +483,8 @@ class TestSparseBlockDiag(unittest.TestCase):
         tensor2 = torch.randn(3, 2).to_sparse_csr().to(device=self.device)
         result = sparse_block_diag(tensor1, tensor2)
         self.assertEqual(result.shape, torch.Size([8, 9]))
-        
-        
+
+
 @parameterized_class(
     (
         "name",
@@ -499,10 +502,9 @@ class TestSparseBlockDiaSplit(unittest.TestCase):
     def setUp(self) -> None:
         if not torch.cuda.is_available() and self.device == torch.device("cuda"):
             self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
-            
-            
+
     @parameterized.expand(
-        [            
+        [
             ("1x4x4_12n", torch.Size([1, 4, 4]), 12),
             ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
             ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
@@ -511,14 +513,13 @@ class TestSparseBlockDiaSplit(unittest.TestCase):
     def test_coo(self, _, shape, nnz):
         A_coo = generate_random_sparse_coo_matrix(shape, nnz, device=self.device)
         A_coo_block_diag = sparse_block_diag(*A_coo)
-        shapes = shape[0]*(shape[-2:],)
+        shapes = shape[0] * (shape[-2:],)
         A_coo_block_diag_split = sparse_block_diag_split(A_coo_block_diag, *shapes)
         for i, A in enumerate(A_coo):
             self.assertTrue(torch.equal(A.to_dense(), A_coo_block_diag_split[i].to_dense()))
-            
-            
+
     @parameterized.expand(
-        [            
+        [
             ("1x4x4_12n", torch.Size([1, 4, 4]), 12),
             ("4x4x4_12n", torch.Size([4, 4, 4]), 12),
             ("6x8x14_32n", torch.Size([6, 8, 14]), 32),
@@ -527,7 +528,7 @@ class TestSparseBlockDiaSplit(unittest.TestCase):
     def test_csr(self, _, shape, nnz):
         A_csr = generate_random_sparse_csr_matrix(shape, nnz, device=self.device)
         A_csr_block_diag = sparse_block_diag(*A_csr)
-        shapes = shape[0]*(shape[-2:],)
+        shapes = shape[0] * (shape[-2:],)
         A_csr_block_diag_split = sparse_block_diag_split(A_csr_block_diag, *shapes)
         for i, A in enumerate(A_csr):
             self.assertTrue(torch.equal(A.to_dense(), A_csr_block_diag_split[i].to_dense()))

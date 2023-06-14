@@ -199,7 +199,6 @@ def lsmr(
 
     # Main iteration loop.
     for itn in range(1, maxiter + 1):
-
         # Perform the next step of the bidiagonalization to obtain the
         # next  beta, u, alpha, v.  These satisfy the relations
         #         beta*u  =  a*v   -  alpha*u,
@@ -287,7 +286,6 @@ def lsmr(
 
         # if itn % 10 == 0:
         if True:
-
             # Compute norms for convergence testing.
             torch.abs(zetabar, out=normar)
             torch.norm(x, out=normx)
