@@ -154,6 +154,8 @@ def convert_coo_to_csr(sparse_coo_tensor):
         torch.Tensor: CSR sparse tensor.
     """
     if sparse_coo_tensor.layout == torch.sparse_coo:
+        if sparse_coo_tensor.is_coalesced() is False:
+            sparse_coo_tensor = sparse_coo_tensor.coalesce()
         crow_indices, col_indices, values = convert_coo_to_csr_indices_values(
             sparse_coo_tensor.indices(), sparse_coo_tensor.size()[-2], sparse_coo_tensor.values()
         )

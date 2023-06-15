@@ -7,6 +7,9 @@ NOTE: Sparse CSR The index tensors crow_indices and col_indices should have elem
       This is as a result of the default linking of pytorch being with MKL LP64, which uses 32 bit integer indexing
 NOTE: The batches of sparse CSR tensors are dependent: the number of specified elements in all batches must be the same.
       This somewhat  artificial constraint allows efficient storage of the indices of different CSR batches.
+
+TODO: This code needs reformatting into just rand_sparse and rand_sparse_tri
+TODO: Add support for non-strict triangular matrices
 """
 import warnings
 import torch
@@ -41,6 +44,7 @@ def rand_sparse_tri(
     layout=torch.sparse_coo,
     *,
     upper=True,
+    strict=False,
     indices_dtype=torch.int64,
     values_dtype=torch.float32,
     device=torch.device("cpu"),
