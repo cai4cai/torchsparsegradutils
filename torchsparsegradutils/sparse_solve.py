@@ -1,4 +1,5 @@
 import torch
+from .utils import convert_coo_to_csr, sparse_block_diag, sparse_block_diag_split, stack_csr
 
 
 def sparse_triangular_solve(A, B, upper=True, unitriangular=False):
@@ -23,23 +24,37 @@ class SparseTriangularSolve(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, A, B, upper, unitriangular):
-        grad_flag = A.requires_grad or B.requires_grad
+        ctx.batch_size = B.size()[0] if B.dim() == 3 else None
+        ctx.A_shape = A.size()  # (b), m, m
+        ctx.B_shape = B.size()  # (b), m, p
         ctx.csr = True
         ctx.upper = upper
         ctx.ut = unitriangular
+        
+        grad_flag = A.requires_grad or B.requires_grad
+        
+        if ctx.batch_size is not None:
+            A = sparse_block_diag(*A)
+            B = torch.cat([*B])
 
         if A.layout == torch.sparse_coo:
-            A = A.to_sparse_csr()  # triangular solve doesn't work with sparse coo
+            A = convert_coo_to_csr(A)  # triangular solve doesn't work with sparse coo
             ctx.csr = False
 
         x = torch.triangular_solve(B.detach(), A.detach(), upper=upper, unitriangular=unitriangular).solution
 
+        if ctx.batch_size is not None:
+            x = x.view(ctx.batch_size, ctx.A_shape[-2], ctx.B_shape[-1])
+        
         x.requires_grad = grad_flag
         ctx.save_for_backward(A, x.detach())
         return x
 
     @staticmethod
     def backward(ctx, grad):
+        if ctx.batch_size is not None:
+            grad = torch.cat([*grad])
+            
         A, x = ctx.saved_tensors
 
         # Backprop rule: gradB = A^{-T} grad
@@ -91,6 +106,16 @@ class SparseTriangularSolve(torch.autograd.Function):
             gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
             gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
+            
+        if ctx.batch_size is not None:
+            shapes = ctx.A_shape[0] * (ctx.A_shape[-2:],)
+            gradA = sparse_block_diag_split(gradA, *shapes)
+            if A.layout == torch.sparse_coo:
+                gradA = torch.stack([*gradA])
+            else:
+                gradA = stack_csr([*gradA])
+
+                gradB = gradB.view(ctx.B_shape)
 
         return gradA, gradB, None, None
 
