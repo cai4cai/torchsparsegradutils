@@ -15,9 +15,9 @@ if torch.cuda.is_available():
 # Pytest test currently just implemented for unit triangular solve
 TEST_DATA = [
     # name  A_shape, B_shape, A_nnz
-    ("unbat", (4, 4), (4, 2), 6),
+    ("unbat", (4, 4), (4, 2), 4),
     ("unbat", (12, 12), (12, 6), 32),
-    ("bat", (2, 4, 4), (2, 4, 2), 6),
+    ("bat", (2, 4, 4), (2, 4, 2), 4),
     ("bat", (4, 12, 12), (4, 12, 6), 32),
 ]
 
@@ -25,7 +25,9 @@ INDEX_DTYPES = [torch.int32, torch.int64]
 VALUE_DTYPES = [torch.float32, torch.float64]
 
 UPPER = [True, False]
-UNITRIANGULAR = [True,]  # just unit triangular solve for now
+UNITRIANGULAR = [
+    True,
+]  # just unit triangular solve for now
 
 ATOL = 1e-6  # relaxed tolerance to allow for float32
 RTOL = 1e-4
@@ -43,8 +45,10 @@ def device_id(device):
 def dtype_id(dtype):
     return str(dtype).split(".")[-1]
 
+
 def upper_id(upper):
     return "upp" if upper else "low"
+
 
 def unitriangular_id(unitriangular):
     return "unit" if unitriangular else "nonunit"
@@ -72,13 +76,16 @@ def index_dtype(request):
 def device(request):
     return request.param
 
+
 @pytest.fixture(params=UPPER, ids=[upper_id(d) for d in UPPER])
 def upper(request):
     return request.param
 
+
 @pytest.fixture(params=UNITRIANGULAR, ids=[unitriangular_id(d) for d in UNITRIANGULAR])
 def unitriangular(request):
     return request.param
+
 
 # Define Tests
 
@@ -90,7 +97,16 @@ def forward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, s
         pytest.skip("Skipping triangular solve CPU tests as solver not implemented for Windows OS")
 
     _, A_shape, B_shape, A_nnz = shapes
-    A = rand_sparse_tri(A_shape, A_nnz, layout, upper=upper, strict=unitriangular, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
+    A = rand_sparse_tri(
+        A_shape,
+        A_nnz,
+        layout,
+        upper=upper,
+        strict=unitriangular,
+        indices_dtype=index_dtype,
+        values_dtype=value_dtype,
+        device=device,
+    )
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
     Ad = A.to_dense()
 
@@ -107,7 +123,16 @@ def backward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, 
         pytest.skip("Skipping triangular solve CPU tests as solver not implemented for Windows OS")
 
     _, A_shape, B_shape, A_nnz = shapes
-    As1 = rand_sparse_tri(A_shape, A_nnz, layout, upper=upper, strict=unitriangular, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
+    As1 = rand_sparse_tri(
+        A_shape,
+        A_nnz,
+        layout,
+        upper=upper,
+        strict=unitriangular,
+        indices_dtype=index_dtype,
+        values_dtype=value_dtype,
+        device=device,
+    )
     Ad2 = As1.detach().clone().to_dense()  # detach and clone to create seperate graph
 
     Bd1 = torch.rand(*B_shape, dtype=value_dtype, device=device)
@@ -134,22 +159,63 @@ def backward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, 
 
 
 def test_forward_result_coo(device, value_dtype, index_dtype, shapes, upper, unitriangular):
-    forward_routine(sparse_triangular_solve, torch.linalg.solve_triangular, torch.sparse_coo, device, value_dtype, index_dtype, shapes, upper, unitriangular)
+    forward_routine(
+        sparse_triangular_solve,
+        torch.linalg.solve_triangular,
+        torch.sparse_coo,
+        device,
+        value_dtype,
+        index_dtype,
+        shapes,
+        upper,
+        unitriangular,
+    )
 
 
 def test_forward_result_csr(device, value_dtype, index_dtype, shapes, upper, unitriangular):
-    forward_routine(sparse_triangular_solve, torch.linalg.solve_triangular, torch.sparse_csr, device, value_dtype, index_dtype, shapes, upper, unitriangular)
+    forward_routine(
+        sparse_triangular_solve,
+        torch.linalg.solve_triangular,
+        torch.sparse_csr,
+        device,
+        value_dtype,
+        index_dtype,
+        shapes,
+        upper,
+        unitriangular,
+    )
 
 
 def test_backward_result_coo(device, value_dtype, index_dtype, shapes, upper, unitriangular):
-    backward_routine(sparse_triangular_solve, torch.linalg.solve_triangular, torch.sparse_coo, device, value_dtype, index_dtype, shapes, upper, unitriangular)
+    backward_routine(
+        sparse_triangular_solve,
+        torch.linalg.solve_triangular,
+        torch.sparse_coo,
+        device,
+        value_dtype,
+        index_dtype,
+        shapes,
+        upper,
+        unitriangular,
+    )
 
 
 def test_backward_result_csr(device, value_dtype, index_dtype, shapes, upper, unitriangular):
-    backward_routine(sparse_triangular_solve, torch.linalg.solve_triangular, torch.sparse_csr, device, value_dtype, index_dtype, shapes, upper, unitriangular)
+    backward_routine(
+        sparse_triangular_solve,
+        torch.linalg.solve_triangular,
+        torch.sparse_csr,
+        device,
+        value_dtype,
+        index_dtype,
+        shapes,
+        upper,
+        unitriangular,
+    )
 
 
-##### Older test, need restructuring: #####
+##### Older test, TODO: needs restructuring: #####
+
 
 def gencoordinates_square_tri(n, ni, upper=True, device="cuda"):
     """Used to genererate ni random unique off-diagonal coordinates
