@@ -113,7 +113,7 @@ def forward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, s
     res_test = op_test(A, B, upper=upper, unitriangular=unitriangular)
     res_ref = op_ref(Ad, B, upper=upper, unitriangular=unitriangular)
 
-    torch.allclose(res_test, res_ref, atol=ATOL, rtol=RTOL)
+    assert torch.allclose(res_test, res_ref, atol=ATOL, rtol=RTOL)
 
 
 def backward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, shapes, upper, unitriangular):
