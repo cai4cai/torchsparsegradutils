@@ -4,4 +4,3 @@ scipy
 jax[cpu]
 parameterized
 pytest
-unittest
