@@ -13,7 +13,7 @@ from torchsparsegradutils import sparse_triangular_solve as spts
 __all__ = ["SparseMultivariateNormal"]
 
 
-def _batch_sparse_mv(op, bmat, bvec):
+def _batch_sparse_mv(op, bmat, bvec, **kwargs):
     """Performs batched matrix-vector operation between a sparse matrix and a dense vector.
 
     bmat can have 0 or 1 batch dimension
@@ -33,13 +33,13 @@ def _batch_sparse_mv(op, bmat, bvec):
         torch.Tensor: Dense matrix vector product
     """
     if bmat.dim() == 2 and bvec.dim() == 1:
-        return op(bmat, bvec.unsqueeze(-1)).squeeze(-1)
+        return op(bmat, bvec.unsqueeze(-1), **kwargs).squeeze(-1)
     elif bmat.dim() == 2 and bvec.dim() == 2:
-        return op(bmat, bvec.t()).t()
+        return op(bmat, bvec.t(), **kwargs).t()
     elif bmat.dim() == 3 and bvec.dim() == 2:
-        return op(bmat, bvec.unsqueeze(-1)).squeeze(-1)
+        return op(bmat, bvec.unsqueeze(-1), **kwargs).squeeze(-1)
     elif bmat.dim() == 3 and bvec.dim() == 3:
-        return op(bmat, bvec.permute(1, 2, 0)).permute(2, 0, 1)
+        return op(bmat, bvec.permute(1, 2, 0), **kwargs).permute(2, 0, 1)
     else:
         raise ValueError("Invalid dimensions for bmat and bvec")
 
@@ -160,9 +160,12 @@ class SparseMultivariateNormal(Distribution):
         eps = _standard_normal(shape, dtype=self.loc.dtype, device=self.loc.device)
 
         if "_scale_tril" in self.__dict__:
-            cov_sqrt_m_eps = _batch_sparse_mv(spmm, self.scale_tril, eps)
+            x = _batch_sparse_mv(spmm, self.scale_tril, self.diagonal.sqrt() * eps)
 
         else:  # 'precision_tril' in self.__dict__
-            cov_sqrt_m_eps = _batch_sparse_mv(spts, self.precision_tril, eps)
+            # TODO: check if this is correct
+            x = _batch_sparse_mv(
+                spts, self.precision_tril, eps / (self.diagonal.sqrt()), upper=False, unitriangular=True
+            )
 
-        return self.loc + cov_sqrt_m_eps * self.diagonal.sqrt()
+        return self.loc + x

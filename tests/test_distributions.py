@@ -126,19 +126,30 @@ def test_rsample_forward(device, layout, var, sizes, value_dtype, index_dtype):
         pytest.skip("Sparse COO with int32 indices is not supported")
 
     dist = construct_distribution(sizes, layout, var, value_dtype, index_dtype, device)
-    samples = dist.rsample((10000,))
+    samples = dist.rsample((100000,))
 
     if var == "cov":
-        scale_tril = dist.scale_tril.to_dense()
-        # scale_tril_with_diag = scale_tril + torch.diag_embed(dist.diagonal)
-        covariance = torch.matmul(scale_tril, scale_tril.t()) + torch.diag_embed(dist.diagonal)
+        scale_tril = dist.scale_tril.to_dense()  # L matrix
+        diagonal = dist.diagonal  # D matrix
+        # Compute covariance from LDL^T decomposition
+        covariance = torch.matmul(scale_tril @ torch.diag_embed(diagonal), scale_tril.transpose(-1, -2))
     else:
-        precision_tril = dist.precision_tril.to_dense()
-        covariance = torch.inverse(torch.matmul(precision_tril, precision_tril.transpose(-1, -2)))
+        precision_tril = dist.precision_tril.to_dense()  # L matrix
+        diagonal = dist.diagonal  # D matrix
+        # Compute precision matrix from LDL^T decomposition
+        precision = torch.matmul(precision_tril @ torch.diag_embed(diagonal), precision_tril.t())
+        # Compute covariance from precision
+        Id = torch.eye(precision.size(-1), dtype=precision.dtype, device=precision.device)  # identity matrix
+        covariance = torch.linalg.solve(
+            Id, precision
+        )  # solves for X in AX=B, where A is precision, B is I, and X is covariance
 
-    # TODO: getting closer but still not there
     assert torch.allclose(samples.mean(0), dist.loc, atol=0.1)
-    assert torch.allclose(torch.cov(samples.T), covariance, atol=0.1)
+    if len(samples.shape) == 2:
+        assert torch.allclose(torch.cov(samples.T), covariance, atol=0.1)
+    else:
+        covariance_ = torch.stack([torch.cov(sample.T) for sample in samples.permute(1, 0, 2)])
+        assert torch.allclose(covariance_, covariance, atol=0.1)
 
 
 # def test_rsample_backward(device, layout, var, sizes, value_dtype, index_dtype):
