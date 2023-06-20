@@ -2,7 +2,7 @@ import torch
 from .utils import convert_coo_to_csr, sparse_block_diag, sparse_block_diag_split, stack_csr
 
 
-def sparse_triangular_solve(A, B, upper=True, unitriangular=False):
+def sparse_triangular_solve(A, B, upper=True, unitriangular=False, transpose=False):
     """
     Solves a system of equations given by AX = B, where A is a sparse triangular matrix,
     and B is a dense right-hand side matrix.
@@ -12,7 +12,7 @@ def sparse_triangular_solve(A, B, upper=True, unitriangular=False):
 
     A can be in either COO (Coordinate Format) or CSR (Compressed Sparse Row) format. However,
     if it is in COO format, it will be converted to CSR format before solving as the
-    triangular solve operation doesn't work well with COO format.
+    triangular solve operation doesn't work with COO format.
 
     This function supports backpropagation, and preserves the sparsity of the gradient during
     the backpass.
@@ -23,10 +23,13 @@ def sparse_triangular_solve(A, B, upper=True, unitriangular=False):
                           either COO or CSR format.
         B (torch.Tensor): The right-hand side dense matrix. Must be a 2-dimensional (matrix) or
                           3-dimensional (batch of matrices) tensor.
-        upper (bool, optional): If True, A is assumed to be an upper triangular matrix. If False,
+        upper (bool, optional): If True, A is assumed to be an upper triangular matrix and the
+                                lower triangular elements are not accessed. If False,
                                 A is assumed to be a lower triangular matrix. Default is True.
         unitriangular (bool, optional): If True, the diagonal elements of A are assumed to be 1
                                         and are not used in the solve operation. Default is False.
+        transpose (bool, optional): If True, solves A^T X = B. If False, solves
+                                    AX = B. Default is False.
 
     Returns:
         torch.Tensor: The solution of the system of equations.
@@ -65,7 +68,7 @@ def sparse_triangular_solve(A, B, upper=True, unitriangular=False):
     if A.dim() == 3 and A.size(0) != B.size(0):
         raise ValueError("If A and B have a leading batch dimension, they should have the same batch size")
 
-    return SparseTriangularSolve.apply(A, B, upper, unitriangular)
+    return SparseTriangularSolve.apply(A, B, upper, unitriangular, transpose)
 
 
 class SparseTriangularSolve(torch.autograd.Function):
@@ -85,13 +88,14 @@ class SparseTriangularSolve(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, A, B, upper, unitriangular):
+    def forward(ctx, A, B, upper, unitriangular, transpose):
         ctx.batch_size = B.size()[0] if B.dim() == 3 else None
         ctx.A_shape = A.size()  # (b), m, m
         ctx.B_shape = B.size()  # (b), m, p
         ctx.csr = True
         ctx.upper = upper
-        ctx.ut = unitriangular
+        ctx.unitriangular = unitriangular
+        ctx.transpose = transpose
 
         grad_flag = A.requires_grad or B.requires_grad
 
@@ -103,7 +107,9 @@ class SparseTriangularSolve(torch.autograd.Function):
             A = convert_coo_to_csr(A)  # triangular solve doesn't work with sparse coo
             ctx.csr = False
 
-        x = torch.triangular_solve(B.detach(), A.detach(), upper=upper, unitriangular=unitriangular).solution
+        x = torch.triangular_solve(
+            B.detach(), A.detach(), upper=upper, unitriangular=unitriangular, transpose=transpose
+        ).solution
 
         x.requires_grad = grad_flag
         ctx.save_for_backward(A, x.detach())
@@ -123,10 +129,16 @@ class SparseTriangularSolve(torch.autograd.Function):
         # Backprop rule: gradB = A^{-T} grad
         # Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
         workaround88890 = (
-            A.device == torch.device("cpu") and (not ctx.upper) and ctx.ut and (int(torch.__version__[0]) < 2)
+            A.device == torch.device("cpu")
+            and (not ctx.upper)
+            and ctx.unitriangular
+            and (int(torch.__version__[0]) < 2)
+            and not ctx.transpose
         )
         if not workaround88890:
-            gradB = torch.triangular_solve(grad, A, upper=ctx.upper, transpose=True, unitriangular=ctx.ut).solution
+            gradB = torch.triangular_solve(
+                grad, A, upper=ctx.upper, transpose=not ctx.transpose, unitriangular=ctx.unitriangular
+            ).solution
         else:
             # Not sure which workaround it best but for now let's assume we don't want to explicitly transpose A
             # but prefer to let torch.triangular_solve do this inernally
@@ -138,7 +150,7 @@ class SparseTriangularSolve(torch.autograd.Function):
                 (n, n),
                 device=A.device,
             )
-            gradB = torch.triangular_solve(grad, A + id_csr, upper=ctx.upper, transpose=True).solution
+            gradB = torch.triangular_solve(grad, A + id_csr, upper=ctx.upper, transpose=not ctx.transpose).solution
 
         # The gradient with respect to the matrix A seen as a dense matrix would
         # lead to a backprop rule as follows
@@ -157,10 +169,14 @@ class SparseTriangularSolve(torch.autograd.Function):
             torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
         )
 
-        mgradbselect = -gradB.index_select(0, A_row_idx)  # -gradB[i, :]
-        xselect = x.index_select(0, A_col_idx)  # x[j, :]
+        if ctx.transpose:
+            mgradbselect = -gradB.index_select(0, A_col_idx)  # -gradB[j, :]
+            xselect = x.index_select(0, A_row_idx)  # x[i, :]
+        else:
+            mgradbselect = -gradB.index_select(0, A_row_idx)  # -gradB[i, :]
+            xselect = x.index_select(0, A_col_idx)  # x[j, :]
 
-        if ctx.ut is True and torch.any(A_row_idx == A_col_idx):
+        if ctx.unitriangular is True and torch.any(A_row_idx == A_col_idx):
             raise ValueError("First input should be strictly triangular (i.e. unit diagonals is implicit)")
 
         # Dot product:
@@ -182,7 +198,7 @@ class SparseTriangularSolve(torch.autograd.Function):
 
             gradB = gradB.view(ctx.B_shape)
 
-        return gradA, gradB, None, None
+        return gradA, gradB, None, None, None
 
 
 def sparse_generic_solve(A, B, solve=None, transpose_solve=None):
