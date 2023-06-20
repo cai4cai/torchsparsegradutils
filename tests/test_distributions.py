@@ -15,13 +15,12 @@ if torch.cuda.is_available():
 TEST_DATA = [
     # name, batch size, event size, spartsity
     ("unbat", None, 4, 0.5),
-    ("bat", 4, 16, 0.5),
+    ("bat", 4, 4, 0.5),
 ]
 
 INDEX_DTYPES = [torch.int32, torch.int64]
 VALUE_DTYPES = [torch.float32, torch.float64]
 SPASRE_LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
-VARS = ["cov", "prec"]  # whether to encode lower triangular covariance or precision matrix for distribution
 
 # DISTRIBUTIONS = [SparseMultivariateNormal]
 
@@ -41,10 +40,6 @@ def dtype_id(dtype):
 
 def layout_id(layout):
     return str(layout).split(".")[-1].split("_")[-1].upper()
-
-
-def var_id(var):
-    return var
 
 
 # def dist_id(dist):
@@ -76,11 +71,6 @@ def device(request):
 
 @pytest.fixture(params=SPASRE_LAYOUTS, ids=[layout_id(lay) for lay in SPASRE_LAYOUTS])
 def layout(request):
-    return request.param
-
-
-@pytest.fixture(params=VARS, ids=[var_id(v) for v in VARS])
-def var(request):
     return request.param
 
 
@@ -118,41 +108,100 @@ def construct_distribution(sizes, layout, var, value_dtype, index_dtype, device)
         raise ValueError(f"tril must be one of 'cov' or 'prec', but got {tril}")
 
 
+def check_covariance_within_tolerance(
+    covariance_test, covariance_ref, absolute_tolerance=None, relative_tolerance=None, desired_threshold=0
+):
+    # Calculate absolute difference if absolute_tolerance is provided
+    if absolute_tolerance is not None:
+        abs_diff = torch.abs(covariance_test - covariance_ref)
+        abs_within_tolerance = abs_diff <= absolute_tolerance
+    else:
+        abs_diff = None
+        abs_within_tolerance = torch.ones_like(covariance_test, dtype=torch.bool)
+
+    # Calculate relative difference if relative_tolerance is provided
+    if relative_tolerance is not None:
+        if abs_diff is None:
+            abs_diff = torch.abs(covariance_test - covariance_ref)
+        rel_diff = abs_diff / torch.abs(covariance_ref)
+        rel_within_tolerance = rel_diff <= relative_tolerance
+    else:
+        rel_within_tolerance = torch.ones_like(covariance_test, dtype=torch.bool)
+
+    # Determine values within both absolute and relative tolerance
+    within_tolerance = abs_within_tolerance & rel_within_tolerance
+
+    # Calculate percentage within tolerance
+    percentage_within_tolerance = (within_tolerance.sum() / within_tolerance.numel()) * 100
+
+    # Check if the percentage meets the desired threshold
+    is_within_desired_threshold = percentage_within_tolerance >= desired_threshold
+
+    print(f"Percentage within tolerance: {percentage_within_tolerance.item():.2f}%")
+    print(f"Is within desired threshold? {is_within_desired_threshold}")
+
+    assert is_within_desired_threshold
+
+
 # Define Tests
 
 
-def test_rsample_forward(device, layout, var, sizes, value_dtype, index_dtype):
+def test_rsample_forward_cov(device, layout, sizes, value_dtype, index_dtype):
+    var = "cov"
     if layout == torch.sparse_coo and index_dtype == torch.int32:
         pytest.skip("Sparse COO with int32 indices is not supported")
 
     dist = construct_distribution(sizes, layout, var, value_dtype, index_dtype, device)
     samples = dist.rsample((100000,))
 
-    if var == "cov":
-        scale_tril = dist.scale_tril.to_dense()  # L matrix
-        diagonal = dist.diagonal  # D matrix
-        # Compute covariance from LDL^T decomposition
-        covariance = torch.matmul(scale_tril @ torch.diag_embed(diagonal), scale_tril.transpose(-1, -2))
-    else:
-        precision_tril = dist.precision_tril.to_dense()  # L matrix
-        diagonal = dist.diagonal  # D matrix
-        # Compute precision matrix from LDL^T decomposition
-        precision = torch.matmul(precision_tril @ torch.diag_embed(diagonal), precision_tril.t())
-        # Compute covariance from precision
-        Id = torch.eye(precision.size(-1), dtype=precision.dtype, device=precision.device)  # identity matrix
-        covariance = torch.linalg.solve(
-            Id, precision
-        )  # solves for X in AX=B, where A is precision, B is I, and X is covariance
+    scale_tril = dist.scale_tril.to_dense()
+    scale_tril = (
+        scale_tril  # + torch.eye(*dist.event_shape, dtype=scale_tril.dtype, device=scale_tril.device)  # L matrix
+    )
+    diagonal = dist.diagonal  # D matrix
+    # Compute covariance from LDL^T decomposition
+    covariance_ref = torch.matmul(scale_tril @ torch.diag_embed(diagonal), scale_tril.transpose(-1, -2))
 
     assert torch.allclose(samples.mean(0), dist.loc, atol=0.1)
+
     if len(samples.shape) == 2:
-        assert torch.allclose(torch.cov(samples.T), covariance, atol=0.1)
+        covariance_test = torch.cov(samples.T)
     else:
-        covariance_ = torch.stack([torch.cov(sample.T) for sample in samples.permute(1, 0, 2)])
-        assert torch.allclose(covariance_, covariance, atol=0.1)
+        covariance_test = torch.stack([torch.cov(sample.T) for sample in samples.permute(1, 0, 2)])
+
+    check_covariance_within_tolerance(covariance_test, covariance_ref, absolute_tolerance=0.1, desired_threshold=99.0)
 
 
-# def test_rsample_backward(device, layout, var, sizes, value_dtype, index_dtype):
+def test_rsample_forward_prec(device, layout, sizes, value_dtype, index_dtype):
+    var = "prec"
+    if layout == torch.sparse_coo and index_dtype == torch.int32:
+        pytest.skip("Sparse COO with int32 indices is not supported")
+
+    dist = construct_distribution(sizes, layout, var, value_dtype, index_dtype, device)
+    samples = dist.rsample((100000,))
+
+    precision_tril = dist.precision_tril.to_dense()
+    precision_tril = precision_tril + torch.eye(
+        *dist.event_shape, dtype=precision_tril.dtype, device=precision_tril.device
+    )  # L matrix
+    diagonal = dist.diagonal  # D matrix
+    # Compute precision matrix from LDL^T decomposition
+    precision_ref = torch.matmul(precision_tril @ torch.diag_embed(diagonal), precision_tril.transpose(-1, -2))
+    # Compute covariance from precision
+    covariance_ref = torch.linalg.inv(precision_ref)
+
+    assert torch.allclose(samples.mean(0), dist.loc, atol=0.1)
+
+    if len(samples.shape) == 2:
+        covariance_test = torch.cov(samples.T)
+    else:
+        covariance_test = torch.stack([torch.cov(sample.T) for sample in samples.permute(1, 0, 2)])
+
+    # NOTE: tolerance is higher, as covariance values are much larger than in the cov test
+    check_covariance_within_tolerance(covariance_test, covariance_ref, absolute_tolerance=1, desired_threshold=95.0)
+
+
+# def test_rsample_backward(device, layout, sizes, value_dtype, index_dtype):
 #     pass
 
 

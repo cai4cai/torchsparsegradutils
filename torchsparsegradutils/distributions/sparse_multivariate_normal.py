@@ -163,9 +163,8 @@ class SparseMultivariateNormal(Distribution):
             x = _batch_sparse_mv(spmm, self.scale_tril, self.diagonal.sqrt() * eps)
 
         else:  # 'precision_tril' in self.__dict__
-            # TODO: check if this is correct
             x = _batch_sparse_mv(
-                spts, self.precision_tril, eps / (self.diagonal.sqrt()), upper=False, unitriangular=True
+                spts, self.precision_tril, eps / (self.diagonal.sqrt()), upper=False, unitriangular=True, transpose=True
             )
 
         return self.loc + x
