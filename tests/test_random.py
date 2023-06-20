@@ -8,8 +8,9 @@ from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_strictly_triangular_csr_matrix,
 )
 
-# https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html#torch.sparse.check_sparse_tensor_invariants
-torch.sparse.check_sparse_tensor_invariants.enable()
+if torch.__version__ >= (2,):
+    # https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html#torch.sparse.check_sparse_tensor_invariants
+    torch.sparse.check_sparse_tensor_invariants.enable()
 
 
 @parameterized_class(
