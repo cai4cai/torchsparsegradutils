@@ -122,9 +122,7 @@ class SparseTriangularSolve(torch.autograd.Function):
 
         # Backprop rule: gradB = A^{-T} grad
         # Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
-        workaround88890 = (
-            A.device == torch.device("cpu") and (not ctx.upper) and ctx.ut and (int(torch.__version__[0]) < 2)
-        )
+        workaround88890 = A.device == torch.device("cpu") and (not ctx.upper) and ctx.ut and (torch.__version__ < (2,))
         if not workaround88890:
             gradB = torch.triangular_solve(grad, A, upper=ctx.upper, transpose=True, unitriangular=ctx.ut).solution
         else:
