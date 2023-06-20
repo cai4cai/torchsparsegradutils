@@ -285,7 +285,7 @@ class TestSparseBlockDiag(unittest.TestCase):
         A_coo_block_diag = sparse_block_diag(*A_coo)
         A_d_block_diag = torch.block_diag(*A_d)
 
-        A_coo_block_diag.sum().backward()
+        torch.sparse.sum(A_coo_block_diag).backward()
         A_d_block_diag.sum().backward()
 
         nz_mask = A_coo.grad.to_dense() != 0.0
@@ -326,7 +326,7 @@ class TestSparseBlockDiag(unittest.TestCase):
         A_csr_block_diag = sparse_block_diag(*A_csr)
         A_d_block_diag = torch.block_diag(*A_d)
 
-        A_csr_block_diag.sum().backward()
+        torch.sparse.sum(A_csr_block_diag).backward()
         A_d_block_diag.sum().backward()
 
         nz_mask = A_csr.grad.to_dense() != 0.0
