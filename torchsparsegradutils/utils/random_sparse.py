@@ -48,14 +48,27 @@ def rand_sparse_tri(
     indices_dtype=torch.int64,
     values_dtype=torch.float32,
     device=torch.device("cpu"),
+    value_range=(0, 1),
 ):
     if layout == torch.sparse_coo:
         return generate_random_sparse_strictly_triangular_coo_matrix(
-            size, nnz, upper=upper, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device
+            size,
+            nnz,
+            upper=upper,
+            indices_dtype=indices_dtype,
+            values_dtype=values_dtype,
+            device=device,
+            value_range=value_range,
         )
     elif layout == torch.sparse_csr:
         return generate_random_sparse_strictly_triangular_csr_matrix(
-            size, nnz, upper=upper, indices_dtype=indices_dtype, values_dtype=values_dtype, device=device
+            size,
+            nnz,
+            upper=upper,
+            indices_dtype=indices_dtype,
+            values_dtype=values_dtype,
+            device=device,
+            value_range=value_range,
         )
     else:
         raise ValueError("Unsupported layout type. It should be either torch.sparse_coo or torch.sparse_csr")
@@ -214,7 +227,14 @@ def _gen_indices_2d_coo_strictly_tri(n, nnz, *, upper=True, dtype=torch.int64, d
 
 
 def generate_random_sparse_strictly_triangular_coo_matrix(
-    size, nnz, *, upper=True, indices_dtype=torch.int64, values_dtype=torch.float32, device=torch.device("cpu")
+    size,
+    nnz,
+    *,
+    upper=True,
+    indices_dtype=torch.int64,
+    values_dtype=torch.float32,
+    device=torch.device("cpu"),
+    value_range=(0, 1),
 ):
     """Generates a random sparse COO square matrix with strictly upper or lower triangular coordinates.
 
@@ -225,6 +245,7 @@ def generate_random_sparse_strictly_triangular_coo_matrix(
         indices_dtype (torch.dtype, optional): Data type for indices of sparse tensor. Defaults to torch.int64.
         values_dtype (torch.dtype, optional): Data type for values of sparse tensor. Defaults to torch.float32.
         device (torch.device, optional): Device to generate the coordinates on. Defaults to torch.device("cpu").
+        value_range (tuple, optional): Tuple specifying the range of values to generate for the values of the sparse tensor. Defaults to [0, 1).
 
     Raises:
         ValueError: Raised if size has less than 2 dimensions.
@@ -267,11 +288,19 @@ def generate_random_sparse_strictly_triangular_coo_matrix(
         coo_indices = torch.cat([batch_dim_indices, sparse_dim_indices])
         values = torch.rand(nnz * size[0], dtype=values_dtype, device=device)
 
+    values = values * (value_range[1] - value_range[0]) + value_range[0]
     return torch.sparse_coo_tensor(coo_indices, values, size, device=device).coalesce()
 
 
 def generate_random_sparse_strictly_triangular_csr_matrix(
-    size, nnz, *, upper=True, indices_dtype=torch.int64, values_dtype=torch.float32, device=torch.device("cpu")
+    size,
+    nnz,
+    *,
+    upper=True,
+    indices_dtype=torch.int64,
+    values_dtype=torch.float32,
+    device=torch.device("cpu"),
+    value_range=(0, 1),
 ):
     """Generates a random sparse CSR square matrix with strictly upper or lower triangular coordinates.
 
@@ -282,6 +311,7 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
         indices_dtype (torch.dtype, optional): Data type for indices of sparse tensor. Defaults to torch.int64.
         values_dtype (torch.dtype, optional): Data type for values of sparse tensor. Defaults to torch.float32.
         device (torch.device, optional): Device to generate the coordinates on. Defaults to torch.device("cpu").
+        value_range (tuple, optional): Tuple specifying the range of values to generate for the values of the sparse tensor. Defaults to [0, 1).
 
     Raises:
         ValueError: Raised if size has less than 2 dimensions.
@@ -317,4 +347,5 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
         col_indices = col_indices.repeat(size[0], 1)
         values = torch.rand((size[0], nnz), dtype=values_dtype, device=device)
 
+    values = values * (value_range[1] - value_range[0]) + value_range[0]
     return torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device)
