@@ -154,10 +154,7 @@ def test_rsample_forward_cov(device, layout, sizes, value_dtype, index_dtype):
     dist = construct_distribution(sizes, layout, var, value_dtype, index_dtype, device)
     samples = dist.rsample((100000,))
 
-    scale_tril = dist.scale_tril.to_dense()
-    scale_tril = (
-        scale_tril  # + torch.eye(*dist.event_shape, dtype=scale_tril.dtype, device=scale_tril.device)  # L matrix
-    )
+    scale_tril = dist.scale_tril.to_dense()  # L matrix
     diagonal = dist.diagonal  # D matrix
     # Compute covariance from LDL^T decomposition
     covariance_ref = torch.matmul(scale_tril @ torch.diag_embed(diagonal), scale_tril.transpose(-1, -2))
