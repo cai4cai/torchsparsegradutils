@@ -8,6 +8,7 @@ from .utils import (
     sparse_block_diag,
     sparse_block_diag_split,
     stack_csr,
+    sparse_eye,
 )
 from .random_sparse import rand_sparse, rand_sparse_tri
 
@@ -26,4 +27,5 @@ __all__ = [
     "rand_sparse_tri",
     "sparse_block_diag_split",
     "stack_csr",
+    "sparse_eye",
 ]
