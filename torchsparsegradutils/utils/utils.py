@@ -398,3 +398,83 @@ def sparse_block_diag_split(sparse_block_diag_tensor, *shapes):
             current_val_offset += values_count
 
         return tuple(tensors)
+
+
+def sparse_eye(
+    size,
+    *,
+    layout=torch.sparse_coo,
+    values_dtype=torch.float64,
+    indices_dtype=torch.int64,
+    device=torch.device("cpu"),
+    requires_grad=False,
+):
+    """
+    Function to create a sparse identity matrix.
+
+    Args:
+        size (tuple): Tuple specifying the dimensions of the sparse matrix. The size can be either (num_rows, num_cols) for an unbatched matrix or (batch_size, num_rows, num_cols) for a batched matrix. The number of rows and columns must be equal.
+        values_dtype (:class:`torch.dtype`, optional): The desired data type of values tensor. Default is torch.float64.
+        indices_dtype (:class:`torch.dtype`, optional): The desired data type of indices tensor. Default is torch.int64.
+        layout (:class:`torch.layout`, optional): The desired layout of returned SparseTensor. Default is torch.sparse_coo_tensor.
+        device (:class:`torch.device`, optional): The desired device of returned tensor. Default is torch.device('cpu').
+        requires_grad (bool, optional): If autograd should record operations on the returned tensor.
+
+    Returns:
+        A sparse identity matrix of shape (n, n).
+
+    Raises:
+        ValueError: If the provided data types or layout are not supported.
+    """
+    if len(size) < 2:
+        raise ValueError("size must have at least 2 dimensions")
+    elif len(size) > 3:
+        raise ValueError("size must have at most 3 dimensions, as this implementation only supports 1 batch dimension")
+
+    if size[-2] != size[-1]:
+        raise ValueError("size must be a square matrix (n, n) or batched square matrix (b, n, n)")
+
+    if values_dtype not in [torch.float32, torch.float64]:
+        raise ValueError(
+            "Values dtype {} not supported. Only torch.float32 and torch.float64 are supported.".format(values_dtype)
+        )
+
+    values = torch.ones(size[-1], dtype=values_dtype, device=device)
+
+    if layout == torch.sparse_coo:
+        if indices_dtype != torch.int64:
+            raise ValueError("For sparse_coo layout, indices_dtype has to be torch.int64.")
+
+        indices = torch.arange(0, size[-1], dtype=indices_dtype, device=device)
+        indices = torch.stack([indices, indices], dim=0)
+
+        if len(size) == 3:
+            batch_dim_indices = (
+                torch.arange(size[0], dtype=indices_dtype, device=device).repeat_interleave(size[-1]).unsqueeze(0)
+            )
+            sparse_dim_indices = torch.cat([indices] * size[0], dim=-1)
+            indices = torch.cat([batch_dim_indices, sparse_dim_indices])
+            values = values.repeat(size[0])
+
+        return torch.sparse_coo_tensor(
+            indices, values, size, dtype=values_dtype, device=device, requires_grad=requires_grad
+        ).coalesce()
+
+    elif layout == torch.sparse_csr:
+        if indices_dtype not in [torch.int32, torch.int64]:
+            raise ValueError("For sparse_csr layout, indices_dtype can either be torch.int32 or torch.int64.")
+
+        crow_indices = torch.arange(0, size[-1] + 1, dtype=indices_dtype, device=device)
+        col_indices = torch.arange(0, size[-1], dtype=indices_dtype, device=device)
+
+        if len(size) == 3:
+            crow_indices = crow_indices.repeat(size[0], 1)
+            col_indices = col_indices.repeat(size[0], 1)
+            values = values.repeat(size[0], 1)
+
+        return torch.sparse_csr_tensor(
+            crow_indices, col_indices, values, size, dtype=values_dtype, device=device, requires_grad=requires_grad
+        )
+
+    else:
+        raise ValueError("Layout {} not supported. Only sparse_coo and sparse_csr are supported.".format(layout))
