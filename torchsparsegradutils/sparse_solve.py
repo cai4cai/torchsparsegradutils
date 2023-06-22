@@ -107,9 +107,28 @@ class SparseTriangularSolve(torch.autograd.Function):
             A = convert_coo_to_csr(A)  # triangular solve doesn't work with sparse coo
             ctx.csr = False
 
-        x = torch.triangular_solve(
-            B.detach(), A.detach(), upper=upper, unitriangular=unitriangular, transpose=transpose
-        ).solution
+        # Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
+        workaround88890 = (
+            A.device == torch.device("cpu")
+            and (not ctx.upper)
+            and ctx.unitriangular
+            and (torch.__version__ < (2,))
+            and ctx.transpose
+        )
+        if not workaround88890:
+            x = torch.triangular_solve(
+                B.detach(), A.detach(), upper=upper, unitriangular=unitriangular, transpose=transpose
+            ).solution
+        else:
+            n = A.shape[0]
+            id_csr = torch.sparse_csr_tensor(
+                torch.arange(n + 1),
+                torch.arange(n),
+                torch.ones(n, device=A.device, dtype=A.dtype),
+                (n, n),
+                device=A.device,
+            )
+            x = torch.triangular_solve(B.detach(), A.detach() + id_csr, upper=ctx.upper, transpose=transpose).solution
 
         x.requires_grad = grad_flag
         ctx.save_for_backward(A, x.detach())
