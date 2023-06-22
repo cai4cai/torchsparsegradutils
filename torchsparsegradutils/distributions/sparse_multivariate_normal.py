@@ -47,12 +47,35 @@ def _batch_sparse_mv(op, bmat, bvec, **kwargs):
 
 class SparseMultivariateNormal(Distribution):
     r"""
-    doc string
-    LDLt decomposition of covariance matrix: C = L @ D @ L.T
-    LDLt decomposition of precision matrix: P = L @ D @ L.T
-    This implementation only supports a single batch dimension.
+    Creates a sparse multivariate normal (MVN) distribution
+    parameterized by a mean vector :attr: `loc`,
+    diagonal covariance or precision matrix represented as a vector :attr: `diagonal`,
+    and a sparse strictly lower triangular covariance or precision matrix
+    :attr: `scale_tril` or :attr: `precision_tril`.
+
+    Both :attr: `scale_tril` and :attr: `precision_tril`, are stored as strctly lower triangular matrices.
+    However, sampling is performed assuming that they are unit lower triangular matrices.
+
+    Thus, the parameterization takes the form of either:
+        covariance = L @ D @ L.T
+        precision  = L @ D @ L.T
+
+    Where L is a sparse unit lower triangular matrix.
+
+    The implementation supports sparse COO or CSR layout for scale_tril or precision_tril
+
+    NOTE: The current implementation only supports a single leading batch dimension
+    NOTE: The current implementation only supports sampling from the distribution
+
+    Args:
+        loc (Tensor): mean of the distribution with shape `batch_shape + event_shape`
+        diagonal (Tensor): diagonal of the covariance or precision matrix with shape `batch_shape + event_shape`
+        scale_tril (Tensor): sparse strictly lower triangular matrix with shape `batch_shape + event_shape + event_shape`
+            in either torch.sparse_coo or torch.sparse_csr layout
+        precision_tril (Tensor): sparse strictly lower triangular matrix with shape `batch_shape + event_shape + event_shape`
+            in either torch.sparse_coo or torch.sparse_csr layout
     """
-    # TODO: It is confusing that scale_tril and precision_tril return unit triangular and strictly lower triangular matrices respectively
+
     # TODO: add in constraints
     # arg_constraints = {'loc': constraints.real_vector,
     #                    'diag': constraints.independent(constraints.positive, 1),
@@ -91,9 +114,8 @@ class SparseMultivariateNormal(Distribution):
         if scale_tril is not None:
             if scale_tril.layout == torch.sparse_coo:
                 scale_tril = scale_tril.coalesce() if not scale_tril.is_coalesced() else scale_tril
-                indices_dtype = scale_tril.indices().dtype
             elif scale_tril.layout == torch.sparse_csr:
-                indices_dtype = scale_tril.crow_indices().dtype
+                pass
             else:
                 raise ValueError("scale_tril must be sparse COO or CSR, instead of {}".format(scale_tril.layout))
 
@@ -105,19 +127,7 @@ class SparseMultivariateNormal(Distribution):
                 raise ValueError("scale_tril can only have 1 batch dimension, but has {}".format(scale_tril.dim() - 2))
 
             batch_shape = torch.broadcast_shapes(loc.shape[:-1], diagonal.shape[:-1], scale_tril.shape[:-2])
-
-            # add unit diagonal to scale_tril, as this is required for LDLt decomposition and sampling
-            Id = sparse_eye(
-                scale_tril.shape,
-                layout=scale_tril.layout,
-                values_dtype=scale_tril.dtype,
-                indices_dtype=indices_dtype,
-                device=scale_tril.device,
-            )
-            if len(batch_shape) == 0:
-                self._scale_tril = scale_tril + Id
-            else:  # BUG: sparse tensors do not support batched addition
-                pass
+            self._scale_tril = scale_tril
 
         else:  # precision_tril is not None
             if precision_tril.layout == torch.sparse_coo:
@@ -171,7 +181,8 @@ class SparseMultivariateNormal(Distribution):
         eps = _standard_normal(shape, dtype=self.loc.dtype, device=self.loc.device)
 
         if "_scale_tril" in self.__dict__:
-            x = _batch_sparse_mv(spmm, self._scale_tril, self._diagonal.sqrt() * eps)
+            eta = self._diagonal.sqrt() * eps
+            x = _batch_sparse_mv(spmm, self._scale_tril, eta) + eta
 
         else:  # 'precision_tril' in self.__dict__
             x = _batch_sparse_mv(
