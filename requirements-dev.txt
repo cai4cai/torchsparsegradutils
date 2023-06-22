@@ -4,3 +4,4 @@ scipy
 jax[cpu]
 parameterized
 pytest
+pytest-rerunfailures
