@@ -1,5 +1,6 @@
 import torch
 import unittest
+import pytest
 from unittest.mock import Mock
 
 from parameterized import parameterized_class, parameterized
@@ -16,6 +17,7 @@ from torchsparsegradutils.utils.utils import (
     sparse_block_diag,
     sparse_block_diag_split,
     stack_csr,
+    sparse_eye,
 )
 
 if torch.__version__ >= (2,):
@@ -533,3 +535,171 @@ class TestSparseBlockDiaSplit(unittest.TestCase):
         A_csr_block_diag_split = sparse_block_diag_split(A_csr_block_diag, *shapes)
         for i, A in enumerate(A_csr):
             self.assertTrue(torch.equal(A.to_dense(), A_csr_block_diag_split[i].to_dense()))
+
+
+# Sparse eye tests, using pytest framework:
+
+# Identify Testing Parameters
+DEVICES = [torch.device("cpu")]
+if torch.cuda.is_available():
+    DEVICES.append(torch.device("cuda"))
+
+TEST_DATA = [
+    # name  shape,
+    ("unbat", (4, 4)),
+    ("unbat", (8, 8)),
+    ("bat", (2, 4, 4)),
+    ("bat", (4, 8, 8)),
+]
+
+INDEX_DTYPES = [torch.int32, torch.int64]
+VALUE_DTYPES = [torch.float32, torch.float64]
+LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
+
+
+# Define Test Names:
+def data_id(shapes):
+    return shapes[0]
+
+
+def device_id(device):
+    return str(device)
+
+
+def dtype_id(dtype):
+    return str(dtype).split(".")[-1]
+
+
+def layout_id(layout):
+    return str(layout).split(".")[-1].split("_")[-1].upper()
+
+
+# Define Fixtures
+
+
+@pytest.fixture(params=TEST_DATA, ids=[data_id(d) for d in TEST_DATA])
+def shapes(request):
+    return request.param
+
+
+@pytest.fixture(params=VALUE_DTYPES, ids=[dtype_id(d) for d in VALUE_DTYPES])
+def value_dtype(request):
+    return request.param
+
+
+@pytest.fixture(params=INDEX_DTYPES, ids=[dtype_id(d) for d in INDEX_DTYPES])
+def index_dtype(request):
+    return request.param
+
+
+@pytest.fixture(params=DEVICES, ids=[device_id(d) for d in DEVICES])
+def device(request):
+    return request.param
+
+
+@pytest.fixture(params=LAYOUTS, ids=[layout_id(lay) for lay in LAYOUTS])
+def layout(request):
+    return request.param
+
+
+# Define Tests:
+
+
+def test_sparse_eye(shapes, layout, value_dtype, index_dtype, device):
+    if index_dtype == torch.int32 and layout is torch.sparse_coo:
+        pytest.skip("Skipping test as sparse COO tensors with int32 indices are not supported")
+
+    name, size = shapes
+
+    # TODO: it would be good to unify the terminology of indices_dtype and index_dtype
+    Id = sparse_eye(size, layout=layout, values_dtype=value_dtype, indices_dtype=index_dtype, device=device)
+
+    assert Id.shape == size
+    assert Id.layout == layout
+    assert Id.device.type == device.type
+    assert Id.values().dtype == value_dtype
+
+    if layout == torch.sparse_coo:
+        assert Id.indices().dtype == index_dtype
+    elif layout == torch.sparse_csr:
+        assert Id.crow_indices().dtype == index_dtype
+        assert Id.col_indices().dtype == index_dtype
+    else:
+        raise ValueError("layout not supported")
+
+    if len(size) == 2:
+        Id_torch = torch.eye(size[-1], dtype=value_dtype, device=device)
+        assert torch.equal(Id.to_dense(), Id_torch)
+
+
+# def test_sparse_eye_coo():
+#     n = 5
+#     I = sparse_eye(n, layout=torch.sparse_coo)
+#     assert I.shape == (n, n)
+#     assert I.is_sparse
+#     assert I.dtype == torch.float64
+#     assert I.is_cuda == False
+#     assert I.requires_grad == False
+
+# def test_sparse_eye_csr():
+#     n = 5
+#     I = sparse_eye(n, layout=torch.sparse_csr_tensor)
+#     assert I.shape == (n, n)
+#     assert I.is_sparse
+#     assert I.dtype == torch.float64
+#     assert I.is_cuda == False
+#     assert I.requires_grad == False
+
+# def test_sparse_eye_values_dtype():
+#     n = 5
+#     with pytest.raises(ValueError):
+#         sparse_eye(n, values_dtype=torch.int32)
+
+# def test_sparse_eye_indices_dtype_coo():
+#     n = 5
+#     with pytest.raises(ValueError):
+#         sparse_eye(n, indices_dtype=torch.int32, layout=torch.sparse_coo_tensor)
+
+# def test_sparse_eye_indices_dtype_csr():
+#     n = 5
+#     with pytest.raises(ValueError):
+#         sparse_eye(n, indices_dtype=torch.float32, layout=torch.sparse_csr_tensor)
+
+# def test_sparse_eye_device():
+#     n = 5
+#     if torch.cuda.is_available():
+#         I = sparse_eye(n, device=torch.device('cuda'))
+#         assert I.is_cuda == True
+
+# def test_sparse_eye_grad():
+#     n = 5
+#     I = sparse_eye(n, requires_grad=True)
+#     assert I.requires_grad == True
+
+# def test_sparse_eye_coo_vs_dense():
+#     n = 5
+#     I_sparse = sparse_eye(n, layout=torch.sparse_coo_tensor).to_dense()
+#     I_dense = torch.eye(n, dtype=torch.float64)
+#     assert torch.allclose(I_sparse, I_dense)
+
+# def test_sparse_eye_csr_vs_dense():
+#     n = 5
+#     I_sparse = sparse_eye(n, layout=torch.sparse_csr_tensor).to_dense()
+#     I_dense = torch.eye(n, dtype=torch.float64)
+#     assert torch.allclose(I_sparse, I_dense)
+
+# def test_sparse_eye_coo_vs_dense_device():
+#     n = 5
+#     if torch.cuda.is_available():
+#         device = torch.device('cuda')
+#         I_sparse = sparse_eye(n, layout=torch.sparse_coo_tensor, device=device).to_dense()
+#         I_dense = torch.eye(n, dtype=torch.float64, device=device)
+#         assert torch.allclose(I_sparse, I_dense)
+
+# def test_sparse_eye_csr_vs_dense_device():
+#     n = 5
+#     if torch.cuda.is_available():
+#         device = torch.device('cuda')
+#         I_sparse = sparse_eye(n, layout=torch.sparse_csr_tensor, device=device).to_dense()
+#         I_dense = torch.eye(n, dtype=torch.float64, device=device)
+#         assert torch.allclose(I_sparse, I_dense)

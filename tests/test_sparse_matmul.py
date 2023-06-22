@@ -77,7 +77,7 @@ def forward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, s
     res_sparse = op_test(A, B)  # both results are dense
     res_dense = op_ref(Ad, B)
 
-    torch.allclose(res_sparse, res_dense, atol=ATOL, rtol=RTOL)
+    assert torch.allclose(res_sparse, res_dense, atol=ATOL, rtol=RTOL)
 
 
 def backward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, shapes, is_backward=False):
