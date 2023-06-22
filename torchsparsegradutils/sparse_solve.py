@@ -132,7 +132,7 @@ class SparseTriangularSolve(torch.autograd.Function):
             A.device == torch.device("cpu")
             and (not ctx.upper)
             and ctx.unitriangular
-            and (int(torch.__version__[0]) < 2)
+            and (torch.__version__ < (2,))
             and not ctx.transpose
         )
         if not workaround88890:

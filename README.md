@@ -32,3 +32,4 @@ A number of unittests are provided, which can be run as:
 ```
 python -m pytest
 ```
+ (Note that this also runs the tests from `unittest`)

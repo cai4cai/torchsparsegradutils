@@ -20,8 +20,9 @@ from torchsparsegradutils.utils.utils import (
     sparse_eye,
 )
 
-# https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html
-torch.sparse.check_sparse_tensor_invariants.enable()
+if torch.__version__ >= (2,):
+    # https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html
+    torch.sparse.check_sparse_tensor_invariants.enable()
 
 
 @parameterized_class(
@@ -286,7 +287,7 @@ class TestSparseBlockDiag(unittest.TestCase):
         A_coo_block_diag = sparse_block_diag(*A_coo)
         A_d_block_diag = torch.block_diag(*A_d)
 
-        A_coo_block_diag.sum().backward()
+        torch.sparse.sum(A_coo_block_diag).backward()
         A_d_block_diag.sum().backward()
 
         nz_mask = A_coo.grad.to_dense() != 0.0
@@ -327,7 +328,7 @@ class TestSparseBlockDiag(unittest.TestCase):
         A_csr_block_diag = sparse_block_diag(*A_csr)
         A_d_block_diag = torch.block_diag(*A_d)
 
-        A_csr_block_diag.sum().backward()
+        torch.sparse.sum(A_csr_block_diag).backward()
         A_d_block_diag.sum().backward()
 
         nz_mask = A_csr.grad.to_dense() != 0.0
