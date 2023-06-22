@@ -184,14 +184,21 @@ def generate_random_sparse_csr_matrix(
     if (indices_dtype != torch.int64) and (indices_dtype != torch.int32):
         raise ValueError("indices_dtype must be torch.int64 or torch.int32 for sparse CSR tensors")
 
-    coo_indices = _gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device)
-    crow_indices, col_indices, _ = convert_coo_to_csr_indices_values(coo_indices, size[-2], values=None)
-
     if len(size) == 2:
+        coo_indices = _gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device)
+        crow_indices, col_indices, _ = convert_coo_to_csr_indices_values(coo_indices, size[-2], values=None)
         values = torch.rand(nnz, dtype=values_dtype, device=device)
     else:
-        crow_indices = crow_indices.repeat(size[0], 1)
-        col_indices = col_indices.repeat(size[0], 1)
+        sparse_dim_indices = torch.cat(
+            [_gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device) for _ in range(size[0])],
+            dim=-1,
+        )
+        batch_dim_indices = (
+            torch.arange(size[0], dtype=indices_dtype, device=device).repeat_interleave(nnz).unsqueeze(0)
+        )
+        coo_indices = torch.cat([batch_dim_indices, sparse_dim_indices])
+
+        crow_indices, col_indices, _ = convert_coo_to_csr_indices_values(coo_indices, size[-2], values=None)
         values = torch.rand((size[0], nnz), dtype=values_dtype, device=device)
 
     return torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device)
@@ -337,14 +344,23 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
     if (indices_dtype != torch.int64) and (indices_dtype != torch.int32):
         raise ValueError("indices_dtype must be torch.int64 or torch.int32 for sparse CSR tensors")
 
-    coo_indices = _gen_indices_2d_coo_strictly_tri(size[-2], nnz, upper=upper, dtype=indices_dtype, device=device)
-    crow_indices, col_indices, _ = convert_coo_to_csr_indices_values(coo_indices, size[-2], values=None)
-
     if len(size) == 2:
+        coo_indices = _gen_indices_2d_coo_strictly_tri(size[-2], nnz, upper=upper, dtype=indices_dtype, device=device)
+        crow_indices, col_indices, _ = convert_coo_to_csr_indices_values(coo_indices, size[-2], values=None)
         values = torch.rand(nnz, dtype=values_dtype, device=device)
     else:
-        crow_indices = crow_indices.repeat(size[0], 1)
-        col_indices = col_indices.repeat(size[0], 1)
+        sparse_dim_indices = torch.cat(
+            [
+                _gen_indices_2d_coo_strictly_tri(size[-2], nnz, upper=upper, dtype=indices_dtype, device=device)
+                for _ in range(size[0])
+            ],
+            dim=-1,
+        )
+        batch_dim_indices = batch_dim_indices = (
+            torch.arange(size[0], dtype=indices_dtype, device=device).repeat_interleave(nnz).unsqueeze(0)
+        )
+        coo_indices = torch.cat([batch_dim_indices, sparse_dim_indices])
+        crow_indices, col_indices, _ = convert_coo_to_csr_indices_values(coo_indices, size[-2], values=None)
         values = torch.rand((size[0], nnz), dtype=values_dtype, device=device)
 
     values = values * (value_range[1] - value_range[0]) + value_range[0]
