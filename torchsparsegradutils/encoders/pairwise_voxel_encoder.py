@@ -6,26 +6,28 @@ import numpy
 
 from typing import Iterable, List, Tuple, Union, Any, Optional
 
+from torchsparsegradutils.utils.utils import _sort_coo_indices
+
 Shape = Union[List[int], Tuple[int, ...], torch.Size]
 
 NEIGHBOURS = [
     #  z  y  x
-    (0, 0, 1),
-    (0, 1, 0),
-    (1, 0, 0),
-    (0, 1, 1),
-    (1, 1, 0),
-    (1, 0, 1),
-    (1, 1, 1),
-    (1, -1, 1),
-    (1, 1, -1),
-    (1, -1, -1),
-    (0, 1, -1),
-    (1, -1, 0),
-    (1, 0, -1),
-    (0, 0, 2),
-    (0, 2, 0),
-    (2, 0, 0),
+    (0, 0, 1),  # 1
+    (0, 1, 0),  # 2
+    (1, 0, 0),  # 3
+    (0, 1, 1),  # 4
+    (1, 1, 0),  # 5
+    (1, 0, 1),  # 6
+    (0, 1, -1),  # 7
+    (1, -1, 0),  # 8
+    (1, 0, -1),  # 9
+    (1, 1, 1),  # 10
+    (1, -1, 1),  # 11
+    (1, 1, -1),  # 12
+    (1, -1, -1),  # 13
+    (0, 0, 2),  # 14
+    (0, 2, 0),  # 15
+    (2, 0, 0),  # 16
 ]
 
 
@@ -87,9 +89,10 @@ def _calc_pariwise_coo_indices(
     volume_shape: Tuple[int, int, int],
     num_channels: int = 1,
     batch_size: int = 1,
-    channel_relation: str = "independent",
     diag: bool = False,
     upper: bool = False,
+    channel_relation: str = "independent",
+    dtype: torch.dtype = torch.int64,
     device: Optional[torch.device] = None,
 ) -> torch.Tensor:
     """
@@ -120,6 +123,17 @@ def _calc_pariwise_coo_indices(
     using the `channel_relation` parameter. This can be one of 'independent' (default),
     'intra_inter_channel', or 'inter_inter_channel'.
 
+    if upper = True, then the neighbour (0, 0, 1) corresponds to the relationship between a given voxel
+    and the voxel to its right, ie + 1 in dim 0
+
+    if upper = True, then the neighbour (0, 1, 0) corresponds to the relationship between a given voxel
+    and the voxel below, ie + 1 in dim 1
+
+    if upper = True, then the neighbour (1, 0, 0) corresponds to the relationship between a given voxel
+    and the voxel behind, ie + 1 in dim 2
+
+    Return unsorted indices
+
     Parameters
     ----------
     neighbours : List[Tuple[int, int, int]]
@@ -137,12 +151,28 @@ def _calc_pariwise_coo_indices(
         If True, includes diagonal elements in the pairwise relationships. By default False.
     upper : bool, optional
         If True, only upper triangle of the matrix is computed. By default False.
+    dtype : torch.dtype, optional
+        The data type of the indices tensor, can be torch.int32 or torch.int64, by default torch.int64.
+    device : Optional[torch.device], optional
+        The device to place the indices tensor on, by default None, which places it on the CPU.
 
     Returns
     -------
     torch.Tensor
         The COO indices tensor representing the pairwise relationships in the 3D volume.
     """
+    # TODO: if upper is true, just roll in other direction - ie *-1 on offsets - checks this works with unit test
+    # TODO: remember that this is triangular only
+
+    if channel_relation not in ["independent", "intra_inter_channel", "inter_inter_channel"]:
+        raise ValueError(
+            "channel_relation must be one of 'independent', 'intra_inter_channel', or 'inter_inter_channel'"
+        )
+
+    if num_channels == 1 and channel_relation != "independent":
+        raise ValueError("channel_relation must be 'independent' if num_channels = 1")  # TODO: maybe
+
+    # TODO: add some more checks
 
     if diag is True:
         neighbours.insert(0, (0, 0, 0))
@@ -151,7 +181,9 @@ def _calc_pariwise_coo_indices(
 
     idx = []
     for offsets in neighbours:
-        cen_idx = torch.arange(volume_numel, device=device)  # .reshape(self._event_shape)  # create numbered array
+        cen_idx = torch.arange(volume_numel, device=device).reshape(
+            (num_channels,) + volume_shape
+        )  # create numbered array
         off_idx = cen_idx.roll((0,) + offsets, (0, 1, 2, 3))  # shift based offset
 
         cen_idx = _trim_3d(cen_idx, (0,) + offsets)  # trim off neighbours that are beyond boundary
@@ -160,12 +192,12 @@ def _calc_pariwise_coo_indices(
         idx.append(torch.stack([cen_idx, off_idx], dim=0).reshape(2, -1))
 
     idx = torch.cat(idx, dim=1)
-    if upper is True:
-        return idx.flip(
-            dims=(0,)
-        )  # This may increase memory as per: https://pytorch.org/docs/stable/generated/torch.flip.html
-    else:
-        return idx
+
+    idx = idx.flip(dims=(0,)) if upper is True else idx
+
+    idx, _ = _sort_coo_indices(idx)
+
+    return idx
 
 
 class PairwiseVoxelEncoder:
