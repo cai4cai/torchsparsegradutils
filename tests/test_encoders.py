@@ -3,7 +3,12 @@ import torch
 import json
 import os
 
-from torchsparsegradutils.encoders.pairwise_voxel_encoder import _trim_3d, _calc_pariwise_coo_indices, NEIGHBOURS
+from torchsparsegradutils.encoders.pairwise_voxel_encoder import (
+    _trim_3d,
+    _calc_pariwise_coo_indices,
+    NEIGHBOURS,
+    _generate_neighbours,
+)
 from torchsparsegradutils.utils.utils import _sort_coo_indices
 
 # Test the _trim function, required for removing pairwise relationships beyond the volume boundary
@@ -34,6 +39,27 @@ def test_trim(tensor_3d, offsets, expected_output_slice):
         assert torch.all(output == expected_output)
 
 
+# Test neighbourgood generation:
+
+
+with open("tests/test_params/xyz_neighbours.json") as f:  # load test cases from file
+    print(os.getcwd())
+    neighbours_test_cases = json.load(f)
+
+params = [tuple(tc.values())[1:] for tc in neighbours_test_cases]  # Skip the first value, which is 'id'
+ids = [tc["id"] for tc in neighbours_test_cases]  # Extract 'id' separately
+
+
+@pytest.mark.parametrize(
+    "range_, nneigh, upper, expected_neighbours",
+    params,
+    ids=ids,
+)
+def test_generate_neighbours(range_, nneigh, upper, expected_neighbours):
+    neighbours = _generate_neighbours(range_, nneigh, upper)
+    assert len(neighbours) == nneigh
+
+
 # Test the _calc_pariwise_coo_indices function, required for calculating the pairwise relationships
 
 
@@ -56,12 +82,18 @@ def test_pariwise_coo_indices(
     neighbours = NEIGHBOURS[:nneigh] if nneigh > 1 else list((NEIGHBOURS[0],))
     vshape = tuple(vshape)
     expected_idx = torch.tensor(expected_idx, dtype=getattr(torch, dtype), device=device)
-    idx = _calc_pariwise_coo_indices(neighbours, vshape, batch_size, nchannels, diag, upper, dtype=dtype, device=device)
+    idx = _calc_pariwise_coo_indices(
+        neighbours, vshape, batch_size, nchannels, diag, upper, channel_relation, dtype=dtype, device=device
+    )
     expected_idx, _ = _sort_coo_indices(expected_idx)
 
-    if upper:
+    if upper and not diag:
+        assert (idx[0] < idx[1]).all()
+    elif not upper and not diag:
+        assert (idx[0] > idx[1]).all()
+    elif upper and diag:
         assert (idx[0] <= idx[1]).all()
-    else:
+    elif not upper and diag:
         assert (idx[0] >= idx[1]).all()
 
     assert torch.equal(idx, expected_idx)
