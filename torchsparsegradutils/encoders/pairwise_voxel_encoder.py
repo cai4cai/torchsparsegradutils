@@ -31,6 +31,7 @@ NEIGHBOURS = [
     (0, 2, 0),  # 15
     (2, 0, 0),  # 16
 ]
+# TODO: Generate these neighbours automatically, using conditions for lower/upper or full
 
 
 def _generate_neighbours(range_: int, num_neighbours: int, upper=None):
@@ -220,7 +221,10 @@ def _calc_pariwise_coo_indices(
         The COO indices tensor representing the pairwise relationships in the 3D volume.
     """
     # TODO: remember that this is triangular only
-
+    # TODO: create loop that creates shifts based on all permutations and then just keeps indices that are upper/lower
+    # TODO: Indices need to be returned in a predictable order, so sort cannot be used at the end here..
+    # 
+    
     if channel_relation not in ["independent", "intra_voxel_inter_channel", "inter_voxel_inter_channel"]:
         raise ValueError(
             "channel_relation must be one of 'independent', 'intra_voxel_inter_channel', or 'inter_voxel_inter_channel'"
@@ -236,49 +240,77 @@ def _calc_pariwise_coo_indices(
 
     volume_numel = reduce(mul, volume_shape)
 
-    cen_idx = torch.arange(num_channels * volume_numel, device=device).reshape(
+    idx = torch.arange(num_channels * volume_numel, device=device).reshape(
         (num_channels,) + volume_shape
     )  # create numbered array
 
-    idx = []
+    indices = []
 
+    # TODO: we can probably combine these three sections (inder, intra, inter) into one
+    
     for offsets in neighbours:
-        # if upper is True:
-        #     offsets = tuple(map(lambda x: -x, offsets))  # or use the flip
+        if upper is True:
+            offsets = tuple(map(lambda x: -x, offsets))
 
-        off_idx = cen_idx.roll((0,) + offsets, (0, 1, 2, 3))  # shift based offset
+        col_idx = idx.roll((0,) + offsets, (0, 1, 2, 3))  # shift based offset
+        
+        # Trim off neighbours that wrap around boundaries of volume, then flatten
+        row_idx = _trim_3d(idx, (0,) + offsets).flatten()
+        col_idx = _trim_3d(col_idx, (0,) + offsets).flatten()
 
-        # Trim off neighbours that wrap around boundaries of volume, stack and flatten into COO indices, and append
-        idx.append(
-            torch.stack([_trim_3d(cen_idx, (0,) + offsets), _trim_3d(off_idx, (0,) + offsets)], dim=0).flatten(1)
-        )
+        indices.append(torch.stack([row_idx, col_idx], dim=0))
 
     if channel_relation != "independent":
         for c in range(1, num_channels):
-            idx.append(
-                torch.stack([cen_idx.flatten()[c * volume_numel :], cen_idx.flatten()[: -c * volume_numel]], dim=0)
-            )
+            
+            row_idx = idx.flatten()
+            col_idx = idx.roll((c, 0, 0, 0), (0, 0, 0, 0)).flatten()
+            
+            if upper is not None:
+                select = row_idx < col_idx if upper else row_idx > col_idx
+            else:
+                select = torch.ones_like(row_idx, dtype=torch.bool)
+                
+            # TODO: can we use index select here?
+            
+            indices.append(torch.stack([row_idx[select], col_idx[select]], dim=0))
+            
+            # Alternative method:
+            # indices.append(
+            #     torch.stack([idx.flatten()[c * volume_numel :], idx.flatten()[: -c * volume_numel]], dim=0)
+            # )
 
     if channel_relation == "inter_voxel_inter_channel":
-        for n in range(len(neighbours)):
-            i_new = idx[n].clone()
-            i_new[0, :] += volume_numel
-            # TODO: THIS IS WRONG - maybe use offsets, roll and trim with the addition
+        for offsets in neighbours:
+            if upper is True:
+                offsets = tuple(map(lambda x: -x, offsets))
+                
+            for c in range(1, num_channels):
+                col_idx = idx.roll((c,) + offsets, (0, 1, 2, 3))  # shift based offset
+                
+                row_idx = _trim_3d(idx, (0,) + offsets).flatten()
+                col_idx = _trim_3d(col_idx, (0,) + offsets).flatten()
+                
+                if upper is not None:
+                    select = row_idx < col_idx if upper else row_idx > col_idx
+                else:
+                    select = torch.ones_like(row_idx, dtype=torch.bool)
+                
+                indices.append(torch.stack([row_idx[select], col_idx[select]], dim=0))
+            
+            
 
-            idx.append(idx[n].clone()[0, :] + n * volume_numel)
+    indices = torch.cat(indices, dim=1)
 
-    idx = torch.cat(idx, dim=1)
+    # indices = indices.flip(dims=(0,)) if upper is True else indices
 
-    idx = idx.flip(dims=(0,)) if upper is True else idx
-
-    idx, _ = _sort_coo_indices(idx)
-
-    return idx
+    indices, _ = _sort_coo_indices(indices)
+    
+    return indices
 
 
 class PairwiseVoxelEncoder:
     pass
-
 
 # class COOSparseEncoder:  # TODO: should this also inherit from nn.Module?
 #     def __init__(self, num_neighbours, diag=True, upper=False, device="cuda"):
