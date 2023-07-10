@@ -60,28 +60,28 @@ def _generate_neighbours(range_: int, num_neighbours: int, upper=None):
         The list of neighbours. Each neighbour is represented as a tuple of three integers (x, y, z).
     """
 
-    all_neighbours = list(product(range(-range_, range_ + 1), repeat=3))
+    neighbours = list(product(range(-range_, range_ + 1), repeat=3))
 
     # Filter tuples based on the 'upper' flag
     if upper is True:
-        all_neighbours = [x for x in all_neighbours if x[0] >= 0]
+        neighbours = [x for x in neighbours if x[0] >= 0]
     elif upper is False:
-        all_neighbours = [x for x in all_neighbours if x[0] < 0]
+        neighbours = [x for x in neighbours if x[0] < 0]
     elif upper is None:
         pass
     else:
         raise ValueError("Invalid value for upper: {}. Valid options are True, False or None".format(upper))
 
     # Sort tuples based on the sum of their absolute values
-    all_neighbours = sorted(all_neighbours, key=lambda x: sum(abs(val) for val in x))
+    neighbours = sorted(neighbours, key=lambda x: sum(abs(val) for val in x))
 
     # Limit to the requested number of neighbours
     try:
-        neighbours = all_neighbours[:num_neighbours]
+        neighbours = neighbours[:num_neighbours]
     except IndexError:
         raise ValueError(
             "Invalid value for num_neighbours: {}. Must be less than or equal to {}".format(
-                num_neighbours, len(all_neighbours)
+                num_neighbours, len(neighbours)
             )
         )
 
@@ -142,17 +142,19 @@ def _trim_3d(x: torch.Tensor, offsets: Tuple[int, int, int]) -> torch.Tensor:
 
 
 def _calc_pariwise_coo_indices(
-    neighbours: List[Tuple[int, int, int]],
+    neighbourhood_size: int,
+    num_neighbours: int,
     volume_shape: Tuple[int, int, int],
     batch_size: int = 1,
     num_channels: int = 1,
     diag: bool = False,
     upper: bool = False,
-    channel_relation: str = "independent",
+    channel_voxel_relation: str = "indep",
     dtype: torch.dtype = torch.int64,
     device: Optional[torch.device] = None,
 ) -> torch.Tensor:
     """
+    TODO: update doc string
     Generates 2-dimensional COO (Coordinate Format) indices for pairwise relationships described
     by neighbours in a 3D volume of shape specified by `volume_shape`, with optional batch
     and channel dimensions.
@@ -177,10 +179,10 @@ def _calc_pariwise_coo_indices(
     [3, C*H*D*W], describing the batch, row, and column indices.
 
     The function also provides the option to model relationships between the voxels of different channels
-    using the `channel_relation` parameter. This can be one of 'independent' (default),
+    using the `channel_voxel_relation` parameter. This can be one of 'indep' (default),
     'intra_inter_channel', or 'inter_inter_channel'.
-    Where 'intra_voxel_inter_channel' encodes relationships between the same voxel across different channels,
-    and, 'inter_voxel_inter_channel' encodes relationships between different voxels across different channels.
+    Where 'intra' encodes relationships between the same voxel across different channels,
+    and, 'inter' encodes relationships between different voxels across different channels.
 
     if upper = True, then the neighbour (0, 0, 1) corresponds to the relationship between a given voxel
     and the voxel to its right, ie + 1 in dim 0
@@ -203,9 +205,9 @@ def _calc_pariwise_coo_indices(
         The number of channels in the volume, by default 1.
     batch_size : int, optional
         The number of volumes in the batch, by default 1.
-    channel_relation : str, optional
-        Specifies the type of channel relationship to model, can be 'independent', 'intra_voxel_inter_channel',
-        or 'inter_voxel_inter_channel'. By default 'independent'.
+    channel_voxel_relation : str, optional
+        Specifies the type of channel relationship to model, can be 'indep', 'intra',
+        or 'inter'. By default 'indep'.
     diag : bool, optional
         If True, includes diagonal elements in the pairwise relationships. By default False.
     upper : bool, optional
@@ -223,20 +225,23 @@ def _calc_pariwise_coo_indices(
     # TODO: remember that this is triangular only
     # TODO: create loop that creates shifts based on all permutations and then just keeps indices that are upper/lower
     # TODO: Indices need to be returned in a predictable order, so sort cannot be used at the end here..
-    # 
     
-    if channel_relation not in ["independent", "intra_voxel_inter_channel", "inter_voxel_inter_channel"]:
+    # TODO: add some more checks  - neighbourhood_size and volume size must be compatible
+    if channel_voxel_relation not in ["indep", "intra", "inter"]:
         raise ValueError(
-            "channel_relation must be one of 'independent', 'intra_voxel_inter_channel', or 'inter_voxel_inter_channel'"
+            "channel_voxel_relation must be one of 'indep', 'intra', or 'inter'"
         )
 
-    if num_channels == 1 and channel_relation != "independent":
-        raise ValueError("channel_relation must be 'independent' if num_channels = 1")  # TODO: maybe
+    if num_channels == 1 and channel_voxel_relation != "indep":
+        # TODO: change to warning
+        raise ValueError("channel_voxel_relation must be 'indep' if num_channels = 1")  
 
-    # TODO: add some more checks
+    # TODO: do we need a list here or can we do it as a generator?
+    neighbours = list(product(range(-neighbourhood_size, neighbourhood_size+1), repeat=3))
+    neighbours = sorted(neighbours, key=lambda x: sum(abs(val) for val in x))
 
-    if diag is True:
-        neighbours.insert(0, (0, 0, 0))
+    if diag is False:
+        neighbours.remove((0, 0, 0))
 
     volume_numel = reduce(mul, volume_shape)
 
@@ -246,7 +251,8 @@ def _calc_pariwise_coo_indices(
 
     indices = []
 
-    # TODO: we can probably combine these three sections (inder, intra, inter) into one
+    for offsets in neighbours:
+        pass
     
     for offsets in neighbours:
         if upper is True:
@@ -260,7 +266,7 @@ def _calc_pariwise_coo_indices(
 
         indices.append(torch.stack([row_idx, col_idx], dim=0))
 
-    if channel_relation != "independent":
+    if channel_voxel_relation != "indep":
         for c in range(1, num_channels):
             
             row_idx = idx.flatten()
@@ -280,7 +286,7 @@ def _calc_pariwise_coo_indices(
             #     torch.stack([idx.flatten()[c * volume_numel :], idx.flatten()[: -c * volume_numel]], dim=0)
             # )
 
-    if channel_relation == "inter_voxel_inter_channel":
+    if channel_voxel_relation == "inter":
         for offsets in neighbours:
             if upper is True:
                 offsets = tuple(map(lambda x: -x, offsets))
