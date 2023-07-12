@@ -31,61 +31,6 @@ NEIGHBOURS = [
     (0, 2, 0),  # 15
     (2, 0, 0),  # 16
 ]
-# TODO: Generate these neighbours automatically, using conditions for lower/upper or full
-
-
-def _generate_neighbours(range_: int, num_neighbours: int, upper=None):
-    """
-    # TODO: This is currently not implemented correctly
-
-    This is a means to generate symmetric 3D Von Neumann or Moore neighbourhoods.
-    Symmetric from the perspective of if you labelled each element in the 3D volume with a number,
-    the relationship between that element and its neighbour would occupy either a lower or upper triangular matrix
-    when flattened and representing a covariance/correspondence matrix.
-
-    Parameters
-    ----------
-    range_ : int
-        The maximum distance in each direction (x, y, z) to consider neighbours.
-    num_neighbours : int
-        The number of neighbours to generate.
-    upper : bool, optional
-        If True, only neighbours encoding the upper triangular portion of the covariance matrix are considered.
-        If False, only neighbours encoding the lower triangular portion of the covariance matrix are considered.
-        If None (default), neighbours encoding the whole matrix are considered.
-
-    Returns
-    -------
-    list of tuple
-        The list of neighbours. Each neighbour is represented as a tuple of three integers (x, y, z).
-    """
-
-    neighbours = list(product(range(-range_, range_ + 1), repeat=3))
-
-    # Filter tuples based on the 'upper' flag
-    if upper is True:
-        neighbours = [x for x in neighbours if x[0] >= 0]
-    elif upper is False:
-        neighbours = [x for x in neighbours if x[0] < 0]
-    elif upper is None:
-        pass
-    else:
-        raise ValueError("Invalid value for upper: {}. Valid options are True, False or None".format(upper))
-
-    # Sort tuples based on the sum of their absolute values
-    neighbours = sorted(neighbours, key=lambda x: sum(abs(val) for val in x))
-
-    # Limit to the requested number of neighbours
-    try:
-        neighbours = neighbours[:num_neighbours]
-    except IndexError:
-        raise ValueError(
-            "Invalid value for num_neighbours: {}. Must be less than or equal to {}".format(
-                num_neighbours, len(neighbours)
-            )
-        )
-
-    return neighbours
 
 
 def _trim_3d(x: torch.Tensor, offsets: Tuple[int, int, int]) -> torch.Tensor:
@@ -96,44 +41,34 @@ def _trim_3d(x: torch.Tensor, offsets: Tuple[int, int, int]) -> torch.Tensor:
     and zero leaves the tensor unchanged along that axis. This function raises a ValueError if
     the dimensionality of the tensor does not match the number of offsets.
 
-    Parameters
-    ----------
-    x : torch.Tensor
-        The input tensor to be trimmed.
-    offsets : Tuple[int, ...]
-        A tuple of integers specifying the extent of the trim in each axis.
+    Args:
+        x (torch.Tensor): The input tensor to be trimmed.
+        offsets (Tuple[int, ...]): A tuple of integers specifying the extent of the trim in each axis.
 
-    Returns
-    -------
-    torch.Tensor
-        The trimmed tensor.
+    Returns:
+        torch.Tensor: The trimmed tensor.
 
-    Examples
-    --------
-    For a 3D tensor x:
-    >>> _trim(x, (0, 0, 1))
-    returns x[0: ,0:, 1: ]
+    Examples:
+        For a 3D tensor x:
+        >>> _trim_3d(x, (0, 0, 1))
+        returns x[0: ,0:, 1: ]
 
-    >>> _trim(x, (0, 0, -1))
-    returns x[0:, 0:, :-1]
+        >>> _trim_3d(x, (0, 0, -1))
+        returns x[0:, 0:, :-1]
 
-    >>> _trim(x, (0, 0, -2))
-    returns x[0:, 0:, :-2]
+        >>> _trim_3d(x, (5, -6, 3))
+        returns x[5:, :-6, 3:]
 
-    >>> _trim(x, (5, -6, 3))
-    returns x[5:, :-6, 3:]
+    Notes:
+        This function is equivalent to:
 
-    Notes
-    -----
-    This function is equivalent to:
+        slices = tuple()
+        for off in offsets:
+            start = None if off<0 else off
+            end = None if off>-1 else off
+            slices += (slice(start, end))
 
-    slices = tuple()
-    for off in offsets:
-        start = None if off<0 else off
-        end = None if off>-1 else off
-        slices += (slice(start, end))
-
-    return x[slices]
+        return x[slices]
     """
     if x.ndim != len(offsets):
         raise ValueError("Dimensionality of tensor x and number of offsets must much")
@@ -141,9 +76,33 @@ def _trim_3d(x: torch.Tensor, offsets: Tuple[int, int, int]) -> torch.Tensor:
     return x[tuple(map(lambda i: slice(None if i < 0 else i, None if i > -1 else i), offsets))]
 
 
+def _gen_coords(radius: float) -> List[Tuple[int, int, int]]:
+    """
+    Generate a list of tuples representing 3D coordinates.
+
+    The coordinates generated are all points (x, y, z) where each of x, y, z is a non-zero integer and
+    the point lies within a sphere of the provided radius around the origin (0, 0, 0).
+    The range of x, y, z is from -radius to radius (inclusive).
+
+    Args:
+        radius (float): The radius of the sphere within which the coordinates are generated.
+        It defines the range of the x, y, z coordinates.
+
+    Returns:
+        List[Tuple[int, int, int]]: A list of tuples. Each tuple represents a point (x, y, z)
+        within the defined spherical volume.
+    """
+    coords = [
+        (x, y, z)
+        for x, y, z in product(range(-radius, radius + 1), repeat=3)
+        if x**2 + y**2 + z**2 <= radius**2
+    ]
+    coords.remove((0, 0, 0))
+    return coords
+
+
 def _calc_pariwise_coo_indices(
-    neighbourhood_size: int,
-    num_neighbours: int,
+    radius: float,
     volume_shape: Tuple[int, int, int],
     batch_size: int = 1,
     num_channels: int = 1,
@@ -154,94 +113,16 @@ def _calc_pariwise_coo_indices(
     device: Optional[torch.device] = None,
 ) -> torch.Tensor:
     """
-    TODO: update doc string
-    Generates 2-dimensional COO (Coordinate Format) indices for pairwise relationships described
-    by neighbours in a 3D volume of shape specified by `volume_shape`, with optional batch
-    and channel dimensions.
-
-    The indices generated by this function can be used to represent a sparse matrix representation
-    of pairwise relationships in a 3D volume, which is particularly useful in the case of covariance matrices.
-
-    The 3D volume is assumed to be in the (batch, channel, z, y, x) format, where batch and channel
-    dimensions are optional. However, if a channel dimension is provided, a batch dimension must also
-    be provided and set to 1 if not needed.
-
-    The indices correspond to the flattened volume, with a range from 0 to (C*H*D*W) - 1,
-    where C, H, D, and W represent the number of channels, height, depth, and width of the volume,
-    respectively. This range is also known as the "event_size" in the context of PyTorch distributions.
-
-    If `diag` is set to True, then diagonal elements are included in the pairwise relationships,
-    essentially describing the self-relationship of each element. This is useful for including variance
-    values in a covariance matrix.
-
-    If an unbatched volume shape is provided, then the COO indices have shape [2, C*H*D*W],
-    describing the row and column indices. For batched volumes, the COO indices will have shape
-    [3, C*H*D*W], describing the batch, row, and column indices.
-
-    The function also provides the option to model relationships between the voxels of different channels
-    using the `channel_voxel_relation` parameter. This can be one of 'indep' (default),
-    'intra_inter_channel', or 'inter_inter_channel'.
-    Where 'intra' encodes relationships between the same voxel across different channels,
-    and, 'inter' encodes relationships between different voxels across different channels.
-
-    if upper = True, then the neighbour (0, 0, 1) corresponds to the relationship between a given voxel
-    and the voxel to its right, ie + 1 in dim 0
-
-    if upper = True, then the neighbour (0, 1, 0) corresponds to the relationship between a given voxel
-    and the voxel below, ie + 1 in dim 1
-
-    if upper = True, then the neighbour (1, 0, 0) corresponds to the relationship between a given voxel
-    and the voxel behind, ie + 1 in dim 2
-
-    Return unsorted indices
-
-    Parameters
-    ----------
-    neighbours : List[Tuple[int, int, int]]
-        List of tuples specifying the relative offsets of neighbouring voxels for pairwise relationships.
-    volume_shape : Tuple[int, int, int]
-        The shape of the volume to generate indices for. If batched, also include the batch size.
-    num_channels : int, optional
-        The number of channels in the volume, by default 1.
-    batch_size : int, optional
-        The number of volumes in the batch, by default 1.
-    channel_voxel_relation : str, optional
-        Specifies the type of channel relationship to model, can be 'indep', 'intra',
-        or 'inter'. By default 'indep'.
-    diag : bool, optional
-        If True, includes diagonal elements in the pairwise relationships. By default False.
-    upper : bool, optional
-        If True, only upper triangle of the matrix is computed. By default False.
-    dtype : torch.dtype, optional
-        The data type of the indices tensor, can be torch.int32 or torch.int64, by default torch.int64.
-    device : Optional[torch.device], optional
-        The device to place the indices tensor on, by default None, which places it on the CPU.
-
-    Returns
-    -------
-    torch.Tensor
-        The COO indices tensor representing the pairwise relationships in the 3D volume.
+    # TODO: update docstring
     """
-    # TODO: remember that this is triangular only
-    # TODO: create loop that creates shifts based on all permutations and then just keeps indices that are upper/lower
-    # TODO: Indices need to be returned in a predictable order, so sort cannot be used at the end here..
-    
-    # TODO: add some more checks  - neighbourhood_size and volume size must be compatible
     if channel_voxel_relation not in ["indep", "intra", "inter"]:
-        raise ValueError(
-            "channel_voxel_relation must be one of 'indep', 'intra', or 'inter'"
-        )
+        raise ValueError("channel_voxel_relation must be one of 'indep', 'intra', or 'inter'")
 
     if num_channels == 1 and channel_voxel_relation != "indep":
-        # TODO: change to warning
-        raise ValueError("channel_voxel_relation must be 'indep' if num_channels = 1")  
+        raise ValueError("channel_voxel_relation must be 'indep' if num_channels = 1")
 
-    # TODO: do we need a list here or can we do it as a generator?
-    neighbours = list(product(range(-neighbourhood_size, neighbourhood_size+1), repeat=3))
-    neighbours = sorted(neighbours, key=lambda x: sum(abs(val) for val in x))
-
-    if diag is False:
-        neighbours.remove((0, 0, 0))
+    # Generate neighbours:
+    neighbours = _gen_coords(radius)
 
     volume_numel = reduce(mul, volume_shape)
 
@@ -251,72 +132,70 @@ def _calc_pariwise_coo_indices(
 
     indices = []
 
-    for offsets in neighbours:
-        pass
-    
-    for offsets in neighbours:
-        if upper is True:
-            offsets = tuple(map(lambda x: -x, offsets))
+    if diag is True:
+        indices.append(torch.stack([idx.flatten(), idx.flatten()], dim=0))
 
+    for offsets in neighbours:
+        # First do independent channel relationships - ie. just spatial neighbours:
         col_idx = idx.roll((0,) + offsets, (0, 1, 2, 3))  # shift based offset
-        
         # Trim off neighbours that wrap around boundaries of volume, then flatten
         row_idx = _trim_3d(idx, (0,) + offsets).flatten()
         col_idx = _trim_3d(col_idx, (0,) + offsets).flatten()
 
-        indices.append(torch.stack([row_idx, col_idx], dim=0))
+        if (row_idx < col_idx).all():  # all are upper triangular
+            upper_shift = True  # Does this spatial shift correspond to the upper triangular
+        elif not (row_idx < col_idx).any():  # all are lower triangular
+            upper_shift = False
+        else:
+            raise ValueError("Spatial shift is neither upper or lower triangular -- something has gone wrong")
 
-    if channel_voxel_relation != "indep":
-        for c in range(1, num_channels):
-            
-            row_idx = idx.flatten()
-            col_idx = idx.roll((c, 0, 0, 0), (0, 0, 0, 0)).flatten()
-            
-            if upper is not None:
-                select = row_idx < col_idx if upper else row_idx > col_idx
-            else:
-                select = torch.ones_like(row_idx, dtype=torch.bool)
-                
-            # TODO: can we use index select here?
-            
-            indices.append(torch.stack([row_idx[select], col_idx[select]], dim=0))
-            
-            # Alternative method:
-            # indices.append(
-            #     torch.stack([idx.flatten()[c * volume_numel :], idx.flatten()[: -c * volume_numel]], dim=0)
-            # )
+        # If the shift is upper and we want upper, or the shift is lower and we want lower
+        # or if upper is None, then we want both upper and lower
+        # Then append the indices and carry on to intra and/or inter channel relationships if needed
+        # else continue to the next shift:
+        if upper == upper_shift or upper is None:
+            indices.append(torch.stack([row_idx, col_idx], dim=0))
+        else:
+            continue
 
-    if channel_voxel_relation == "inter":
-        for offsets in neighbours:
-            if upper is True:
-                offsets = tuple(map(lambda x: -x, offsets))
-                
+        # inter-channel relationships:
+
+        if channel_voxel_relation == "inter":
             for c in range(1, num_channels):
                 col_idx = idx.roll((c,) + offsets, (0, 1, 2, 3))  # shift based offset
-                
+
                 row_idx = _trim_3d(idx, (0,) + offsets).flatten()
                 col_idx = _trim_3d(col_idx, (0,) + offsets).flatten()
-                
+
                 if upper is not None:
                     select = row_idx < col_idx if upper else row_idx > col_idx
                 else:
                     select = torch.ones_like(row_idx, dtype=torch.bool)
-                
+
                 indices.append(torch.stack([row_idx[select], col_idx[select]], dim=0))
-            
-            
+
+    # Add intra-channel relationships, which are spatial shift independent:
+    if channel_voxel_relation != "indep":
+        for c in range(1, num_channels):
+            row_idx = idx.flatten()
+            col_idx = idx.roll((c, 0, 0, 0), (0, 0, 0, 0)).flatten()
+
+            if upper is not None:
+                select = row_idx < col_idx if upper else row_idx > col_idx
+            else:
+                select = torch.ones_like(row_idx, dtype=torch.bool)
+
+            indices.append(torch.stack([row_idx[select], col_idx[select]], dim=0))
 
     indices = torch.cat(indices, dim=1)
-
-    # indices = indices.flip(dims=(0,)) if upper is True else indices
-
     indices, _ = _sort_coo_indices(indices)
-    
+
     return indices
 
 
 class PairwiseVoxelEncoder:
     pass
+
 
 # class COOSparseEncoder:  # TODO: should this also inherit from nn.Module?
 #     def __init__(self, num_neighbours, diag=True, upper=False, device="cuda"):

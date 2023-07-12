@@ -7,7 +7,7 @@ from torchsparsegradutils.encoders.pairwise_voxel_encoder import (
     _trim_3d,
     _calc_pariwise_coo_indices,
     NEIGHBOURS,
-    _generate_neighbours,
+    _gen_coords,
 )
 from torchsparsegradutils.utils.utils import _sort_coo_indices
 
@@ -51,13 +51,14 @@ ids = [tc["id"] for tc in neighbours_test_cases]  # Extract 'id' separately
 
 
 @pytest.mark.parametrize(
-    "range_, nneigh, upper, expected_neighbours",
+    "radius, expected_coords",
     params,
     ids=ids,
 )
-def test_generate_neighbours(range_, nneigh, upper, expected_neighbours):
-    neighbours = _generate_neighbours(range_, nneigh, upper)
-    assert len(neighbours) == nneigh
+def test_gen_coords(radius, expected_coords):
+    coords = _gen_coords(radius)
+    expected_coords = [tuple(e) for e in expected_coords]
+    assert set(coords) == set(expected_coords)
 
 
 # Test the _calc_pariwise_coo_indices function, required for calculating the pairwise relationships
@@ -72,18 +73,17 @@ ids = [tc["id"] for tc in pairwise_coo_indices_test_cases]  # Extract 'id' separ
 
 
 @pytest.mark.parametrize(
-    "nneigh, vshape, batch_size, nchannels, upper, diag, channel_relation, dtype, device, expected_idx",
+    "radius, vshape, batch_size, nchannels, upper, diag, channel_relation, dtype, device, expected_idx",
     params,
     ids=ids,
 )
 def test_pariwise_coo_indices(
-    nneigh, vshape, batch_size, nchannels, upper, diag, channel_relation, dtype, device, expected_idx
+    radius, vshape, batch_size, nchannels, upper, diag, channel_relation, dtype, device, expected_idx
 ):
-    neighbours = NEIGHBOURS[:nneigh] if nneigh > 1 else list((NEIGHBOURS[0],))
     vshape = tuple(vshape)
     expected_idx = torch.tensor(expected_idx, dtype=getattr(torch, dtype), device=device)
     idx = _calc_pariwise_coo_indices(
-        neighbours, vshape, batch_size, nchannels, diag, upper, channel_relation, dtype=dtype, device=device
+        radius, vshape, batch_size, nchannels, diag, upper, channel_relation, dtype=dtype, device=device
     )
     expected_idx, _ = _sort_coo_indices(expected_idx)
 
