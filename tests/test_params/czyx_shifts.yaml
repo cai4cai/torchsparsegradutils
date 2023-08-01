@@ -1,0 +1,98 @@
+- id: "1r_1c_full_indep"
+  radius: 1
+  upper: null
+  num_channels: 1
+  channel_voxel_relation: "indep"
+  expected_shifts:
+    - [0, 0, 0, -1]
+    - [0, 0, 0, 1]
+    - [0, 0, -1, 0]
+    - [0, 0, 1, 0]
+    - [0, -1, 0, 0]
+    - [0, 1, 0, 0]
+
+- id: "1r_1c_upper_indep"
+  radius: 1
+  upper: true
+  num_channels: 1
+  channel_voxel_relation: "indep"
+  expected_shifts:
+    - [0, 0, 0, -1]
+    - [0, 0, -1, 0]
+    - [0, -1, 0, 0]
+
+- id: "1r_1c_lower_indep"
+  radius: 1
+  upper: false
+  num_channels: 1
+  channel_voxel_relation: "indep"
+  expected_shifts:
+    - [0, 0, 0, 1]
+    - [0, 0, 1, 0]
+    - [0, 1, 0, 0]
+
+- id: "1r_2c_lower_intra"
+  radius: 1
+  upper: false
+  num_channels: 2
+  channel_voxel_relation: "intra"
+  expected_shifts:
+    - [0, 0, 0, 1]
+    - [0, 0, 1, 0]
+    - [0, 1, 0, 0]
+    - [1, 0, 0, 0]
+
+- id: "1r_3c_lower_intra"
+  radius: 1
+  upper: false
+  num_channels: 3
+  channel_voxel_relation: "intra"
+  expected_shifts:
+    - [0, 0, 0, 1]
+    - [0, 0, 1, 0]
+    - [0, 1, 0, 0]
+    - [1, 0, 0, 0]
+    - [2, 0, 0, 0]
+
+- id: "1r_2c_lower_inter"
+  radius: 1
+  upper: false
+  num_channels: 2
+  channel_voxel_relation: "inter"
+  expected_shifts:
+    - [0, 0, 0, 1]
+    - [0, 0, 1, 0]
+    - [0, 1, 0, 0]
+    - [1, 0, 0, 0]
+    - [1, 0, 0, -1]
+    - [1, 0, 0, 1]
+    - [1, 0, -1, 0]
+    - [1, 0, 1, 0]
+    - [1, -1, 0, 0]
+    - [1, 1, 0, 0]
+
+- id: "2r_3c_lower_intra"
+  radius: 2
+  upper: false
+  num_channels: 3
+  channel_voxel_relation: "intra"
+  expected_shifts:
+    - [0, 0, 0, 1]
+    - [0, 0, 1, 0]
+    - [0, 1, 0, 0]
+    - [0, 0, 1, -1]
+    - [0, 0, 1, 1]
+    - [0, 1, 0, -1]
+    - [0, 1, 0, 1]
+    - [0, 1, -1, 0]
+    - [0, 1, 1, 0]
+    - [0, 1, -1, -1]
+    - [0, 1, -1, 1]
+    - [0, 1, 1, -1]
+    - [0, 1, 1, 1]
+    - [0, 0, 0, 2]
+    - [0, 0, 2, 0]
+    - [0, 2, 0, 0]
+    - [1, 0, 0, 0]
+    - [2, 0, 0, 0]
+
