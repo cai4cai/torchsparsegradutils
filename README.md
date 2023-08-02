@@ -16,6 +16,9 @@ Additional backbone solvers implemented in pytorch with no additional dependenci
 - LSMR (ported from [pytorch-minimize](https://github.com/rfeinman/pytorch-minimize))
 - MINRES (ported from [cornellius-gp/linear_operator](https://github.com/cornellius-gp/linear_operator))
 
+Additional features:
+- Pairwise voxel encoder for encoding local neighbourhood relationships in a 3D spatial volume with multiple channels, into a sparse COO or CSR matrix.
+
 Things that are missing may be listed as [issues](https://github.com/cai4cai/torchsparsegradutils/issues).
 
 ## Installation
