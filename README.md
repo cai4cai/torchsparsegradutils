@@ -24,7 +24,7 @@ Things that are missing may be listed as [issues](https://github.com/cai4cai/tor
 ## Installation
 The provided package can be installed using:
 
-`pip install torchsparsegradutils` (TODO)
+`pip install torchsparsegradutils`
 
 or
 

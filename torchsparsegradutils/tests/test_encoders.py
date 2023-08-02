@@ -3,6 +3,7 @@ import torch
 import json
 import yaml
 import os
+from pathlib import Path
 from ast import literal_eval
 
 from functools import reduce
@@ -152,7 +153,13 @@ def test_trim(tensor_nd, offsets, expected_output_slice):
 
 # Test neighbourgood coordinate generation:
 
-with open("tests/test_params/xyz_coords.yaml") as f:  # load test cases from file
+# Get the absolute path to the directory of the current module:
+current_dir = Path(os.path.abspath(os.path.dirname(__file__)))
+
+# Construct the path to the yaml file:
+yaml_file = current_dir / "test_params" / "xyz_coords.yaml"
+
+with open(yaml_file) as f:  # load test cases from file
     coord_test_cases = yaml.safe_load(f)
 
 params = [tuple(tc.values())[1:] for tc in coord_test_cases]  # Skip the first value, which is 'id'
@@ -172,7 +179,9 @@ def test_gen_coords(radius, expected_coords):
 
 # Test neighbourgood offset generation:
 
-with open("tests/test_params/czyx_shifts.yaml") as f:  # load test cases from file
+yaml_file = current_dir / "test_params" / "czyx_shifts.yaml"
+
+with open(yaml_file) as f:  # load test cases from file
     shift_test_cases = yaml.safe_load(f)
 
 params = [tuple(tc.values())[1:] for tc in shift_test_cases]  # Skip the first value, which is 'id'
@@ -252,7 +261,9 @@ def test_pairwise_coo_indices_unique(radius, volume_shape, diag, upper, channel_
 
 # Test the indices generated are as expected for a simple (3, 2, 2, 2) volume:
 
-with open("tests/test_params/pairwise_coo_indices.yaml") as f:  # load test cases from file to avoid a massive mess
+yaml_file = current_dir / "test_params" / "pairwise_coo_indices.yaml"
+
+with open(yaml_file) as f:  # load test cases from file to avoid a massive mess
     data = yaml.safe_load(f)
 
 test_cases = data["test_cases"]
