@@ -5,3 +5,4 @@ jax[cpu]
 parameterized
 pytest
 pytest-rerunfailures
+yaml
