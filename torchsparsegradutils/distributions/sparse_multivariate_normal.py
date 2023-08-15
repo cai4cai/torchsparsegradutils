@@ -76,7 +76,7 @@ class SparseMultivariateNormal(Distribution):
             in either torch.sparse_coo or torch.sparse_csr layout
     """
 
-    arg_contraints = {}
+    arg_constraints = {}
     # TODO: add in constraints
     # arg_constraints = {'loc': constraints.real_vector,
     #                    'diag': constraints.independent(constraints.positive, 1),
