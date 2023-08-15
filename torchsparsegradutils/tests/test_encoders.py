@@ -406,6 +406,25 @@ def test_PVE_dtype_device(batch_size, layout, indices_dtype, values_dtype, devic
         assert sparse_matrix.col_indices().device.type == device.type
 
 
+def test_PVE_to_device(layout, device):
+    encoder = PairwiseVoxelEncoder(
+        radius=1.0,
+        volume_shape=(5, 5, 5, 5),
+        layout=layout,
+        indices_dtype=torch.int64,
+        device=torch.device("cpu"),
+    )
+    encoder.to(device)
+
+    if layout == torch.sparse_coo:
+        assert encoder.indices.device.type == device.type
+
+    elif layout == torch.sparse_csr:
+        assert encoder.crow_indices.device.type == device.type
+        assert encoder.col_indices.device.type == device.type
+        assert encoder.csr_permutation.device.type == device.type
+
+
 # Test based on expected indices in pairwise_coo_indices.yaml
 @pytest.mark.parametrize(
     "radius, volume_shape, diag, upper, channel_relation, expected_indices",

@@ -257,7 +257,7 @@ def calc_pariwise_coo_indices(
     return indices
 
 
-class PairwiseVoxelEncoder:
+class PairwiseVoxelEncoder(torch.nn.Module):
     """
     A class for encoding pairwise spatial local neighbourhoods and channel based voxel relations
     into a sparse tensor of either COO or CSR format.
@@ -270,6 +270,8 @@ class PairwiseVoxelEncoder:
     Additionally, diagonal entries can be included with the diag flag.
     The output matrix can be restricted to upper or lower triangular with the upper flag, if
     symmetric relationships are assumed, such as distance or correlation.
+    The indices are stored on the device specified by the device argument,
+    these indices can be sent to another device using the to() method.
 
     The sparse tensor is returned in the `__call__` method, which takes a tensor of values
     with shape [(B), N, C, H, D, W] and returns a sparse tensor of shape [(B), S, S]
@@ -284,6 +286,7 @@ class PairwiseVoxelEncoder:
     Some of the values will be trimmed from the 3D volume edges, as values are not allowed
     to wrap around the edges of the volume of spatial volume.
 
+    The sparse tensor is returned on the same device as the input values to the `__call__` method.
 
     Args:
         radius (float): The maximum distance from the origin within which the spatial
@@ -309,7 +312,8 @@ class PairwiseVoxelEncoder:
         indices_dtype (torch.dtype, optional): The data type of the output indices.
                                                Must be either torch.int32 or torch.int64.
                                                Default is torch.int64.
-        device (torch.device, optional): Device assigned to generate sparse tensor.
+        device (torch.device, optional): Device assigned to store sparse tensor indices
+                                         at initialisation.
                                          Defaults to torch.device("cpu").
 
 
@@ -333,6 +337,8 @@ class PairwiseVoxelEncoder:
         indices_dtype: torch.dtype = torch.int64,
         device: torch.device = torch.device("cpu"),
     ):
+        super().__init__()
+
         if not ((len(volume_shape) == 4) and all(isinstance(dim, int) and dim > 0 for dim in volume_shape)):
             raise ValueError("`volume_shape` must be a 4D tuple of positive integers, representing [C, H, D, W]")
 
@@ -348,7 +354,6 @@ class PairwiseVoxelEncoder:
         self.channel_voxel_relation = channel_voxel_relation
         self.layout = layout
         self.indices_dtype = indices_dtype
-        self.device = device
 
         self.volume_numel = reduce(mul, volume_shape)
 
@@ -368,6 +373,23 @@ class PairwiseVoxelEncoder:
             )
         else:
             raise ValueError("layout must be either torch.sparse_coo or torch.sparse_csr")
+
+    def _apply(self, fn):
+        # Applying the function to the desired attributes
+        # This has been implemented to allow using the .to() method
+        for attr in ["indices", "csr_permutation", "crow_indices", "col_indices"]:
+            tensor = getattr(self, attr, None)
+            if tensor is not None:
+                setattr(self, attr, fn(tensor))
+
+        return self
+
+    @property
+    def device(self):
+        if self.layout == torch.sparse_coo:
+            return self.indices.device
+        elif self.layout == torch.sparse_csr:
+            return self.crow_indices.device
 
     def _calc_values(self, values: torch.Tensor) -> torch.Tensor:
         """
@@ -398,6 +420,8 @@ class PairwiseVoxelEncoder:
         boundaries of the input volume are trimmed to ensure that the output tensor doesn't
         contain any relationships that wrap around the spatial volume described by this encoder.
 
+        The output sparse tensor will be returned on the same device as the input values tensor.
+
         Args:
             values (torch.Tensor): Input tensor of values with shape [(B), N, C, H, D, W]
                                    where B is an optional batch dimension, N is the number of offsets
@@ -407,7 +431,7 @@ class PairwiseVoxelEncoder:
 
         Returns:
             torch.Tensor: Output tensor in either COO or CSR format, with shape [(B), S, S]
-            where is C*H*D*W.
+            where S is C*H*D*W.
 
         Raises:
             ValueError: If the shape of 'values' is not a 5D or 6D tensor.
@@ -452,7 +476,7 @@ class PairwiseVoxelEncoder:
             else:
                 sparse_dim_indices = self.indices.repeat(1, batch_size)
                 batch_dim_indices = (
-                    torch.arange(batch_size, dtype=self.indices.dtype, device=self.device)
+                    torch.arange(batch_size, dtype=self.indices.dtype, device=self.indices.device)
                     .repeat_interleave(self.indices.shape[-1])
                     .unsqueeze(0)
                 )
