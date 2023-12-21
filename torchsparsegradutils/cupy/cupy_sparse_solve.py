@@ -37,7 +37,7 @@ class SparseSolveC4T(torch.autograd.Function):
 
         x = torch.as_tensor(x_c, device=A.device)
 
-        if  (B.ndim == 2) and (x.ndim == 1):
+        if (B.ndim == 2) and (x.ndim == 1):
             x = x.unsqueeze(-1)
 
         ctx.save_for_backward(A, x)
@@ -51,7 +51,7 @@ class SparseSolveC4T(torch.autograd.Function):
         xp, xsp = tsgucupy._get_array_modules(A.data)
 
         # Unsqueeze, if necessary
-        is_vector = (x.ndim == 1)
+        is_vector = x.ndim == 1
         if is_vector:
             x = x.unsqueeze(-1)
 
@@ -68,7 +68,7 @@ class SparseSolveC4T(torch.autograd.Function):
 
         gradB = torch.as_tensor(gradB_c, device=A.device)
 
-        if  (grad.ndim == 2) and (gradB.ndim == 1):
+        if (grad.ndim == 2) and (gradB.ndim == 1):
             gradB = gradB.unsqueeze(-1)
 
         # The gradient with respect to the matrix A seen as a dense matrix would

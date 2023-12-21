@@ -265,7 +265,7 @@ class SparseGenericSolve(torch.autograd.Function):
         A, x = ctx.saved_tensors
 
         # Unsqueeze, if necessary
-        is_vector = (x.ndim == 1)
+        is_vector = x.ndim == 1
         if is_vector:
             x = x.unsqueeze(-1)
 
