@@ -48,6 +48,11 @@ class SparseSolveJ4T(torch.autograd.Function):
     def backward(ctx, grad):
         A, x = ctx.saved_tensors
 
+        # Unsqueeze, if necessary
+        is_vector = (x.ndim == 1)
+        if is_vector:
+            x = x.unsqueeze(-1)
+
         grad_j = _t2j(grad.detach())
 
         # Backprop rule: gradB = A^{-T} grad

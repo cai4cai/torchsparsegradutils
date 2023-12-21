@@ -37,6 +37,9 @@ class SparseSolveC4T(torch.autograd.Function):
 
         x = torch.as_tensor(x_c, device=A.device)
 
+        if  (B.ndim == 2) and (x.ndim == 1):
+            x = x.unsqueeze(-1)
+
         ctx.save_for_backward(A, x)
         ctx.A_c = A_c
         x.requires_grad = grad_flag
@@ -46,6 +49,11 @@ class SparseSolveC4T(torch.autograd.Function):
     def backward(ctx, grad):
         A, x = ctx.saved_tensors
         xp, xsp = tsgucupy._get_array_modules(A.data)
+
+        # Unsqueeze, if necessary
+        is_vector = (x.ndim == 1)
+        if is_vector:
+            x = x.unsqueeze(-1)
 
         grad_c = xp.asarray(grad.detach())
 
@@ -59,6 +67,9 @@ class SparseSolveC4T(torch.autograd.Function):
             gradB_c = ctx.factorisedsolver(grad_c, trans="T")
 
         gradB = torch.as_tensor(gradB_c, device=A.device)
+
+        if  (grad.ndim == 2) and (gradB.ndim == 1):
+            gradB = gradB.unsqueeze(-1)
 
         # The gradient with respect to the matrix A seen as a dense matrix would
         # lead to a backprop rule as follows

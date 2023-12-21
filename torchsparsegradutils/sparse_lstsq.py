@@ -55,14 +55,14 @@ class SparseGenericLstsq(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad):
         A, B, x = ctx.saved_tensors
-        if B.dim() == 1:
+        if B.ndim == 1:
             B = B.unsqueeze(1)
-        if x.dim() == 1:
+        if x.ndim == 1:
             x = x.unsqueeze(1)
 
         # Backprop rule: gradB = (A^T)^{+} grad
         gradB = ctx.transpose_lstsq(A, grad)
-        if gradB.dim() == 1:
+        if gradB.ndim == 1:
             gradB = gradB.unsqueeze(1)
 
         # We make use of equation 4.12 in https://www.jstor.org/stable/2156365
@@ -132,5 +132,8 @@ class SparseGenericLstsq(torch.autograd.Function):
             gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
             gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
+
+        if grad.ndim == 1:
+            gradB = gradB.squeeze()
 
         return gradA, gradB, None, None
