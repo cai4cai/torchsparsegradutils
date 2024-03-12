@@ -11,7 +11,7 @@ NOTE: The batches of sparse CSR tensors are dependent: the number of specified e
 TODO: This code needs reformatting into just rand_sparse and rand_sparse_tri
 TODO: Add support for non-strict triangular matrices
 """
-import warnings
+
 import torch
 import random
 from torchsparsegradutils.utils.utils import convert_coo_to_csr_indices_values
