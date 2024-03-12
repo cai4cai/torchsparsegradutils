@@ -1,5 +1,5 @@
 # Sparsity-preserving gradient utility tools for PyTorch
-![License](https://img.shields.io/github/license/cai4cai/torchsparsegradutils) ![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)
+[![Python tests](https://github.com/cai4cai/torchsparsegradutils/actions/workflows/python-package.yml/badge.svg)](https://github.com/cai4cai/torchsparsegradutils/actions/workflows/python-package.yml) ![License](https://img.shields.io/github/license/cai4cai/torchsparsegradutils) ![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)
 
 A collection of utility functions to work with PyTorch sparse tensors. This is work-in-progress, here be dragons.
 
