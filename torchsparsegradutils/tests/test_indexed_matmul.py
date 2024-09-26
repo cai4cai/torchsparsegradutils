@@ -1,6 +1,11 @@
 import torch
 import pytest
 
+if torch.__version__ < (2, 4):
+    pytest.skip(
+        "Skipping test based on nested tensors since an old version of pytorch is used", allow_module_level=True
+    )
+
 from torchsparsegradutils import gather_mm, segment_mm
 
 # Identify Testing Parameters

@@ -27,6 +27,9 @@ def segment_mm(a, b, seglen_a):
     Returns:
         torch.Tensor: The output dense matrix of shape ``(N, D2)``
     """
+    if torch.__version__ < (2, 4):
+        raise NotImplementedError("PyTorch version is too old for nested tesors")
+
     if dgl_installed:
         # DGL is probably more computationally efficient
         # See https://github.com/pytorch/pytorch/issues/136747
@@ -74,6 +77,9 @@ def gather_mm(a, b, idx_b):
     Returns:
         torch.Tensor: The output dense matrix of shape ``(N, D2)``
     """
+    if torch.__version__ < (2, 4):
+        raise NotImplementedError("PyTorch version is too old for nested tesors")
+
     if dgl_installed:
         # DGL is more computationally efficient
         # See https://github.com/pytorch/pytorch/issues/136747
