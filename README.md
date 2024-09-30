@@ -19,7 +19,8 @@ Additional backbone solvers implemented in pytorch with no additional dependenci
 - MINRES (ported from [cornellius-gp/linear_operator](https://github.com/cornellius-gp/linear_operator))
 
 Additional features:
-- Pairwise voxel encoder for encoding local neighbourhood relationships in a 3D spatial volume with multiple channels, into a sparse COO or CSR matrix.
+- Pairwise voxel encoder for encoding local neighbourhood relationships in a 3D spatial volume with multiple channels, into a sparse COO or CSR matrix
+- Pure PyTorch implementations of indexed multiplication operations (`segment_mm` and `scatter_mm` - as provided by [`dgl.ops.segment_mm`](https://docs.dgl.ai/generated/dgl.ops.segment_mm.html), [`pyg_lib.ops.segment_matmul`](https://pyg-lib.readthedocs.io/en/latest/modules/ops.html#pyg_lib.ops.segment_matmul), and [dgl.ops.gather_mm](https://docs.dgl.ai/generated/dgl.ops.gather_mm.html))
 
 Things that are missing may be listed as [issues](https://github.com/cai4cai/torchsparsegradutils/issues).
 
