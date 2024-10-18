@@ -1,0 +1,19 @@
+name: base
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - pre-commit==3.7.1
+  - black==24.4.2
+  - flake8==7.1.0
+  - numpy==2.0.0
+  - scipy==1.14.0
+  - jax[cuda]==0.4.28
+  - parameterized==0.9.0
+  - pytest==8.2.2
+  - pytest-rerunfailures==14.0
+  - pyyaml==6.0.1
+  - conda-libmamba-solver
+  - libmamba
+  - libmambapy
+  - libarchive
