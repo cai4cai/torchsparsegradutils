@@ -1,0 +1,51 @@
+{
+    "name": "torchsparsegradutils Dev Container",
+    "build": {
+        "dockerfile": "./Dockerfile",
+        "context": ".",
+        "args": {
+            "CUDA_VERSION": "12.4.0",
+            "PYTORCH_VERSION": "2.5.0",
+            "CUDATOOLKIT_VERSION": "12.4",
+            "PYTHON_VERSION": "3.12"
+        }
+    },
+    "runArgs": [
+        "--gpus",
+        "all"
+    ],
+    "remoteEnv": {
+        "SSH_AUTH_SOCK": "/tmp/ssh-agent.sock"
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "python.defaultInterpreterPath": "/opt/conda/bin/python",
+                "terminal.integrated.shell.linux": "/bin/bash",
+                "terminal.integrated.env.linux": {
+                    "CONDA_DEFAULT_ENV": "base",
+                    "CONDA_PREFIX": "/opt/conda",
+                    "CONDA_PYTHON_EXE": "/opt/conda/bin/python",
+                    "PATH": "/opt/conda/bin:${env:PATH}"
+                },
+                "python.testing.pytestArgs": [
+                    "torchsparsegradutils/tests"
+                ],
+                "python.testing.unittestEnabled": false,
+                "python.testing.pytestEnabled": true
+            },
+            "extensions": [
+                "dbaeumer.vscode-eslint",
+                "ms-python.vscode-pylance",
+                "ms-python.python",
+                "github.copilot",
+                "GitHub.vscode-pull-request-github",
+                "GitHub.vscode-github-actions",
+                "mhutchie.git-graph",
+                "waderyan.gitblame"
+            ]
+        }
+    },
+    "remoteUser": "vscode",
+    "postCreateCommand": "echo 'Container is ready!'"
+}

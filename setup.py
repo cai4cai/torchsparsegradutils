@@ -8,7 +8,7 @@ def readme():
 
 setuptools.setup(
     name="torchsparsegradutils",
-    version="0.1.2",
+    version="0.1.3",
     description="A collection of utility functions to work with PyTorch sparse tensors",
     long_description=readme(),
     long_description_content_type="text/markdown",
@@ -18,6 +18,7 @@ setuptools.setup(
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
     ],
     python_requires=">=3.8",
