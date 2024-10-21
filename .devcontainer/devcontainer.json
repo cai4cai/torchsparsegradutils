@@ -4,10 +4,10 @@
         "dockerfile": "./Dockerfile",
         "context": ".",
         "args": {
-            "CUDA_VERSION": "12.1.0",
-            "PYTORCH_VERSION": "2.3.1",
-            "CUDATOOLKIT_VERSION": "12.1",
-            "PYTHON_VERSION": "3.11"
+            "CUDA_VERSION": "12.4.0",
+            "PYTORCH_VERSION": "2.5.0",
+            "CUDATOOLKIT_VERSION": "12.4",
+            "PYTHON_VERSION": "3.12"
         }
     },
     "runArgs": [

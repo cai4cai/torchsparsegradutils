@@ -1,6 +1,6 @@
 [tool.black]
 line-length = 120
-target-version = ['py37', 'py38', 'py39', 'py310', 'py311']
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
 include = '\.pyi?$'
 exclude = '''
 (
@@ -22,7 +22,3 @@ exclude = '''
   #| some_file
 )
 '''
-[tool.pytest.ini_options]
-testpaths = [
-    "torchsparsegradutils/tests"
-]

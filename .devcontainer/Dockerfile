@@ -1,5 +1,5 @@
 # Stage 1: NVIDIA CUDA Image
-ARG CUDA_VERSION=12.1.0
+ARG CUDA_VERSION=12.5.0
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04 AS cuda-base
 
 # Stage 2: Miniconda setup from configuration
@@ -19,12 +19,12 @@ ENV PATH /opt/conda/bin:$PATH
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # Install Python 3.10
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_VERSION=3.12
 RUN conda install python=${PYTHON_VERSION}
 
 # Arguments for PyTorch and CUDA Toolkit versions
-ARG PYTORCH_VERSION=2.3.1
-ARG CUDATOOLKIT_VERSION=12.1
+ARG PYTORCH_VERSION=2.5.0
+ARG CUDATOOLKIT_VERSION=12.4
 
 # Install PyTorch and other dependencies
 RUN conda install pytorch=${PYTORCH_VERSION} pytorch-cuda=${CUDATOOLKIT_VERSION} -c pytorch -c nvidia
