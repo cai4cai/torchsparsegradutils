@@ -30,7 +30,7 @@ ARG CUDATOOLKIT_VERSION=12.4
 RUN conda install pytorch=${PYTORCH_VERSION} pytorch-cuda=${CUDATOOLKIT_VERSION} -c pytorch -c nvidia
 
 # Handle environment.yml if it exists
-RUN echo env_change_20241021
+RUN echo env_change_20241021_2
 COPY environment.yml* noop.txt /tmp/conda-tmp/
 RUN if [ -f "/tmp/conda-tmp/environment.yml" ]; then \
     /opt/conda/bin/conda env update -n base -f /tmp/conda-tmp/environment.yml; \
