@@ -80,8 +80,19 @@ def layout(request):
 #     return request.param
 
 
-# Convenience functions:
+# Set random seed for reproducibility
+# using instead of @pytest.mark.flaky(reruns=5)
+@pytest.fixture(autouse=True)
+def set_seed():
+    seed = 42
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    # np.random.seed(seed)
+    # random.seed(seed)
 
+
+# Convenience functions:
 
 def construct_distribution(sizes, layout, var, value_dtype, index_dtype, device, requires_grad=False):
     _, batch_size, event_size, sparsity = sizes
@@ -149,8 +160,6 @@ def check_covariance_within_tolerance(
 
 # Define Tests
 
-
-@pytest.mark.flaky(reruns=5)  # probably not needed, but seems sensible for CI
 def test_rsample_forward_cov(device, layout, sizes, value_dtype, index_dtype):
     if layout == torch.sparse_coo and index_dtype == torch.int32:
         pytest.skip("Sparse COO with int32 indices is not supported")
@@ -174,8 +183,6 @@ def test_rsample_forward_cov(device, layout, sizes, value_dtype, index_dtype):
     check_covariance_within_tolerance(covariance_test, covariance_ref, absolute_tolerance=0.1, desired_threshold=99.0)
 
 
-@pytest.mark.flaky(reruns=5)
-# NOTE: This test often failes, hence the flaky and reruns
 def test_rsample_forward_prec(device, layout, sizes, value_dtype, index_dtype):
     if layout == torch.sparse_coo and index_dtype == torch.int32:
         pytest.skip("Sparse COO with int32 indices is not supported")
