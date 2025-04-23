@@ -1,45 +1,44 @@
-# Stage 1: NVIDIA CUDA Image
-ARG CUDA_VERSION=12.5.0
-FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04 AS cuda-base
+# ----- Base image: Ubuntu 22.04 + CUDA 12.4 -----
+FROM nvidia/cuda:12.4.0-devel-ubuntu22.04
 
-# Stage 2: Miniconda setup from configuration
-FROM continuumio/miniconda3 AS miniconda-stage
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Stage 3: Final image combining CUDA and Miniconda
-FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
+# ----- System setup & Python 3.12 -----
+RUN apt-get update && \
+    # 1 – core tools and ability to add PPAs
+    apt-get install -y --no-install-recommends \
+        software-properties-common curl gnupg2 sudo \
+        git openssh-client && \
+    # 2 – add the deadsnakes repo *before* we ask for python3.12*
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && \
+    # 3 – now 3.12 packages are visible
+    apt-get install -y --no-install-recommends \
+        python3.12 python3.12-venv python3.12-dev && \
+    # 4 – bootstrap pip for 3.12
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 - && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python3 && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy from CUDA base
-COPY --from=cuda-base /usr/local/cuda /usr/local/cuda
+# ----- CUDA env -----
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:$PATH
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
 
-# Copy Miniconda from the Miniconda stage
-COPY --from=miniconda-stage /opt/conda /opt/conda
+# ----- Python deps -----
+COPY environment.yml /tmp/req.txt
+RUN python -m pip install --no-cache-dir -r /tmp/req.txt && \
+    rm /tmp/req.txt
 
-# Set environment variables for Miniconda
-ENV PATH /opt/conda/bin:$PATH
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
-
-# Install Python 3.10
-ARG PYTHON_VERSION=3.12
-RUN conda install python=${PYTHON_VERSION}
-
-# Arguments for PyTorch and CUDA Toolkit versions
-ARG PYTORCH_VERSION=2.5.0
-ARG CUDATOOLKIT_VERSION=12.4
-
-# Install PyTorch and other dependencies
-RUN conda install pytorch=${PYTORCH_VERSION} pytorch-cuda=${CUDATOOLKIT_VERSION} -c pytorch -c nvidia
-
-# Handle environment.yml if it exists
-RUN echo env_change_20241021_2
-COPY environment.yml* noop.txt /tmp/conda-tmp/
-RUN if [ -f "/tmp/conda-tmp/environment.yml" ]; then \
-    /opt/conda/bin/conda env update -n base -f /tmp/conda-tmp/environment.yml; \
-    fi \
-    && rm -rf /tmp/conda-tmp
-
-# Append Miniconda to PATH in .bashrc for interactive shells
-RUN echo ". /opt/conda/etc/profile.d/conda.sh" >> /root/.bashrc \
-    && echo "conda activate base" >> /root/.bashrc
-
-# Final CMD or ENTRYPOINT
+# ---------- Non‑root dev‑container user ----------
+ARG USERNAME=vscode
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+RUN groupadd --gid $USER_GID $USERNAME && \
+    useradd  --uid $USER_UID --gid $USER_GID -m $USERNAME -s /bin/bash && \
+    echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME && \
+    chmod 0440 /etc/sudoers.d/$USERNAME
+    
 CMD ["bash"]
+    

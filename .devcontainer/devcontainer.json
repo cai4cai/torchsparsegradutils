@@ -2,13 +2,7 @@
     "name": "torchsparsegradutils Dev Container",
     "build": {
         "dockerfile": "./Dockerfile",
-        "context": ".",
-        "args": {
-            "CUDA_VERSION": "12.4.0",
-            "PYTORCH_VERSION": "2.5.0",
-            "CUDATOOLKIT_VERSION": "12.4",
-            "PYTHON_VERSION": "3.12"
-        }
+        "context": "."
     },
     "runArgs": [
         "--gpus",
@@ -20,13 +14,10 @@
     "customizations": {
         "vscode": {
             "settings": {
-                "python.defaultInterpreterPath": "/opt/conda/bin/python",
+                "python.defaultInterpreterPath": "/usr/bin/python3",
                 "terminal.integrated.shell.linux": "/bin/bash",
                 "terminal.integrated.env.linux": {
-                    "CONDA_DEFAULT_ENV": "base",
-                    "CONDA_PREFIX": "/opt/conda",
-                    "CONDA_PYTHON_EXE": "/opt/conda/bin/python",
-                    "PATH": "/opt/conda/bin:${env:PATH}"
+                    "PATH": "${env:PATH}"
                 },
                 "python.testing.pytestArgs": [
                     "torchsparsegradutils/tests"
@@ -38,6 +29,7 @@
                 "dbaeumer.vscode-eslint",
                 "ms-python.vscode-pylance",
                 "ms-python.python",
+                "ms-toolsai.jupyter",
                 "github.copilot",
                 "GitHub.vscode-pull-request-github",
                 "GitHub.vscode-github-actions",
@@ -46,6 +38,5 @@
             ]
         }
     },
-    "remoteUser": "vscode",
-    "postCreateCommand": "echo 'Container is ready!'"
+    "remoteUser": "vscode"
 }
