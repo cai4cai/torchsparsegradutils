@@ -1,6 +1,5 @@
-import unittest
-from parameterized import parameterized, parameterized_class
 import torch
+import pytest
 from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_coo_matrix,
     generate_random_sparse_csr_matrix,
@@ -8,469 +7,170 @@ from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_strictly_triangular_csr_matrix,
 )
 
-if torch.__version__ >= (2,):
-    # https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html#torch.sparse.check_sparse_tensor_invariants
+# enable sparse invariants checks if available
+if hasattr(torch.sparse, 'check_sparse_tensor_invariants'):
     torch.sparse.check_sparse_tensor_invariants.enable()
 
+# Device fixture
+DEVICES = [torch.device('cpu')]
+if torch.cuda.is_available():
+    DEVICES.append(torch.device('cuda:0'))
 
-@parameterized_class(
-    (
-        "name",
-        "device",
-    ),
-    [
-        ("CPU", torch.device("cpu")),
-        (
-            "CUDA",
-            torch.device("cuda"),
-        ),
-    ],
-)
-class TestGenRandomCOO(unittest.TestCase):
-    def setUp(self) -> None:
-        if not torch.cuda.is_available() and self.device == torch.device("cuda"):
-            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
+def _id_device(d):   return str(d)
 
-    # error handling:
-    def test_too_few_dims(self):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_coo_matrix(torch.Size([16]), 6)
+@pytest.fixture(params=DEVICES, ids=_id_device)
+def device(request):
+    return request.param
 
-    def test_too_many_dims(self):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_coo_matrix(torch.Size([4, 4, 8, 8]), 32)
+# ---------- Tests for generate_random_sparse_coo_matrix ----------
 
-    def test_too_many_nnz(self):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_coo_matrix(torch.Size([4, 4]), 17)
+@pytest.mark.parametrize('size, nnz, multiplier', [
+    (torch.Size([4, 4]), 12, 1),
+    (torch.Size([2, 4, 4]), 12, 2),
+    (torch.Size([8, 16]), 32, 1),
+    (torch.Size([4, 8, 16]), 32, 4),
+])
+def test_gen_random_coo_size_nnz(size, nnz, multiplier, device):
+    A = generate_random_sparse_coo_matrix(size, nnz, device=device)
+    assert A.size() == size
+    assert A._nnz() == nnz * multiplier
 
-    @parameterized.expand(
-        [
-            ("int08", torch.int8),
-            ("int16", torch.int16),
-            ("int32", torch.int32),
-        ]
-    )
-    def test_incompatible_indices_dtype(self, _, indices_dtype):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype)
+@pytest.mark.parametrize('indices_dtype', [torch.int8, torch.int16, torch.int32])
+def test_gen_random_coo_invalid_indices(indices_dtype, device):
+    with pytest.raises(ValueError):
+        generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype, device=device)
 
-    # basic properties:
-    def test_device(self):
-        A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, device=self.device)
-        self.assertEqual(A.device.type, self.device.type)
+@pytest.mark.parametrize('values_dtype', [torch.float16, torch.float32, torch.float64])
+def test_gen_random_coo_values_dtype(values_dtype, device):
+    A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, values_dtype=values_dtype, device=device)
+    assert A.values().dtype == values_dtype
 
-    @parameterized.expand(
-        [
-            ("int64", torch.int64),
-        ]
-    )  # NOTE: only torch.int64 is supported for COO indices, all other dtypes are casted to torch.int64
-    def test_indices_dtype(self, _, indices_dtype):
-        A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype, device=self.device)
-        self.assertEqual(A.indices().dtype, indices_dtype)
+def test_gen_random_coo_device(device):
+    A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, device=device)
+    assert A.device.type == device.type
 
-    @parameterized.expand(
-        [
-            ("float16", torch.float16),
-            ("float32", torch.float32),
-            ("float64", torch.float64),
-        ]
-    )
-    def test_values_dtype(self, _, values_dtype):
-        A = generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, values_dtype=values_dtype, device=self.device)
-        self.assertEqual(A.values().dtype, values_dtype)
+# ---------- Tests for generate_random_sparse_csr_matrix ----------
 
-    @parameterized.expand(
-        [
-            ("4x4", torch.Size([4, 4]), 12),
-            ("2x4x4", torch.Size([2, 4, 4]), 12),
-            ("8x16", torch.Size([8, 16]), 32),
-            ("4x8x16", torch.Size([4, 8, 16]), 32),
-        ]
-    )
-    def test_size(self, _, size, nnz):
-        A = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
-        self.assertEqual(A.size(), size)
+@pytest.mark.parametrize('size, nnz', [
+    (torch.Size([4, 4]), 12),
+    (torch.Size([2, 4, 4]), 12),
+    (torch.Size([8, 16]), 32),
+    (torch.Size([4, 8, 16]), 32),
+])
+def test_gen_random_csr_size(device, size, nnz):
+    A = generate_random_sparse_csr_matrix(size, nnz, device=device)
+    assert A.size() == size
 
-    @parameterized.expand(
-        [
-            ("4x4", torch.Size([4, 4]), 12),
-            ("2x4x4", torch.Size([2, 4, 4]), 12),
-            ("8x16", torch.Size([8, 16]), 32),
-            ("4x8x16", torch.Size([4, 8, 16]), 32),
-        ]
-    )
-    def test_nnz(self, _, size, nnz):
-        # NOTE: COO tensors return ._nnz() over all batch elements
-        A = generate_random_sparse_coo_matrix(size, nnz, device=self.device)
-        self.assertEqual(A._nnz(), nnz * ((1,) + size)[-3])
+@pytest.mark.parametrize('nnz', [17])
+def test_gen_random_csr_too_many_nnz(nnz, device):
+    with pytest.raises(ValueError):
+        generate_random_sparse_csr_matrix(torch.Size([4, 4]), nnz, device=device)
 
+@pytest.mark.parametrize('indices_dtype', [torch.int8, torch.int16])
+def test_gen_random_csr_invalid_indices(indices_dtype, device):
+    with pytest.raises(ValueError):
+        generate_random_sparse_csr_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype, device=device)
 
-@parameterized_class(
-    (
-        "name",
-        "device",
-    ),
-    [
-        ("CPU", torch.device("cpu")),
-        (
-            "CUDA",
-            torch.device("cuda"),
-        ),
-    ],
-)
-class TestGenRandomCSR(unittest.TestCase):
-    def setUp(self) -> None:
-        if not torch.cuda.is_available() and self.device == torch.device("cuda"):
-            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
+@pytest.mark.parametrize('indices_dtype', [torch.int32, torch.int64])
+def test_gen_random_csr_indices_dtype(indices_dtype, device):
+    A = generate_random_sparse_csr_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype, device=device)
+    assert A.crow_indices().dtype == indices_dtype
+    assert A.col_indices().dtype == indices_dtype
 
-    # error handling:
-    def test_too_few_dims(self):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_csr_matrix(torch.Size([16]), 6)
+@pytest.mark.parametrize('values_dtype', [torch.float16, torch.float32, torch.float64])
+def test_gen_random_csr_values_dtype(values_dtype, device):
+    A = generate_random_sparse_csr_matrix(torch.Size([4, 4]), 12, values_dtype=values_dtype, device=device)
+    assert A.values().dtype == values_dtype
 
-    def test_too_many_dims(self):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_csr_matrix(torch.Size([4, 4, 8, 8]), 32)
+@pytest.mark.parametrize('size, nnz', [
+    (torch.Size([4, 4]), 12),
+    (torch.Size([2, 4, 4]), 12),
+    (torch.Size([8, 16]), 32),
+    (torch.Size([4, 8, 16]), 32),
+])
+def test_gen_random_csr_nnz(size, nnz, device):
+    A = generate_random_sparse_csr_matrix(size, nnz, device=device)
+    assert A._nnz() == nnz
 
-    def test_too_many_nnz(self):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_csr_matrix(torch.Size([4, 4]), 17)
+# ---------- Tests for strictly triangular COO ----------
 
-    @parameterized.expand(
-        [
-            ("int08", torch.int8),
-            ("int16", torch.int16),
-        ]
-    )
-    def test_incompatible_indices_dtype(self, _, indices_dtype):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype)
+@pytest.mark.parametrize('size, nnz', [
+    (torch.Size([4, 4]), 5),
+    (torch.Size([2, 4, 4, 4]), 5),
+])
+def test_gen_random_strict_tri_coo_invalid_dims(size, nnz, device):
+    # too few dims or non-square batches
+    if len(size) != 2:
+        with pytest.raises(ValueError):
+            generate_random_sparse_strictly_triangular_coo_matrix(size, nnz, device=device)
 
-    # basic properties:
-    def test_device(self):
-        A = generate_random_sparse_csr_matrix(torch.Size([4, 4]), 12, device=self.device)
-        self.assertEqual(A.device.type, self.device.type)
+@pytest.mark.parametrize('nnz', [7])
+def test_gen_random_strict_tri_coo_too_many_nnz(nnz, device):
+    limit = 4 * (4 - 1) // 2
+    with pytest.raises(ValueError):
+        generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([4, 4]), limit + 1, device=device)
 
-    @parameterized.expand(
-        [
-            ("int32", torch.int32),
-            ("int64", torch.int64),
-        ]
-    )  # NOTE: Only int32 and int64 are supported for CSR indices
-    def test_indices_dtype(self, _, indices_dtype):
-        A = generate_random_sparse_csr_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype, device=self.device)
-        self.assertEqual(A.crow_indices().dtype, indices_dtype)
-        self.assertEqual(A.col_indices().dtype, indices_dtype)
+@pytest.mark.parametrize('indices_dtype', [torch.int8, torch.int16, torch.int32])
+def test_gen_random_strict_tri_coo_invalid_indices(indices_dtype, device):
+    with pytest.raises(ValueError):
+        generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([4, 4]), 5, indices_dtype=indices_dtype, device=device)
 
-    @parameterized.expand(
-        [
-            ("float16", torch.float16),
-            ("float32", torch.float32),
-            ("float64", torch.float64),
-        ]
-    )
-    def test_values_dtype(self, _, values_dtype):
-        A = generate_random_sparse_csr_matrix(torch.Size([4, 4]), 12, values_dtype=values_dtype, device=self.device)
-        self.assertEqual(A.values().dtype, values_dtype)
+@pytest.mark.parametrize('values_dtype', [torch.float16, torch.float32, torch.float64])
+def test_gen_random_strict_tri_coo_values_dtype(values_dtype, device):
+    A = generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([4, 4]), 5, values_dtype=values_dtype, device=device)
+    assert A.values().dtype == values_dtype
 
-    @parameterized.expand(
-        [
-            ("4x4", torch.Size([4, 4]), 12),
-            ("2x4x4", torch.Size([2, 4, 4]), 12),
-            ("8x16", torch.Size([8, 16]), 32),
-            ("4x8x16", torch.Size([4, 8, 16]), 32),
-        ]
-    )
-    def test_size(self, _, size, nnz):
-        A = generate_random_sparse_csr_matrix(size, nnz, device=self.device)
-        self.assertEqual(A.size(), size)
+@pytest.mark.parametrize('size, upper, multiplier', [
+    (torch.Size([4, 4]), True, 1),
+    (torch.Size([2, 4, 4]), False, 2),
+    (torch.Size([8, 8]), True, 1),
+])
+def test_gen_random_strict_tri_coo_properties(size, upper, multiplier, device):
+    nnz = 5
+    A = generate_random_sparse_strictly_triangular_coo_matrix(size, nnz, upper=upper, device=device)
+    assert A.size() == size
+    assert A._nnz() == nnz * multiplier
+    Ad = A.to_dense()
+    if upper:
+        assert torch.equal(Ad, Ad.triu(1))
+    else:
+        assert torch.equal(Ad, Ad.tril(-1))
 
-    @parameterized.expand(
-        [
-            ("4x4", torch.Size([4, 4]), 12),
-            ("2x4x4", torch.Size([2, 4, 4]), 12),
-            ("8x16", torch.Size([8, 16]), 32),
-            ("4x8x16", torch.Size([4, 8, 16]), 32),
-        ]
-    )
-    def test_nnz(self, _, size, nnz):
-        A = generate_random_sparse_csr_matrix(size, nnz, device=self.device)
-        # NOTE: CSR tensors return ._nnz() per batch element
-        self.assertEqual(A._nnz(), nnz)
+# ---------- Tests for strictly triangular CSR ----------
 
+@pytest.mark.parametrize('size, nnz', [
+    (torch.Size([4, 4]), 5),
+])
+def test_gen_random_strict_tri_csr_invalid_dims(size, nnz, device):
+    # only square supported
+    with pytest.raises(ValueError):
+        generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([4, 4, 8]), nnz, device=device)
 
-# Strictly triangular tests:
+@pytest.mark.parametrize('nnz', [7])
+def test_gen_random_strict_tri_csr_too_many_nnz(nnz, device):
+    limit = 4 * (4 - 1) // 2
+    with pytest.raises(ValueError):
+        generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([4, 4]), limit + 1, device=device)
 
+@pytest.mark.parametrize('indices_dtype', [torch.int8, torch.int16])
+def test_gen_random_strict_tri_csr_invalid_indices(indices_dtype, device):
+    with pytest.raises(ValueError):
+        generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([4, 4]), 5, indices_dtype=indices_dtype, device=device)
 
-@parameterized_class(
-    (
-        "name",
-        "device",
-    ),
-    [
-        ("Lower_CPU", torch.device("cpu")),
-        ("CUDA", torch.device("cuda")),
-    ],
-)
-class TestGenRandomStrictlyTriCOO(unittest.TestCase):
-    def setUp(self) -> None:
-        if not torch.cuda.is_available() and self.device == torch.device("cuda"):
-            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
+@pytest.mark.parametrize('values_dtype', [torch.float16, torch.float32, torch.float64])
+def test_gen_random_strict_tri_csr_values_dtype(values_dtype, device):
+    A = generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([4, 4]), 5, values_dtype=values_dtype, device=device)
+    assert A.values().dtype == values_dtype
 
-    # error handling:
-    def test_too_few_dims(self):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([16]), 6)
-
-    def test_too_many_dims(self):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([4, 4, 8, 8]), 12)
-
-    def test_too_many_nnz(self):
-        with self.assertRaises(ValueError):
-            limit = 4 * (4 - 1) // 2
-            generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([4, 4]), limit + 1)
-
-    @parameterized.expand(
-        [
-            ("int08", torch.int8),
-            ("int16", torch.int16),
-            ("int32", torch.int32),
-        ]
-    )
-    def test_incompatible_indices_dtype(self, _, indices_dtype):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([4, 4]), 5, indices_dtype=indices_dtype)
-
-    # basic properties:
-    def test_device(self):
-        A = generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([4, 4]), 5, device=self.device)
-        self.assertEqual(A.device.type, self.device.type)
-
-    @parameterized.expand(
-        [
-            ("int64", torch.int64),
-        ]
-    )  # NOTE: only torch.int64 is supported for COO indices, all other dtypes are casted to torch.int64
-    def test_indices_dtype(self, _, indices_dtype):
-        A = generate_random_sparse_strictly_triangular_coo_matrix(
-            torch.Size([4, 4]), 5, indices_dtype=indices_dtype, device=self.device
-        )
-        self.assertEqual(A.indices().dtype, indices_dtype)
-
-    @parameterized.expand(
-        [
-            ("float16", torch.float16),
-            ("float32", torch.float32),
-            ("float64", torch.float64),
-        ]
-    )
-    def test_values_dtype(self, _, values_dtype):
-        A = generate_random_sparse_strictly_triangular_coo_matrix(
-            torch.Size([4, 4]), 5, values_dtype=values_dtype, device=self.device
-        )
-        self.assertEqual(A.values().dtype, values_dtype)
-
-    # specific properties:
-    @parameterized.expand(
-        [
-            ("4x4", torch.Size([4, 4]), 4),
-            ("2x4x4", torch.Size([2, 4, 4]), 4),
-            ("8x8", torch.Size([8, 8]), 28),
-            ("4x8x8", torch.Size([4, 8, 8]), 28),
-        ]
-    )
-    def test_size_upper(self, _, size, nnz):
-        A = generate_random_sparse_strictly_triangular_coo_matrix(size, nnz, upper=True, device=self.device)
-        self.assertEqual(A.size(), size)
-
-    @parameterized.expand(
-        [
-            ("4x4", torch.Size([4, 4]), 4),
-            ("2x4x4", torch.Size([2, 4, 4]), 4),
-            ("8x8", torch.Size([8, 8]), 28),
-            ("4x8x8", torch.Size([4, 8, 8]), 28),
-        ]
-    )
-    def test_size_lower(self, _, size, nnz):
-        A = generate_random_sparse_strictly_triangular_coo_matrix(size, nnz, upper=False, device=self.device)
-        self.assertEqual(A.size(), size)
-
-    @parameterized.expand(
-        [
-            ("4x4_12nnz", torch.Size([4, 4]), 5),
-            ("2x4x4_12nnz", torch.Size([2, 4, 4]), 4),
-            ("8x8_22nnz", torch.Size([8, 8]), 22),
-            ("4x8x8_28nnz", torch.Size([4, 8, 8]), 28),
-        ]
-    )
-    def test_nnz_upper(self, _, size, nnz):
-        # NOTE: COO tensors return ._nnz() over all batch elements
-        A = generate_random_sparse_strictly_triangular_coo_matrix(size, nnz, upper=True, device=self.device)
-        self.assertEqual(A._nnz(), nnz * ((1,) + size)[-3])
-
-    @parameterized.expand(
-        [
-            ("4x4_12nnz", torch.Size([4, 4]), 5),
-            ("2x4x4_12nnz", torch.Size([2, 4, 4]), 4),
-            ("8x8_22nnz", torch.Size([8, 8]), 22),
-            ("4x8x8_28nnz", torch.Size([4, 8, 8]), 28),
-        ]
-    )
-    def test_nnz_lower(self, _, size, nnz):
-        # NOTE: COO tensors return ._nnz() over all batch elements
-        A = generate_random_sparse_strictly_triangular_coo_matrix(size, nnz, upper=False, device=self.device)
-        self.assertEqual(A._nnz(), nnz * ((1,) + size)[-3])
-
-    def test_is_strictly_lower(self):
-        A = generate_random_sparse_strictly_triangular_coo_matrix(
-            torch.Size([4, 4]), 5, upper=False, device=self.device
-        )
-        Ad = A.to_dense()
-        self.assertTrue(torch.equal(Ad, Ad.tril(-1)))
-
-    def test_is_strictly_upper(self):
-        A = generate_random_sparse_strictly_triangular_coo_matrix(
-            torch.Size([4, 4]), 5, upper=False, device=self.device
-        )
-        Ad = A.to_dense()
-        self.assertTrue(torch.equal(Ad, Ad.tril(1)))
-
-
-@parameterized_class(
-    (
-        "name",
-        "device",
-    ),
-    [
-        ("CPU", torch.device("cpu")),
-        (
-            "CUDA",
-            torch.device("cuda"),
-        ),
-    ],
-)
-class TestGenRandomStrictlyTriCSR(unittest.TestCase):
-    def setUp(self) -> None:
-        if not torch.cuda.is_available() and self.device == torch.device("cuda"):
-            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
-
-    # error handling:
-    def test_too_few_dims(self):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([16]), 6)
-
-    def test_too_many_dims(self):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([4, 4, 8, 8]), 12)
-
-    def test_too_many_nnz(self):
-        with self.assertRaises(ValueError):
-            limit = 4 * (4 - 1) // 2
-            generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([4, 4]), limit + 1)
-
-    @parameterized.expand(
-        [
-            ("int08", torch.int8),
-            ("int16", torch.int16),
-        ]
-    )
-    def test_incompatible_indices_dtype(self, _, indices_dtype):
-        with self.assertRaises(ValueError):
-            generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([4, 4]), 5, indices_dtype=indices_dtype)
-
-    # basic properties:
-    def test_device(self):
-        A = generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([4, 4]), 5, device=self.device)
-        self.assertEqual(A.device.type, self.device.type)
-
-    @parameterized.expand(
-        [
-            ("int32", torch.int32),
-            ("int64", torch.int64),
-        ]
-    )
-    def test_indices_dtype(self, _, indices_dtype):
-        A = generate_random_sparse_strictly_triangular_csr_matrix(
-            torch.Size([4, 4]), 5, indices_dtype=indices_dtype, device=self.device
-        )
-        self.assertEqual(A.crow_indices().dtype, indices_dtype)
-        self.assertEqual(A.col_indices().dtype, indices_dtype)
-
-    @parameterized.expand(
-        [
-            ("float16", torch.float16),
-            ("float32", torch.float32),
-            ("float64", torch.float64),
-        ]
-    )
-    def test_values_dtype(self, _, values_dtype):
-        A = generate_random_sparse_strictly_triangular_csr_matrix(
-            torch.Size([4, 4]), 5, values_dtype=values_dtype, device=self.device
-        )
-        self.assertEqual(A.values().dtype, values_dtype)
-
-    # specific properties:
-    @parameterized.expand(
-        [
-            ("4x4", torch.Size([4, 4]), 4),
-            ("2x4x4", torch.Size([2, 4, 4]), 4),
-            ("8x8", torch.Size([8, 8]), 28),
-            ("4x8x8", torch.Size([4, 8, 8]), 28),
-        ]
-    )
-    def test_size_upper(self, _, size, nnz):
-        A = generate_random_sparse_strictly_triangular_csr_matrix(size, nnz, upper=True, device=self.device)
-        self.assertEqual(A.size(), size)
-
-    @parameterized.expand(
-        [
-            ("4x4", torch.Size([4, 4]), 4),
-            ("2x4x4", torch.Size([2, 4, 4]), 4),
-            ("8x8", torch.Size([8, 8]), 28),
-            ("4x8x8", torch.Size([4, 8, 8]), 28),
-        ]
-    )
-    def test_size_lower(self, _, size, nnz):
-        A = generate_random_sparse_strictly_triangular_csr_matrix(size, nnz, upper=False, device=self.device)
-        self.assertEqual(A.size(), size)
-
-    @parameterized.expand(
-        [
-            ("4x4_12nnz", torch.Size([4, 4]), 5),
-            ("2x4x4_12nnz", torch.Size([2, 4, 4]), 4),
-            ("8x8_22nnz", torch.Size([8, 8]), 22),
-            ("4x8x8_28nnz", torch.Size([4, 8, 8]), 28),
-        ]
-    )
-    def test_nnz_upper(self, _, size, nnz):
-        A = generate_random_sparse_strictly_triangular_csr_matrix(size, nnz, upper=True, device=self.device)
-        # NOTE: CSR tensors return ._nnz() per batch element
-        self.assertEqual(A._nnz(), nnz)
-
-    @parameterized.expand(
-        [
-            ("4x4_12nnz", torch.Size([4, 4]), 5),
-            ("2x4x4_12nnz", torch.Size([2, 4, 4]), 4),
-            ("8x8_22nnz", torch.Size([8, 8]), 22),
-            ("4x8x8_28nnz", torch.Size([4, 8, 8]), 28),
-        ]
-    )
-    def test_nnz_lower(self, _, size, nnz):
-        A = generate_random_sparse_strictly_triangular_csr_matrix(size, nnz, upper=False, device=self.device)
-        # NOTE: CSR tensors return ._nnz() per batch element
-        self.assertEqual(A._nnz(), nnz)
-
-    def test_is_strictly_upper(self):
-        A = generate_random_sparse_strictly_triangular_csr_matrix(torch.Size([4, 4]), 5, upper=True, device=self.device)
-        Ad = A.to_dense()
-        self.assertTrue(torch.equal(Ad, Ad.triu(1)))
-
-    def test_is_strictly_lower(self):
-        A = generate_random_sparse_strictly_triangular_csr_matrix(
-            torch.Size([4, 4]), 5, upper=False, device=self.device
-        )
-        Ad = A.to_dense()
-        print(Ad)
-        self.assertTrue(torch.equal(Ad, Ad.tril(-1)))
+@pytest.mark.parametrize('upper', [True, False])
+def test_gen_random_strict_tri_csr_properties(upper, device):
+    nnz = 5
+    size = torch.Size([4, 4])
+    A = generate_random_sparse_strictly_triangular_csr_matrix(size, nnz, upper=upper, device=device)
+    assert A.size() == size
+    assert A._nnz() == nnz
+    Ad = A.to_dense()
+    if upper:
+        assert torch.equal(Ad, Ad.triu(1))
+    else:
+        assert torch.equal(Ad, Ad.tril(-1))

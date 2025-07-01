@@ -1,77 +1,71 @@
+import pytest
 import torch
-import unittest
-import torchsparsegradutils as tsgu
 import torchsparsegradutils.jax as tsgujax
 
+# Skip entire module if JAX isn't available
+pytest.importorskip('jax')
 if not tsgujax.have_jax:
-    raise unittest.SkipTest("Importing optional jax-related module failed to find jax -> skipping jax-related tests.")
+    pytest.skip("JAX bindings unavailable, skipping jax tests", allow_module_level=True)
+    
 
-import numpy as np
+# Device fixture
+DEVICES = [torch.device('cpu')]
+if torch.cuda.is_available():
+    DEVICES.append(torch.device('cuda:0'))
 
-import jax
-import jax.numpy as jnp
+def _id_device(d):   return str(d)
 
+@pytest.fixture(params=DEVICES, ids=_id_device)
+def device(request):
+    return request.param
 
-class SparseSolveTestJ4T(unittest.TestCase):
-    def setUp(self) -> None:
-        # The device can be specialised by a daughter class
-        if not hasattr(self, "device"):
-            self.device = torch.device("cpu")
+# Relative tolerance for comparisons
+def _rtol():
+    return 1e-2
 
-        self.RTOL = 1e-2
+# Test forward sparse_j4t solve
 
-        self.A_shape = (4, 4)
-        self.A = torch.randn(self.A_shape, dtype=torch.float64, device=self.device)
-        self.A = self.A + self.A.t()
-        self.A_csr = self.A.to_sparse_csr()
-        self.B_shape = (4, 2)
-        self.B = torch.randn(self.B_shape, dtype=torch.float64, device=self.device)
+def test_solver_j4t(device):
+    RTOL = _rtol()
+    A_shape = (4, 4)
+    A = torch.randn(A_shape, dtype=torch.float64, device=device)
+    A = A + A.t()
+    A_csr = A.to_sparse_csr()
+    B_shape = (4, 2)
+    B = torch.randn(B_shape, dtype=torch.float64, device=device)
+    x_ref = torch.linalg.solve(A, B)
 
-        self.x_ref = torch.linalg.solve(self.A, self.B)
+    x = tsgujax.sparse_solve_j4t(A_csr.to(torch.float32), B.to(torch.float32))
+    assert torch.allclose(x, x_ref.to(torch.float32), rtol=RTOL)
 
-    def test_solver_j4t(self):
-        x = tsgujax.sparse_solve_j4t(self.A_csr.to(torch.float32), self.B.to(torch.float32))
-        self.assertTrue(torch.isclose(x, self.x_ref.to(torch.float32), rtol=self.RTOL).all())
+# Test backward gradient of sparse_j4t solve
 
-    def test_solver_gradient_j4t(self):
-        # Sparse solver:
-        As1 = self.A_csr.detach().to(torch.float32).clone()
-        As1.requires_grad = True
-        Bd1 = self.B.detach().to(torch.float32).clone()
-        Bd1.requires_grad = True
-        As1.retain_grad()
-        Bd1.retain_grad()
-        x = tsgujax.sparse_solve_j4t(As1, Bd1)
-        loss = x.sum()
-        loss.backward()
-
-        # torch dense solver:
-        Ad2 = self.A.detach().to(torch.float32).clone()
-        Ad2.requires_grad = True
-        Bd2 = self.B.detach().to(torch.float32).clone()
-        Bd2.requires_grad = True
-        Ad2.retain_grad()
-        Bd2.retain_grad()
-        x2 = torch.linalg.solve(Ad2, Bd2)
-        loss_torch = x2.sum()
-        loss_torch.backward()
-
-        self.assertTrue(torch.isclose(x, x2, rtol=self.RTOL).all())
-
-        nz_mask = As1.grad.to_dense() != 0.0
-        self.assertTrue(torch.isclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=self.RTOL).all())
-        self.assertTrue(torch.isclose(Bd1.grad, Bd2.grad, rtol=self.RTOL).all())
-
-
-class SparseSolveTestJ4TCUDA(SparseSolveTestJ4T):
-    """Override superclass setUp to run on GPU"""
-
-    def setUp(self) -> None:
-        if not torch.cuda.is_available():
-            self.skipTest(f"Skipping {self.__class__.__name__} since CUDA is not available")
-        self.device = torch.device("cuda")
-        super().setUp()
-
-
-if __name__ == "__main__":
-    unittest.main()
+def test_solver_gradient_j4t(device):
+    RTOL = _rtol()
+    # Setup data
+    A_shape = (4, 4)
+    A = torch.randn(A_shape, dtype=torch.float64, device=device)
+    A = A + A.t()
+    A_csr = A.to_sparse_csr().to(torch.float32)
+    B_shape = (4, 2)
+    B = torch.randn(B_shape, dtype=torch.float64, device=device).to(torch.float32)
+    # Sparse solver
+    As1 = A_csr.clone().detach()
+    As1.requires_grad_(True)
+    Bd1 = B.clone().detach()
+    Bd1.requires_grad_(True)
+    x = tsgujax.sparse_solve_j4t(As1, Bd1)
+    x.sum().backward()
+    # Dense reference
+    Ad2 = A.to(torch.float32).clone().detach()
+    Ad2.requires_grad_(True)
+    Bd2 = B.clone().detach()
+    Bd2.requires_grad_(True)
+    x2 = torch.linalg.solve(Ad2, Bd2)
+    x2.sum().backward()
+    # Compare outputs
+    assert torch.allclose(x, x2, rtol=RTOL)
+    # Compare gradients
+    nz = As1.grad.to_dense() != 0.0
+    assert torch.allclose(As1.grad.to_dense()[nz], Ad2.grad[nz], rtol=RTOL)
+    assert torch.allclose(Bd1.grad, Bd2.grad, rtol=RTOL)
