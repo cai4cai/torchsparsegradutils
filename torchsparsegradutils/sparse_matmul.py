@@ -106,8 +106,7 @@ class SparseMatMul(torch.autograd.Function):
         B_select = B.index_select(0, A_col_idx)  # B[j, :]
 
         # Dot product:
-        gradB_ewise = grad_select * B_select
-        gradA = torch.sum(gradB_ewise, dim=1)
+        gradA = (grad_select * B_select).sum(dim=1)
 
         # Create a sparse matrix of the gradient with respect to the nnz of A
         if A.layout == torch.sparse_coo:
