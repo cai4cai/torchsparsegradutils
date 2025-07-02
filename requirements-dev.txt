@@ -1,8 +1,0 @@
-torch>=1.13.0
-numpy
-scipy
-jax[cpu]
-parameterized
-pytest
-pytest-rerunfailures
-pyyaml

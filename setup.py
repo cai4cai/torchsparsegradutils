@@ -15,13 +15,11 @@ setuptools.setup(
     classifiers=[
         "Operating System :: OS Independent",
         "License :: OSI Approved :: Apache Software License",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     keywords="sparse torch utility",
     url="https://github.com/cai4cai/torchsparsegradutils",
     author="CAI4CAI research group",
@@ -29,7 +27,7 @@ setuptools.setup(
     license="Apache-2.0",
     packages=setuptools.find_packages(exclude=("tests",)),
     install_requires=[
-        "torch>=1.13",
+        "torch>=2.5",
     ],
     setup_requires=["pytest-runner"],
     tests_require=["pytest"],
