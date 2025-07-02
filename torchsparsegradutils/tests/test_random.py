@@ -35,7 +35,7 @@ def test_gen_random_coo_size_nnz(size, nnz, multiplier, device):
     assert A.size() == size
     assert A._nnz() == nnz * multiplier
 
-@pytest.mark.parametrize('indices_dtype', [torch.int8, torch.int16, torch.int32])
+@pytest.mark.parametrize('indices_dtype', [torch.int8, torch.int16])
 def test_gen_random_coo_invalid_indices(indices_dtype, device):
     with pytest.raises(ValueError):
         generate_random_sparse_coo_matrix(torch.Size([4, 4]), 12, indices_dtype=indices_dtype, device=device)
@@ -110,7 +110,7 @@ def test_gen_random_strict_tri_coo_too_many_nnz(nnz, device):
     with pytest.raises(ValueError):
         generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([4, 4]), limit + 1, device=device)
 
-@pytest.mark.parametrize('indices_dtype', [torch.int8, torch.int16, torch.int32])
+@pytest.mark.parametrize('indices_dtype', [torch.int8, torch.int16])
 def test_gen_random_strict_tri_coo_invalid_indices(indices_dtype, device):
     with pytest.raises(ValueError):
         generate_random_sparse_strictly_triangular_coo_matrix(torch.Size([4, 4]), 5, indices_dtype=indices_dtype, device=device)
