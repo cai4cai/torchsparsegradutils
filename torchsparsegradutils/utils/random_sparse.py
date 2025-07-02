@@ -118,7 +118,7 @@ def generate_random_sparse_coo_matrix(
         ValueError: Raised if size has less than 2 dimensions.
         ValueError: Raised if size has more than 3 dimensions, as this implementation only supports 1 batch dimension.
         ValueError: Raised if nnz is greater than the total number of elements (size[-2] * size[-3]).
-        ValueError: Raised if indices_dtype is not torch.int64 for sparse COO tensors.
+        ValueError: Raised if indices_dtype is not torch.int64 or torch.int32, as these are the only indices dtypes supported for sparse COO tensors.
 
     Returns:
         torch.Tensor: Returns a sparse COO tensor of shape size with nnz non-zero elements.
@@ -131,9 +131,9 @@ def generate_random_sparse_coo_matrix(
 
     if nnz > size[-2] * size[-1]:
         raise ValueError("nnz must be less than or equal to nr * nc")
-
-    if indices_dtype != torch.int64:
-        raise ValueError("indices_dtype must be torch.int64 for sparse COO tensors")
+    
+    if (indices_dtype != torch.int64) and (indices_dtype != torch.int32):
+        raise ValueError("indices_dtype must be torch.int64 or torch.int32 for sparse COO tensors")
 
     if len(size) == 2:
         coo_indices = _gen_indices_2d_coo(size[-2], size[-1], nnz, dtype=indices_dtype, device=device)
@@ -259,7 +259,7 @@ def generate_random_sparse_strictly_triangular_coo_matrix(
         ValueError: Raised if size has more than 3 dimensions, as this implementation only supports 1 batch dimension.
         ValueError: Raised if size is not a square matrix (n, n) or batched square matrix (b, n, n).
         ValueError: Raised if nnz is greater than (n * n-1)/2, where n is the number of rows or columns.
-        ValueError: Raised if indices_dtype is not torch.int64 for sparse COO tensors.
+        ValueError: Raised if indices_dtype is not torch.int64 or torch.int32, as these are the only indices dtypes supported for sparse COO tensors.
 
     Returns:
         torch.Tensor: Returns a square strictly upper or lower sparse COO tensor of shape size with nnz non-zero elements.
@@ -275,8 +275,8 @@ def generate_random_sparse_strictly_triangular_coo_matrix(
     if nnz > size[-2] * (size[-2] - 1) // 2:
         raise ValueError("nnz must be less than or equal to (n * n-1)/2, where n is the number of rows or columns")
 
-    if indices_dtype != torch.int64:
-        raise ValueError("indices_dtype must be torch.int64 for sparse COO tensors")
+    if (indices_dtype != torch.int64) and (indices_dtype != torch.int32):
+        raise ValueError("indices_dtype must be torch.int64 or torch.int32 for sparse COO tensors")
 
     if len(size) == 2:
         coo_indices = _gen_indices_2d_coo_strictly_tri(size[-2], nnz, upper=upper, dtype=indices_dtype, device=device)

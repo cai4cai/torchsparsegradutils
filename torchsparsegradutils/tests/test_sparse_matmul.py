@@ -1,8 +1,12 @@
 import torch
 import pytest
 
-from torchsparsegradutils import sparse_mm  # , sparse_bmm
+from torchsparsegradutils import sparse_mm
+# NOTE: tests pass using torch.sparse.mm for unbatched sparse COO and CSR matrices
+# from torch.sparse import mm as sparse_mm  
+
 from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
+import itertools
 
 # Identify Testing Parameters
 DEVICES = [torch.device("cpu")]
@@ -20,10 +24,12 @@ TEST_DATA = [
 ]
 
 INDEX_DTYPES = [torch.int32, torch.int64]
-VALUE_DTYPES = [torch.float32, torch.float64]
+VALUE_DTYPES = [torch.float32, torch.float64]  
+# NOTE: torch.float16  - Only works for COO on CPU
+# RuntimeError: "addmm_sparse_cuda" not implemented for 'Half'
 
-ATOL = 1e-6  # relaxed tolerance to allow for float32
-RTOL = 1e-4
+
+RTOL = 1e-6
 
 
 # Define Test Names:
@@ -62,13 +68,9 @@ def device(request):
     return request.param
 
 
-# Define Tests
-
+################################## Forwards and  Backwards Tests: #####################################
 
 def forward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, shapes):
-    if index_dtype == torch.int32 and layout is torch.sparse_coo:
-        pytest.skip("Skipping test as sparse COO tensors with int32 indices are not supported")
-
     _, A_shape, B_shape, A_nnz = shapes
     A = rand_sparse(A_shape, A_nnz, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
@@ -77,13 +79,10 @@ def forward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, s
     res_sparse = op_test(A, B)  # both results are dense
     res_dense = op_ref(Ad, B)
 
-    assert torch.allclose(res_sparse, res_dense, atol=ATOL, rtol=RTOL)
+    assert torch.allclose(res_sparse, res_dense, rtol=RTOL)
 
 
 def backward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, shapes, is_backward=False):
-    if index_dtype == torch.int32 and layout is torch.sparse_coo:
-        pytest.skip("Skipping test as sparse COO tensors with int32 indices are not supported")
-
     _, A_shape, B_shape, A_nnz = shapes
     As1 = rand_sparse(A_shape, A_nnz, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
     Ad2 = As1.detach().clone().to_dense()  # detach and clone to create seperate graph
@@ -106,9 +105,20 @@ def backward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, 
     res2.backward(grad_output)
 
     nz_mask = As1.grad.to_dense() != 0.0
+    
+    # Check sparsity of gradientns
+    assert As1.grad.layout == layout
+    # NOTE: _nnz per batch element for CSR and for whole tensor in COO
+    if layout is torch.sparse_csr or len(As1.shape) == 2:
+        assert As1.grad._nnz() == A_nnz
+    elif layout is torch.sparse_coo and len(As1.shape) == 3:  # ie batched
+        assert As1.grad._nnz() == A_nnz * As1.shape[0]
+    else:
+        raise ValueError(f"Unsupported layout: {layout} or shape: {As1.shape}")
 
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL, rtol=RTOL)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL, rtol=RTOL)
+    # Check gradient values
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=RTOL)
+    assert torch.allclose(Bd1.grad, Bd2.grad, rtol=RTOL)
 
 
 def test_sparse_mm_forward_result_coo(device, value_dtype, index_dtype, shapes):
@@ -131,7 +141,8 @@ def test_sparse_mm_backward_result_csr(device, value_dtype, index_dtype, shapes)
     )
 
 
-# Additional Testing Parameters
+################################## Bad Input Tests: #####################################
+
 BAD_TEST_DATA = [
     # name, A, B, expected_error, error_msg
     ("bad_tensor", 5, torch.rand(6, 2), ValueError, "Both A and B should be instances of torch.Tensor"),
@@ -173,15 +184,93 @@ BAD_TEST_DATA = [
 ]
 
 
-# Additional Fixture
 @pytest.fixture(params=BAD_TEST_DATA, ids=[data_id(d) for d in BAD_TEST_DATA])
 def bad_inputs(request):
     return request.param
 
 
-# Additional Test
 def test_sparse_mm_error(bad_inputs):
     _, A, B, expected_error, error_msg = bad_inputs
     with pytest.raises(expected_error) as e:
         sparse_mm(A, B)
     assert str(e.value) == error_msg
+    
+    
+################################## Memory Usage Tests: #####################################
+
+MEM_USAGE_TEST_DATA = [
+    # name,   A_shape,     B_shape,      A_nnz
+    ("mem_small", (2000, 2000), (2000, 128), 4000),
+    ("mem_big", (10000, 10000), (10000, 512), 20000),
+]
+
+@pytest.mark.parametrize(
+    "mem_shapes,layout",
+    list(itertools.product(MEM_USAGE_TEST_DATA, [torch.sparse_coo, torch.sparse_csr])),
+    ids=[
+        f"{data_id(d[0])}_{'coo' if d[1] == torch.sparse_coo else 'csr'}"
+        for d in itertools.product(MEM_USAGE_TEST_DATA, [torch.sparse_coo, torch.sparse_csr])
+    ]
+)
+def test_sparse_mm_memory_advantage(device, value_dtype, index_dtype, mem_shapes, layout):
+    name, A_shape, B_shape, A_nnz = mem_shapes
+
+    # only measure on CUDA
+    if device.type != "cuda":
+        pytest.skip("requires CUDA for peak memory measurement")
+
+    # build one sparse matrix + dense B
+    A = rand_sparse(
+        A_shape, A_nnz, layout,
+        indices_dtype=index_dtype, values_dtype=value_dtype, device=device
+    )
+    if layout == torch.sparse_coo:
+        A = A.coalesce()
+    B = torch.randn(*B_shape, dtype=value_dtype, device=device)
+
+    # -------------------------
+    # 1) vanilla torch.sparse.mm
+    # -------------------------
+    torch.cuda.reset_peak_memory_stats(device)
+    A1 = A.detach().clone().requires_grad_()
+    B1 = B.clone().requires_grad_()
+    out1 = torch.sparse.mm(A1, B1).sum()
+    out1.backward()
+    mem_torch_sparse_mm = torch.cuda.max_memory_allocated(device)
+
+    # -------------------------
+    # 2) your sparse_mm
+    # -------------------------
+    torch.cuda.reset_peak_memory_stats(device)
+    A2 = A.detach().clone().requires_grad_()
+    B2 = B.clone().requires_grad_()
+    out2 = sparse_mm(A2, B2).sum()
+    out2.backward()
+    mem_tsgu_sparse_mm= torch.cuda.max_memory_allocated(device)
+    
+    # # -------------------------
+    # # 3) Dense matul reference
+    # # -------------------------
+    # torch.cuda.reset_peak_memory_stats(device)
+    # Ad, Bd = A.to_dense().detach().clone().requires_grad_(), B.clone().requires_grad_()
+    # out3 = torch.matmul(Ad, Bd).sum()
+    # out3.backward()
+    # mem_torch_dense_mm = torch.cuda.max_memory_allocated(device)
+    
+    # # prints for debugging
+    # print(
+    #     f"\nLayout={layout}, "
+    #     f"torch sparse.mm={mem_torch_sparse_mm/1e6:.1f}MB, "
+    #     f"tsgu sparse_mm={mem_tsgu_sparse_mm/1e6:.1f}MB, "
+    #     f"dense={mem_torch_dense_mm/1e6:.1f}MB"
+    # )
+
+    # sanity: we still got sparse grads
+    assert A2.grad.layout == layout
+
+    # confirm memory saving
+    assert mem_tsgu_sparse_mm < mem_torch_sparse_mm, (
+        f"sparse_mm should use less GPU memory than torch.sparse.mm "
+        f"({mem_tsgu_sparse_mm/1e6:.1f}MB vs {mem_torch_sparse_mm/1e6:.1f}MB)"
+    )
+    # NOTE: This test only passes for sparse COO
