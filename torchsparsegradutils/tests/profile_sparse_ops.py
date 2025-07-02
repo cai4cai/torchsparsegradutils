@@ -3,6 +3,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 from torchsparsegradutils import sparse_mm
 from torchsparsegradutils.utils import rand_sparse
 
+
 def profile_sparse_mm(
     A_shape,
     B_shape,
@@ -11,11 +12,11 @@ def profile_sparse_mm(
     device=torch.device("cuda"),
     value_dtype=torch.float32,
     index_dtype=torch.int64,
-    row_limit: int = 20
+    row_limit: int = 20,
 ):
     """
     Profiles forward+backward of sparse_mm on a random sparse matrix.
-    
+
     Args:
         A_shape (tuple): shape of A, e.g. (N, M) or (batch, N, M)
         B_shape (tuple): shape of B, must be compatible with A: (M, P) or (batch, M, P)
@@ -30,12 +31,7 @@ def profile_sparse_mm(
         raise RuntimeError("Profiler memory breakdown requires CUDA device")
 
     # 1) build random sparse A and dense B
-    A = rand_sparse(
-        A_shape, A_nnz, layout,
-        indices_dtype=index_dtype,
-        values_dtype=value_dtype,
-        device=device
-    )
+    A = rand_sparse(A_shape, A_nnz, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
     if layout == torch.sparse_coo:
         A = A.coalesce()
     B = torch.randn(*B_shape, dtype=value_dtype, device=device)
@@ -49,7 +45,7 @@ def profile_sparse_mm(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
         record_shapes=True,
         profile_memory=True,
-        with_stack=False
+        with_stack=False,
     ) as prof:
         with record_function("sparse_mm_forward_and_backward"):
             out = sparse_mm(A, B)
@@ -57,7 +53,4 @@ def profile_sparse_mm(
             out.sum().backward()
 
     # 3) print a table sorted by the CUDA memory usage of each op
-    print(prof.key_averages().table(
-        sort_by="self_cuda_memory_usage",
-        row_limit=row_limit
-    ))
+    print(prof.key_averages().table(sort_by="self_cuda_memory_usage", row_limit=row_limit))

@@ -4,18 +4,23 @@ import pytest
 from torchsparsegradutils import sparse_generic_lstsq
 
 # Device fixture
-DEVICES = [torch.device('cpu')]
+DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
-    DEVICES.append(torch.device('cuda:0'))
+    DEVICES.append(torch.device("cuda:0"))
 
-def _id_device(d):   return str(d)
+
+def _id_device(d):
+    return str(d)
+
 
 @pytest.fixture(params=DEVICES, ids=_id_device)
 def device(request):
     return request.param
 
+
 # Tolerance for all tests
 RTOL = 1e-2
+
 
 # Test generic least-squares solve
 def test_generic_lstsq_default(device):
@@ -31,6 +36,7 @@ def test_generic_lstsq_default(device):
     x = sparse_generic_lstsq(A_csr, B)
 
     assert torch.allclose(x, x_ref, rtol=RTOL)
+
 
 # Test gradient correctness
 def test_generic_lstsq_gradient_default(device):

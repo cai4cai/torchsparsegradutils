@@ -23,7 +23,12 @@
                     "torchsparsegradutils/tests"
                 ],
                 "python.testing.unittestEnabled": false,
-                "python.testing.pytestEnabled": true
+                "python.testing.pytestEnabled": true,
+                "editor.formatOnSave": true,
+                "python.formatting.provider": "black",
+                "python.linting.enabled": true,
+                "python.linting.flake8Enabled": true,
+                "python.linting.pylintEnabled": false
             },
             "extensions": [
                 "dbaeumer.vscode-eslint",
@@ -34,7 +39,9 @@
                 "GitHub.vscode-pull-request-github",
                 "GitHub.vscode-github-actions",
                 "mhutchie.git-graph",
-                "waderyan.gitblame"
+                "waderyan.gitblame",
+                "ms-python.black-formatter",
+                "ms-python.flake8"
             ]
         }
     },

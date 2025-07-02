@@ -94,6 +94,7 @@ def set_seed():
 
 # Convenience functions:
 
+
 def construct_distribution(sizes, layout, var, value_dtype, index_dtype, device, requires_grad=False):
     _, batch_size, event_size, sparsity = sizes
     loc = torch.randn(event_size, device=device, dtype=value_dtype, requires_grad=requires_grad)
@@ -159,6 +160,7 @@ def check_covariance_within_tolerance(
 
 
 # Define Tests
+
 
 def test_rsample_forward_cov(device, layout, sizes, value_dtype, index_dtype):
     if layout == torch.sparse_coo and index_dtype == torch.int32:

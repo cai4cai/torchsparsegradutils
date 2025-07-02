@@ -7,11 +7,14 @@ import torchsparsegradutils.cupy as tsgucupy
 
 
 # Device fixture
-DEVICES = [torch.device('cpu')]
+DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
-    DEVICES.append(torch.device('cuda:0'))
+    DEVICES.append(torch.device("cuda:0"))
 
-def _id_device(d):   return str(d)
+
+def _id_device(d):
+    return str(d)
+
 
 @pytest.fixture(params=DEVICES, ids=_id_device)
 def device(request):
@@ -23,9 +26,11 @@ if tsgucupy.have_cupy:
     import cupy as cp
     import cupyx.scipy.sparse as csp
 
+
 # Helper to convert Cupy array to NumPy
 def _c2n(x_cupy):
     return cp.asnumpy(x_cupy) if tsgucupy.have_cupy else np.asarray(x_cupy)
+
 
 # I/O setup fixture
 @pytest.fixture
@@ -34,12 +39,13 @@ def cupy_bindings_io(device):
     x_t = torch.randn(x_shape, dtype=torch.float64, device=device)
     rng = np.random.default_rng()
     x_n = rng.standard_normal(x_shape, dtype=np.float64)
-    if tsgucupy.have_cupy and device.type == 'cuda':
+    if tsgucupy.have_cupy and device.type == "cuda":
         xp, xsp = cp, csp
     else:
         xp, xsp = np, nsp
     x_c = xp.asarray(x_n)
     return x_t, x_c, xsp
+
 
 # Test torch -> CuPy/NumPy COO conversion and back
 def test_t2c_and_c2t_coo(device, cupy_bindings_io):
@@ -54,6 +60,7 @@ def test_t2c_and_c2t_coo(device, cupy_bindings_io):
     assert x_t2.shape == x_t_coo.shape
     assert np.allclose(x_t2.to_dense().cpu().numpy(), x_t_coo.to_dense().cpu().numpy())
 
+
 # Test NumPy/CuPy -> torch COO conversion and back
 def test_c2t_and_t2c_coo(device, cupy_bindings_io):
     x_t, x_c, xsp = cupy_bindings_io
@@ -65,6 +72,7 @@ def test_c2t_and_t2c_coo(device, cupy_bindings_io):
     assert x_c2.shape == x_c_coo.shape
     assert np.allclose(_c2n(x_c2.todense()), _c2n(x_c_coo.todense()))
 
+
 # Test torch -> CuPy/NumPy CSR conversion and back
 def test_t2c_and_c2t_csr(device, cupy_bindings_io):
     x_t, x_c, xsp = cupy_bindings_io
@@ -75,6 +83,7 @@ def test_t2c_and_c2t_csr(device, cupy_bindings_io):
     x_t2 = tsgucupy.c2t_csr(x_c_csr)
     assert x_t2.shape == x_t_csr.shape
     assert np.allclose(x_t2.to_dense().cpu().numpy(), x_t_csr.to_dense().cpu().numpy())
+
 
 # Test NumPy/CuPy -> torch CSR conversion and back
 def test_c2t_and_t2c_csr(device, cupy_bindings_io):

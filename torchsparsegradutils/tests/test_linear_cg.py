@@ -4,6 +4,7 @@ import torch
 import pytest
 from torchsparsegradutils.utils.linear_cg import linear_cg
 
+
 # Autouse fixture to seed RNG and restore state after each test
 @pytest.fixture(autouse=True)
 def seed_restore():
@@ -18,6 +19,7 @@ def seed_restore():
         torch.set_rng_state(rng)
     else:
         yield
+
 
 # Test basic CG solve for vectors and matrices
 def test_cg():
@@ -45,6 +47,7 @@ def test_cg():
     assert torch.allclose(solves, actual_mat, atol=1e-3, rtol=1e-4)
     assert torch.allclose(solves_init, actual_mat, atol=1e-3, rtol=1e-4)
 
+
 # Test CG with tridiagonal outputs
 def test_cg_with_tridiag():
     size = 10
@@ -63,8 +66,9 @@ def test_cg_with_tridiag():
         approx = torch.linalg.eigvalsh(t_mats[i])
         assert torch.allclose(eigs, approx, atol=1e-3, rtol=1e-4)
 
+
 # Device parameterized CG tests
-@pytest.mark.parametrize('batch', [None, 5])
+@pytest.mark.parametrize("batch", [None, 5])
 def test_batch_cg(batch):
     size = 100
     shape = (batch, size, size) if batch else (size, size)
@@ -78,7 +82,8 @@ def test_batch_cg(batch):
     actual = torch.cholesky_solve(rhs, chol)
     assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
 
-@pytest.mark.parametrize('batch', [None, 5])
+
+@pytest.mark.parametrize("batch", [None, 5])
 def test_batch_cg_with_tridiag(batch):
     size = 10
     shape = (batch, size, size) if batch else (size, size)
@@ -99,6 +104,7 @@ def test_batch_cg_with_tridiag(batch):
         for j in range(8):
             approx = torch.linalg.eigvalsh(t_mats[j, i] if batch else t_mats[j])
             assert torch.allclose(eigs, approx, atol=1e-3, rtol=1e-4)
+
 
 # Test CG initialization reuse
 def test_batch_cg_init():

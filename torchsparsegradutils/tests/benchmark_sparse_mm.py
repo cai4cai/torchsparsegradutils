@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 import sys
 import os
+
 # Add the parent directory to sys.path to allow importing torchsparsegradutils
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import time
 import torch
@@ -19,9 +20,9 @@ assert torch.cuda.is_available(), "This benchmark requires a CUDA GPU"
 
 # problem sizes: (label, N, M, nnz)
 SIZES = [
-    ("small",  2_000,  128, 4_000),
-    ("medium", 5_000,  256, 10_000),
-    ("large",  10_000, 512, 20_000),
+    ("small", 2_000, 128, 4_000),
+    ("medium", 5_000, 256, 10_000),
+    ("large", 10_000, 512, 20_000),
 ]
 
 INDEX_DTYPES = [torch.int32, torch.int64]
@@ -32,6 +33,7 @@ ALGORITHMS = [
     ("sparse_mm", sparse_mm),
     ("dense.mm", lambda A, B: torch.matmul(A.to_dense(), B)),
 ]
+
 
 def measure_op(op, A, B):
     """
@@ -64,6 +66,7 @@ def measure_op(op, A, B):
 
     return (t1 - t0), mem_fwd, (t3 - t2), mem_bwd
 
+
 def main():
     records = []
     for size_label, N, M, nnz in SIZES:
@@ -74,10 +77,7 @@ def main():
             for val_dt in VALUE_DTYPES:
                 # build one sparse COO for all algos
                 A_coo = rand_sparse(
-                    A_shape, nnz, torch.sparse_coo,
-                    indices_dtype=idx_dt,
-                    values_dtype=val_dt,
-                    device=device
+                    A_shape, nnz, torch.sparse_coo, indices_dtype=idx_dt, values_dtype=val_dt, device=device
                 ).coalesce()
                 B = torch.randn(B_shape, dtype=val_dt, device=device)
 
@@ -89,28 +89,41 @@ def main():
                         # run
                         t_fwd, mem_fwd, t_bwd, mem_bwd = measure_op(alg_fn, A, B)
 
-                        records.append({
-                            "size":      size_label,
-                            "layout":    layout_name,
-                            "algo":      alg_name,
-                            "index_dt":  str(idx_dt).split(".")[-1],
-                            "value_dt":  str(val_dt).split(".")[-1],
-                            "N":         N,
-                            "M":         M,
-                            "nnz":       nnz,
-                            "fwd_time_s":   f"{t_fwd:.3f}",
-                            "fwd_mem_MB":   f"{mem_fwd:.1f}",
-                            "bwd_time_s":   f"{t_bwd:.3f}",
-                            "bwd_mem_MB":   f"{mem_bwd:.1f}",
-                        })
+                        records.append(
+                            {
+                                "size": size_label,
+                                "layout": layout_name,
+                                "algo": alg_name,
+                                "index_dt": str(idx_dt).split(".")[-1],
+                                "value_dt": str(val_dt).split(".")[-1],
+                                "N": N,
+                                "M": M,
+                                "nnz": nnz,
+                                "fwd_time_s": f"{t_fwd:.3f}",
+                                "fwd_mem_MB": f"{mem_fwd:.1f}",
+                                "bwd_time_s": f"{t_bwd:.3f}",
+                                "bwd_mem_MB": f"{mem_bwd:.1f}",
+                            }
+                        )
 
     df = pd.DataFrame.from_records(records)
     # reorder columns for clarity
-    df = df[[
-        "size", "layout", "algo", "index_dt", "value_dt",
-        "N", "M", "nnz",
-        "fwd_time_s", "fwd_mem_MB", "bwd_time_s", "bwd_mem_MB"
-    ]]
+    df = df[
+        [
+            "size",
+            "layout",
+            "algo",
+            "index_dt",
+            "value_dt",
+            "N",
+            "M",
+            "nnz",
+            "fwd_time_s",
+            "fwd_mem_MB",
+            "bwd_time_s",
+            "bwd_mem_MB",
+        ]
+    ]
 
     md = df.to_markdown(index=False)
     with open("torchsparsegradutils/tests/benchmark_results_sparse_mm.md", "w") as f:
@@ -119,6 +132,7 @@ def main():
         f.write("\n")
 
     print("Written results to benchmark_results_sparse_mm.md")
+
 
 if __name__ == "__main__":
     main()

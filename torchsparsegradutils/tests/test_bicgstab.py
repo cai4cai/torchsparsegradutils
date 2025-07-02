@@ -3,15 +3,19 @@ import pytest
 from torchsparsegradutils.utils import bicgstab
 
 # Device fixture
-DEVICES = [torch.device('cpu')]
+DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
-    DEVICES.append(torch.device('cuda:0'))
+    DEVICES.append(torch.device("cuda:0"))
 
-def _id_device(d):   return str(d)
+
+def _id_device(d):
+    return str(d)
+
 
 @pytest.fixture(params=DEVICES, ids=_id_device)
 def device(request):
     return request.param
+
 
 def test_bicgstab(device):
     # setup SPD test problem

@@ -18,24 +18,31 @@ from torchsparsegradutils.utils.utils import (
 )
 
 # Device fixture
-DEVICES = [torch.device('cpu')]
+DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
-    DEVICES.append(torch.device('cuda:0'))
+    DEVICES.append(torch.device("cuda:0"))
 
-def _id_device(d):   return str(d)
+
+def _id_device(d):
+    return str(d)
+
 
 @pytest.fixture(params=DEVICES, ids=_id_device)
 def device(request):
     return request.param
     return request.param
 
+
 # Test stack_csr
-@pytest.mark.parametrize("size, nnz, dim", [
-    ((4, 4), 12, 0),
-    ((8, 16), 32, 0),
-    ((4, 4), 12, -1),
-    ((8, 16), 32, -1),
-])
+@pytest.mark.parametrize(
+    "size, nnz, dim",
+    [
+        ((4, 4), 12, 0),
+        ((8, 16), 32, 0),
+        ((4, 4), 12, -1),
+        ((8, 16), 32, -1),
+    ],
+)
 def test_stack_csr(device, size, nnz, dim):
     csr_list = [generate_random_sparse_csr_matrix(size, nnz, device=device) for _ in range(3)]
     dense_list = [csr.to_dense() for csr in csr_list]
@@ -43,7 +50,9 @@ def test_stack_csr(device, size, nnz, dim):
     dense_stacked = torch.stack(dense_list)
     assert torch.equal(csr_stacked.to_dense(), dense_stacked)
 
+
 # Test _sort_coo_indices
+
 
 def test_unbatched_sort(device):
     nr, nc = 4, 4
@@ -56,6 +65,7 @@ def test_unbatched_sort(device):
     sorted_indices, permutation = _sort_coo_indices(indices)
     assert torch.equal(sorted_indices_coalesced, sorted_indices)
     assert torch.equal(coalesce_permutation, permutation)
+
 
 def test_batched_sort(device):
     nr, nc = 4, 4
@@ -73,13 +83,17 @@ def test_batched_sort(device):
     assert torch.equal(sorted_indices_coalesced, sorted_indices)
     assert torch.equal(coalesce_permutation, permutation)
 
+
 # Test COO to CSR conversion and values
-@pytest.mark.parametrize("size, nnz", [
-    ((4, 4), 12),
-    ((8, 16), 32),
-    ((4, 4, 4), 12),
-    ((6, 8, 14), 32),
-])
+@pytest.mark.parametrize(
+    "size, nnz",
+    [
+        ((4, 4), 12),
+        ((8, 16), 32),
+        ((4, 4, 4), 12),
+        ((6, 8, 14), 32),
+    ],
+)
 def test_convert_coo_to_csr(device, size, nnz):
     A_coo = generate_random_sparse_coo_matrix(size, nnz, device=device)
     A_csr = convert_coo_to_csr(A_coo)
@@ -106,11 +120,15 @@ def test_convert_coo_to_csr(device, size, nnz):
     assert torch.equal(A_csr.col_indices(), A_csr_2.col_indices())
     assert torch.equal(A_csr.values(), A_csr_2.values())
 
+
 # Test CSR to COO conversion row indices decompression
-@pytest.mark.parametrize("size, nnz", [
-    ((4, 4), 12),
-    ((8, 16), 32),
-])
+@pytest.mark.parametrize(
+    "size, nnz",
+    [
+        ((4, 4), 12),
+        ((8, 16), 32),
+    ],
+)
 def test_demcompress_crow_indices(device, size, nnz):
     A_csr = generate_random_sparse_csr_matrix(size, nnz, device=device)
     A_coo = A_csr.to_sparse_coo()
@@ -118,15 +136,19 @@ def test_demcompress_crow_indices(device, size, nnz):
     decompressed = _demcompress_crow_indices(A_csr.crow_indices(), A_coo.size()[0])
     assert torch.equal(row_indices, decompressed)
 
+
 # Test sparse_block_diag forward for COO and CSR
-@pytest.mark.parametrize("layout, size, nnz", [
-    ("coo", (1, 4, 4), 12),
-    ("coo", (4, 4, 4), 12),
-    ("coo", (6, 8, 14), 32),
-    ("csr", (1, 4, 4), 12),
-    ("csr", (4, 4, 4), 12),
-    ("csr", (6, 8, 14), 32),
-])
+@pytest.mark.parametrize(
+    "layout, size, nnz",
+    [
+        ("coo", (1, 4, 4), 12),
+        ("coo", (4, 4, 4), 12),
+        ("coo", (6, 8, 14), 32),
+        ("csr", (1, 4, 4), 12),
+        ("csr", (4, 4, 4), 12),
+        ("csr", (6, 8, 14), 32),
+    ],
+)
 def test_sparse_block_diag_forward(device, layout, size, nnz):
     if layout == "coo":
         A = generate_random_sparse_coo_matrix(size, nnz, device=device)
@@ -137,12 +159,16 @@ def test_sparse_block_diag_forward(device, layout, size, nnz):
     D = torch.block_diag(*A_d)
     assert torch.equal(B.to_dense(), D)
 
+
 # Test sparse_block_diag backward for COO
-@pytest.mark.parametrize("size, nnz", [
-    ((1, 4, 4), 12),
-    ((4, 4, 4), 12),
-    ((6, 8, 14), 32),
-])
+@pytest.mark.parametrize(
+    "size, nnz",
+    [
+        ((1, 4, 4), 12),
+        ((4, 4, 4), 12),
+        ((6, 8, 14), 32),
+    ],
+)
 def test_sparse_block_diag_coo_backward(device, size, nnz):
     A = generate_random_sparse_coo_matrix(size, nnz, device=device)
     A_d = A.detach().clone().to_dense()
@@ -154,6 +180,7 @@ def test_sparse_block_diag_coo_backward(device, size, nnz):
     D.sum().backward()
     mask = A.grad.to_dense() != 0
     assert torch.allclose(A.grad.to_dense()[mask], A_d.grad[mask])
+
 
 # Test sparse_block_diag error cases
 def test_sparse_block_diag_errors():
@@ -180,15 +207,19 @@ def test_sparse_block_diag_errors():
     with pytest.raises(TypeError):
         sparse_block_diag(tensor1, "bad")
 
+
 # Test sparse_block_diag_split
-@pytest.mark.parametrize("layout, shape, nnz", [
-    ("coo", (1, 4, 4), 12),
-    ("coo", (4, 4, 4), 12),
-    ("coo", (6, 8, 14), 32),
-    ("csr", (1, 4, 4), 12),
-    ("csr", (4, 4, 4), 12),
-    ("csr", (6, 8, 14), 32),
-])
+@pytest.mark.parametrize(
+    "layout, shape, nnz",
+    [
+        ("coo", (1, 4, 4), 12),
+        ("coo", (4, 4, 4), 12),
+        ("coo", (6, 8, 14), 32),
+        ("csr", (1, 4, 4), 12),
+        ("csr", (4, 4, 4), 12),
+        ("csr", (6, 8, 14), 32),
+    ],
+)
 def test_sparse_block_diag_split(device, layout, shape, nnz):
     if layout == "coo":
         A = generate_random_sparse_coo_matrix(shape, nnz, device=device)
@@ -201,6 +232,7 @@ def test_sparse_block_diag_split(device, layout, shape, nnz):
     for orig, part in zip(A, parts):
         assert torch.equal(orig.to_dense(), part.to_dense())
 
+
 # Test sparse_eye
 TEST_EYE = [
     ("unbat", (4, 4)),
@@ -210,19 +242,23 @@ TEST_EYE = [
 ]
 LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
+
 @pytest.fixture(params=TEST_EYE, ids=lambda x: x[0])
 def shapes(request):
     return request.param
 
-@pytest.fixture(params=[torch.float32, torch.float64], ids=lambda x: str(x).split('.')[-1])
+
+@pytest.fixture(params=[torch.float32, torch.float64], ids=lambda x: str(x).split(".")[-1])
 def values_dtype(request):
     return request.param
 
-@pytest.fixture(params=[torch.int32, torch.int64], ids=lambda x: str(x).split('.')[-1])
+
+@pytest.fixture(params=[torch.int32, torch.int64], ids=lambda x: str(x).split(".")[-1])
 def indices_dtype(request):
     return request.param
 
-@pytest.fixture(params=LAYOUTS, ids=lambda x: str(x).split('.')[-1].upper())
+
+@pytest.fixture(params=LAYOUTS, ids=lambda x: str(x).split(".")[-1].upper())
 def layout(request):
     return request.param
 

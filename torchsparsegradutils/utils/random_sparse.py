@@ -131,7 +131,7 @@ def generate_random_sparse_coo_matrix(
 
     if nnz > size[-2] * size[-1]:
         raise ValueError("nnz must be less than or equal to nr * nc")
-    
+
     if (indices_dtype != torch.int64) and (indices_dtype != torch.int32):
         raise ValueError("indices_dtype must be torch.int64 or torch.int32 for sparse COO tensors")
 

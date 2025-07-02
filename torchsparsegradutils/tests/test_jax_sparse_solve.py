@@ -3,27 +3,33 @@ import torch
 import torchsparsegradutils.jax as tsgujax
 
 # Skip entire module if JAX isn't available
-pytest.importorskip('jax')
+pytest.importorskip("jax")
 if not tsgujax.have_jax:
     pytest.skip("JAX bindings unavailable, skipping jax tests", allow_module_level=True)
-    
+
 
 # Device fixture
-DEVICES = [torch.device('cpu')]
+DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
-    DEVICES.append(torch.device('cuda:0'))
+    DEVICES.append(torch.device("cuda:0"))
 
-def _id_device(d):   return str(d)
+
+def _id_device(d):
+    return str(d)
+
 
 @pytest.fixture(params=DEVICES, ids=_id_device)
 def device(request):
     return request.param
 
+
 # Relative tolerance for comparisons
 def _rtol():
     return 1e-2
 
+
 # Test forward sparse_j4t solve
+
 
 def test_solver_j4t(device):
     RTOL = _rtol()
@@ -38,7 +44,9 @@ def test_solver_j4t(device):
     x = tsgujax.sparse_solve_j4t(A_csr.to(torch.float32), B.to(torch.float32))
     assert torch.allclose(x, x_ref.to(torch.float32), rtol=RTOL)
 
+
 # Test backward gradient of sparse_j4t solve
+
 
 def test_solver_gradient_j4t(device):
     RTOL = _rtol()
