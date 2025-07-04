@@ -77,53 +77,69 @@ class SparseMatMul(torch.autograd.Function):
     def backward(ctx, grad):
         A, B = ctx.saved_tensors
 
-        # The gradient with respect to the matrix A, seen as a dense matrix, would
-        # lead to a backprop rule as follows: gradA = grad @ b.T
-        # but we are only interested in the gradient with respect to
-        # the (non-zero) values of A. To save memory, instead of computing the full
-        # dense matrix prev_grad @ b and then subsampling at the nnz locations in A,
-        # we can directly only compute the required values:
-        # grad_a[i,j] = dotprod(grad[i,:], b[j,:])
+        gradA = None
+        gradB = None
 
-        # We start by getting the i and j indices:
+        # -------- Only compute gradA if needed --------
+        if ctx.needs_input_grad[0]:
+            # The gradient with respect to the matrix A, seen as a dense matrix, would
+            # lead to a backprop rule as follows: gradA = grad @ b.T
+            # but we are only interested in the gradient with respect to
+            # the (non-zero) values of A. To save memory, instead of computing the full
+            # dense matrix prev_grad @ b and then subsampling at the nnz locations in A,
+            # we can directly only compute the required values:
+            # grad_a[i,j] = dotprod(grad[i,:], b[j,:])
 
-        if A.layout == torch.sparse_coo:
-            A_row_idx, A_col_idx = A._indices()
-        elif A.layout == torch.sparse_csr:
-            A_col_idx = A.col_indices()
-            A_crow_idx = A.crow_indices()
-            # Uncompress row indices:
-            A_row_idx = torch.repeat_interleave(
-                torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
-            )
-        else:
-            raise ValueError(f"Unsupported layout: {A.layout}")
+            # We start by getting the i and j indices:
 
-        if ctx.batch_size is not None:
-            grad = torch.cat([*grad])
-
-        grad_select = grad.index_select(0, A_row_idx)  # grad[i, :]
-        B_select = B.index_select(0, A_col_idx)  # B[j, :]
-
-        # Dot product:
-        gradA = (grad_select * B_select).sum(dim=1)
-
-        # Create a sparse matrix of the gradient with respect to the nnz of A
-        if A.layout == torch.sparse_coo:
-            gradA = torch.sparse_coo_tensor(A._indices(), gradA, A.shape)
-        elif A.layout == torch.sparse_csr:
-            gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
-
-        # Now compute the dense gradient with respect to B
-        gradB = torch.sparse.mm(A.t(), grad)
-
-        if ctx.batch_size is not None:
-            shapes = ctx.A_shape[0] * (ctx.A_shape[-2:],)
-            gradA = sparse_block_diag_split(gradA, *shapes)
             if A.layout == torch.sparse_coo:
-                gradA = torch.stack([*gradA])
+                A_row_idx, A_col_idx = A._indices()
+            elif A.layout == torch.sparse_csr:
+                A_col_idx = A.col_indices()
+                A_crow_idx = A.crow_indices()
+                # Uncompress row indices:
+                A_row_idx = torch.repeat_interleave(
+                    torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
+                )
             else:
-                gradA = stack_csr([*gradA])  # NOTE: torch.stack does not work for csr tensors
+                raise ValueError(f"Unsupported layout: {A.layout}")
 
-            gradB = gradB.view(ctx.B_shape)
+            if ctx.batch_size is not None:
+                grad_for_A = torch.cat([*grad])
+            else:
+                grad_for_A = grad
+
+            grad_select = grad_for_A.index_select(0, A_row_idx)  # grad[i, :]
+            B_select = B.index_select(0, A_col_idx)  # B[j, :]
+
+            # Dot product:
+            gradA = (grad_select * B_select).sum(dim=1)
+
+            # Create a sparse matrix of the gradient with respect to the nnz of A
+            if A.layout == torch.sparse_coo:
+                gradA = torch.sparse_coo_tensor(A._indices(), gradA, A.shape)
+            elif A.layout == torch.sparse_csr:
+                gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
+
+            if ctx.batch_size is not None:
+                shapes = ctx.A_shape[0] * (ctx.A_shape[-2:],)
+                gradA = sparse_block_diag_split(gradA, *shapes)
+                if A.layout == torch.sparse_coo:
+                    gradA = torch.stack([*gradA])
+                else:
+                    gradA = stack_csr([*gradA])  # NOTE: torch.stack does not work for csr tensors
+
+        # -------- Only compute gradB if needed --------
+        if ctx.needs_input_grad[1]:
+            if ctx.batch_size is not None:
+                grad_for_B = torch.cat([*grad])
+            else:
+                grad_for_B = grad
+
+            # Now compute the dense gradient with respect to B
+            gradB = torch.sparse.mm(A.t(), grad_for_B)
+
+            if ctx.batch_size is not None:
+                gradB = gradB.view(ctx.B_shape)
+
         return gradA, gradB

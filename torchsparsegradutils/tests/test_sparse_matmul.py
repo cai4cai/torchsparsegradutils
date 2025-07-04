@@ -14,6 +14,8 @@ DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
     DEVICES.append(torch.device("cuda"))
 
+LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
+
 TEST_DATA = [
     # name  A_shape, B_shape, A_nnz
     ("unbat", (4, 6), (6, 2), 8),  # unbatched
@@ -46,6 +48,10 @@ def dtype_id(dtype):
     return str(dtype).split(".")[-1]
 
 
+def layout_id(layout):
+    return "coo" if layout == torch.sparse_coo else "csr"
+
+
 # Define Fixtures
 
 
@@ -69,22 +75,27 @@ def device(request):
     return request.param
 
 
+@pytest.fixture(params=LAYOUTS, ids=[layout_id(d) for d in LAYOUTS])
+def layout(request):
+    return request.param
+
+
 ################################## Forwards and  Backwards Tests: #####################################
 
 
-def forward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, shapes):
+def test_sparse_mm_forward(layout, device, value_dtype, index_dtype, shapes):
     _, A_shape, B_shape, A_nnz = shapes
     A = rand_sparse(A_shape, A_nnz, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
     Ad = A.to_dense()
 
-    res_sparse = op_test(A, B)  # both results are dense
-    res_dense = op_ref(Ad, B)
+    res_sparse = sparse_mm(A, B)  # both results are dense
+    res_dense = torch.matmul(Ad, B)
 
     assert torch.allclose(res_sparse, res_dense, rtol=RTOL)
 
 
-def backward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, shapes, is_backward=False):
+def test_sprase_mm_backward(layout, device, value_dtype, index_dtype, shapes, is_backward=False):
     _, A_shape, B_shape, A_nnz = shapes
     As1 = rand_sparse(A_shape, A_nnz, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
     Ad2 = As1.detach().clone().to_dense()  # detach and clone to create seperate graph
@@ -97,8 +108,8 @@ def backward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, 
     Bd1.requires_grad_()
     Bd2.requires_grad_()
 
-    res1 = op_test(As1, Bd1)  # both results are dense
-    res2 = op_ref(Ad2, Bd2)
+    res1 = sparse_mm(As1, Bd1)  # both results are dense
+    res2 = torch.matmul(Ad2, Bd2)
 
     # Generate random gradients for the backward pass
     grad_output = torch.rand_like(res1, dtype=value_dtype, device=device)
@@ -123,24 +134,32 @@ def backward_routine(op_test, op_ref, layout, device, value_dtype, index_dtype, 
     assert torch.allclose(Bd1.grad, Bd2.grad, rtol=RTOL)
 
 
-def test_sparse_mm_forward_result_coo(device, value_dtype, index_dtype, shapes):
-    forward_routine(sparse_mm, torch.matmul, torch.sparse_coo, device, value_dtype, index_dtype, shapes)
+################################## Conditional Gradient Tests: #####################################
 
 
-def test_sparse_mm_forward_result_csr(device, value_dtype, index_dtype, shapes):
-    forward_routine(sparse_mm, torch.matmul, torch.sparse_csr, device, value_dtype, index_dtype, shapes)
+def test_sparse_mm_conditional_gradients(layout, device, value_dtype, index_dtype):
+    # simple small shape
+    A = rand_sparse((5, 4), 6, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
+    # coalesce for COO so indices are valid
+    if layout == torch.sparse_coo:
+        A = A.coalesce()
+    B = torch.randn(4, 3, dtype=value_dtype, device=device)
 
+    # Case 1: only B requires grad → A.grad should be None, B.grad non-None
+    A1 = A.detach().clone()
+    B1 = B.detach().clone().requires_grad_()
+    out1 = sparse_mm(A1, B1)
+    out1.sum().backward()
+    assert not hasattr(A1, "grad") or A1.grad is None
+    assert B1.grad is not None
 
-def test_sparse_mm_backward_result_coo(device, value_dtype, index_dtype, shapes):
-    backward_routine(
-        sparse_mm, torch.matmul, torch.sparse_coo, device, value_dtype, index_dtype, shapes, is_backward=True
-    )
-
-
-def test_sparse_mm_backward_result_csr(device, value_dtype, index_dtype, shapes):
-    backward_routine(
-        sparse_mm, torch.matmul, torch.sparse_csr, device, value_dtype, index_dtype, shapes, is_backward=True
-    )
+    # Case 2: only A requires grad → B.grad should be None, A.grad non-None
+    A2 = A.detach().clone().requires_grad_()
+    B2 = B.detach().clone()
+    out2 = sparse_mm(A2, B2)
+    out2.sum().backward()
+    assert A2.grad is not None
+    assert not hasattr(B2, "grad") or B2.grad is None
 
 
 ################################## Bad Input Tests: #####################################
