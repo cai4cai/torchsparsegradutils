@@ -279,9 +279,9 @@ def test_sparse_mm_memory_advantage(device, value_dtype, index_dtype, mem_shapes
     # # prints for debugging
     # print(
     #     f"\nLayout={layout}, "
-    #     f"torch sparse.mm={mem_torch_sparse_mm/1e6:.1f}MB, "
-    #     f"tsgu sparse_mm={mem_tsgu_sparse_mm/1e6:.1f}MB, "
-    #     f"dense={mem_torch_dense_mm/1e6:.1f}MB"
+    #     f"torch sparse.mm={mem_torch_sparse_mm / 1e6:.1f}MB, "
+    #     f"tsgu sparse_mm={mem_tsgu_sparse_mm / 1e6:.1f}MB, "
+    #     f"dense={mem_torch_dense_mm / 1e6:.1f}MB"
     # )
 
     # sanity: we still got sparse grads
@@ -290,7 +290,7 @@ def test_sparse_mm_memory_advantage(device, value_dtype, index_dtype, mem_shapes
     # confirm memory saving
     assert mem_tsgu_sparse_mm < mem_torch_sparse_mm, (
         f"sparse_mm should use less GPU memory than torch.sparse.mm "
-        f"({mem_tsgu_sparse_mm/1e6:.1f}MB vs {mem_torch_sparse_mm/1e6:.1f}MB)"
+        f"({mem_tsgu_sparse_mm / 1e6:.1f}MB vs {mem_torch_sparse_mm / 1e6:.1f}MB)"
     )
     # NOTE: This test only passes for sparse COO
 
