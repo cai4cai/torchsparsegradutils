@@ -293,3 +293,67 @@ def test_sparse_mm_memory_advantage(device, value_dtype, index_dtype, mem_shapes
         f"({mem_tsgu_sparse_mm/1e6:.1f}MB vs {mem_torch_sparse_mm/1e6:.1f}MB)"
     )
     # NOTE: This test only passes for sparse COO
+
+
+def test_sparse_mm_optimize_A_multiple_steps(layout, device, value_dtype, index_dtype):
+    # small problem
+    N, M, NNZ = 30, 10, 50
+    A = rand_sparse((N, N), NNZ, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
+    if layout == torch.sparse_coo:
+        A = A.coalesce()
+    B = torch.randn(N, M, dtype=value_dtype, device=device)
+
+    # make A require gradients on its values
+    A.requires_grad_()
+    lr = 1e-2
+
+    for step in range(3):
+        # forward
+        out = sparse_mm(A, B)
+        loss = out.sum()
+
+        # backward
+        loss.backward()
+        assert A.grad is not None
+        assert B.grad is None
+
+        # grab the old and new value tensors
+        if layout == torch.sparse_coo:
+            vals = A._values()
+            gvals = A.grad._values()
+        else:  # CSR
+            vals = A.values()
+            gvals = A.grad.values()
+
+        old = vals.clone()
+
+        # gradient step on A.values()
+        with torch.no_grad():
+            vals.sub_(lr * gvals)
+
+        # clear for next iteration
+        A.grad = None
+
+        new = vals
+        # confirm that the values actually changed
+        assert not torch.allclose(old, new), f"Step {step}: A.values did not update"
+
+
+def test_sparse_mm_memory_stability(layout, device):
+    if device.type != "cuda":
+        pytest.skip("requires CUDA for this test")
+    N, M, NNZ = 500, 50, 200
+    A = rand_sparse((N, N), NNZ, layout, device=device)
+    B = torch.randn(N, M, device=device)
+
+    A.requires_grad_()
+    torch.cuda.reset_peak_memory_stats(device)
+    peaks = []
+    for _ in range(100):
+        out = sparse_mm(A, B).sum()
+        out.backward()
+        peaks.append(torch.cuda.max_memory_allocated(device))
+        A.grad = None
+
+    # We expect some initial variance but no monotonic increase
+    assert max(peaks) / min(peaks) < 1.2, f"Memory is growing: {peaks!r}"
