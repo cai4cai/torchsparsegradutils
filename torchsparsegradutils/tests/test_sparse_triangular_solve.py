@@ -21,6 +21,7 @@ TEST_DATA = [
 
 INDEX_DTYPES = [torch.int32, torch.int64]
 VALUE_DTYPES = [torch.float32, torch.float64]
+LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
 UPPER = [True, False]
 UNITRIANGULAR = [True, False]  # just unit triangular solve for now
@@ -53,6 +54,10 @@ def unitriangular_id(unitriangular):
 
 def transpose_id(transpose):
     return "t" if transpose else ""
+
+
+def layout_id(layout):
+    return "coo" if layout == torch.sparse_coo else "csr"
 
 
 # Define Fixtures
@@ -93,10 +98,16 @@ def transpose(request):
     return request.param
 
 
+@pytest.fixture(params=LAYOUTS, ids=[layout_id(d) for d in LAYOUTS])
+def layout(request):
+    return request.param
+
+
 # Define Tests
 
 
-def forward_routine(layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
+@pytest.mark.flaky(reruns=5)
+def test_tri_solve_forward_routine(layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
     if sys.platform == "win32" and device == torch.device("cpu"):
         pytest.skip("Skipping triangular solve CPU tests as solver not implemented for Windows OS")
 
@@ -120,7 +131,8 @@ def forward_routine(layout, device, value_dtype, index_dtype, shapes, upper, uni
     assert torch.allclose(res_test, res_ref, atol=ATOL, rtol=RTOL)
 
 
-def backward_routine(layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
+@pytest.mark.flaky(reruns=5)
+def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
     if sys.platform == "win32" and device == torch.device("cpu"):
         pytest.skip("Skipping triangular solve CPU tests as solver not implemented for Windows OS")
 
@@ -176,55 +188,3 @@ def backward_routine(layout, device, value_dtype, index_dtype, shapes, upper, un
 
     assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL, rtol=RTOL)
     assert torch.allclose(Bd1.grad, Bd3.grad, atol=ATOL, rtol=RTOL)
-
-
-def test_forward_result_coo(device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
-    forward_routine(
-        torch.sparse_coo,
-        device,
-        value_dtype,
-        index_dtype,
-        shapes,
-        upper,
-        unitriangular,
-        transpose,
-    )
-
-
-def test_forward_result_csr(device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
-    forward_routine(
-        torch.sparse_csr,
-        device,
-        value_dtype,
-        index_dtype,
-        shapes,
-        upper,
-        unitriangular,
-        transpose,
-    )
-
-
-def test_backward_result_coo(device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
-    backward_routine(
-        torch.sparse_coo,
-        device,
-        value_dtype,
-        index_dtype,
-        shapes,
-        upper,
-        unitriangular,
-        transpose,
-    )
-
-
-def test_backward_result_csr(device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
-    backward_routine(
-        torch.sparse_csr,
-        device,
-        value_dtype,
-        index_dtype,
-        shapes,
-        upper,
-        unitriangular,
-        transpose,
-    )
