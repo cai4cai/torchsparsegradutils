@@ -138,6 +138,7 @@ def test_sprase_mm_backward(layout, device, value_dtype, index_dtype, shapes, is
 
 
 def test_sparse_mm_conditional_gradients(layout, device, value_dtype, index_dtype):
+    # NOTE: This test is not actually testing "if ctx.needs_input_grad" -- it passes regardless
     # simple small shape
     A = rand_sparse((5, 4), 6, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
     # coalesce for COO so indices are valid
