@@ -1,8 +1,8 @@
 import torch
 import pytest
 import sys
-from torchsparsegradutils import sparse_triangular_solve, sparse_generic_solve
-from torchsparsegradutils.utils import linear_cg, minres, rand_sparse, rand_sparse_tri
+from torchsparsegradutils import sparse_triangular_solve
+from torchsparsegradutils.utils import rand_sparse_tri
 
 
 # Identify Testing Parameters
@@ -188,3 +188,30 @@ def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, sh
 
     assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL, rtol=RTOL)
     assert torch.allclose(Bd1.grad, Bd3.grad, atol=ATOL, rtol=RTOL)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_torch_triangular_solve_backward_fail(
+    layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose
+):
+    if sys.platform == "win32" and device == torch.device("cpu"):
+        pytest.skip("Skipping backward failure test on Windows CPU")
+    # unpack shapes
+    _, A_shape, B_shape, A_nnz = shapes
+    # create a random sparse triangular A and a dense B
+    As1 = rand_sparse_tri(
+        A_shape,
+        A_nnz,
+        layout,
+        upper=upper,
+        strict=unitriangular,
+        indices_dtype=index_dtype,
+        values_dtype=value_dtype,
+        device=device,
+    )
+    Bd1 = torch.rand(*B_shape, dtype=value_dtype, device=device)
+    Ad = As1.to_dense()
+    # torch.triangular_solve does not support backward on general inputs
+    with pytest.raises(RuntimeError):
+        sol = torch.triangular_solve(Bd1, Ad, upper=upper, unitriangular=unitriangular, transpose=transpose).solution
+        sol.sum().backward()
