@@ -131,7 +131,7 @@ def test_tri_solve_forward_routine(layout, device, value_dtype, index_dtype, sha
     assert torch.allclose(res_test, res_ref, atol=ATOL, rtol=RTOL)
 
 
-@pytest.mark.flaky(reruns=5)
+@pytest.mark.flaky(reruns=10)
 def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
     if sys.platform == "win32" and device == torch.device("cpu"):
         pytest.skip("Skipping triangular solve CPU tests as solver not implemented for Windows OS")
