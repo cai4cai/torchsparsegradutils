@@ -23,9 +23,7 @@ INDEX_DTYPES = [torch.int32, torch.int64]
 VALUE_DTYPES = [torch.float32, torch.float64]
 
 UPPER = [True, False]
-UNITRIANGULAR = [
-    True,
-]  # just unit triangular solve for now
+UNITRIANGULAR = [True, False]  # just unit triangular solve for now
 TRANSPOSE = [True, False]
 
 ATOL = 1e-6  # relaxed tolerance to allow for float32

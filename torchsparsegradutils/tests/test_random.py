@@ -5,6 +5,7 @@ from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_csr_matrix,
     generate_random_sparse_strictly_triangular_coo_matrix,
     generate_random_sparse_strictly_triangular_csr_matrix,
+    rand_sparse_tri,
 )
 
 # enable sparse invariants checks if available
@@ -227,3 +228,24 @@ def test_gen_random_strict_tri_csr_properties(upper, device):
         assert torch.equal(Ad, Ad.triu(1))
     else:
         assert torch.equal(Ad, Ad.tril(-1))
+
+
+# ---------- Tests for non-strict triangular matrices ----------
+
+
+@pytest.mark.parametrize(
+    "layout,upper",
+    [
+        (torch.sparse_coo, True),
+        (torch.sparse_coo, False),
+        (torch.sparse_csr, True),
+        (torch.sparse_csr, False),
+    ],
+)
+def test_rand_sparse_tri_nonstrict_diag(layout, upper, device):
+    size = torch.Size([4, 4])
+    nnz = 6
+    A = rand_sparse_tri(size, nnz, layout=layout, strict=False, upper=upper, device=device)
+    Ad = A.to_dense()
+    # every diagonal entry should be non-zero
+    assert torch.all(torch.diag(Ad) != 0)

@@ -51,25 +51,47 @@ def rand_sparse_tri(
     value_range=(0, 1),
 ):
     if layout == torch.sparse_coo:
-        return generate_random_sparse_strictly_triangular_coo_matrix(
-            size,
-            nnz,
-            upper=upper,
-            indices_dtype=indices_dtype,
-            values_dtype=values_dtype,
-            device=device,
-            value_range=value_range,
-        )
+        if strict:
+            return generate_random_sparse_strictly_triangular_coo_matrix(
+                size,
+                nnz,
+                upper=upper,
+                indices_dtype=indices_dtype,
+                values_dtype=values_dtype,
+                device=device,
+                value_range=value_range,
+            )
+        else:
+            return generate_random_sparse_triangular_coo_matrix(
+                size,
+                nnz,
+                upper=upper,
+                indices_dtype=indices_dtype,
+                values_dtype=values_dtype,
+                device=device,
+                value_range=value_range,
+            )
     elif layout == torch.sparse_csr:
-        return generate_random_sparse_strictly_triangular_csr_matrix(
-            size,
-            nnz,
-            upper=upper,
-            indices_dtype=indices_dtype,
-            values_dtype=values_dtype,
-            device=device,
-            value_range=value_range,
-        )
+        if strict:
+            return generate_random_sparse_strictly_triangular_csr_matrix(
+                size,
+                nnz,
+                upper=upper,
+                indices_dtype=indices_dtype,
+                values_dtype=values_dtype,
+                device=device,
+                value_range=value_range,
+            )
+        else:
+            return generate_random_sparse_triangular_csr_matrix(
+                size,
+                nnz,
+                upper=upper,
+                indices_dtype=indices_dtype,
+                values_dtype=values_dtype,
+                device=device,
+                value_range=value_range,
+            )
     else:
         raise ValueError("Unsupported layout type. It should be either torch.sparse_coo or torch.sparse_csr")
 
@@ -365,3 +387,100 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
 
     values = values * (value_range[1] - value_range[0]) + value_range[0]
     return torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device)
+
+
+# helper for non-strict triangular coordinates
+def _gen_indices_2d_coo_nonstrict_tri(n, nnz, *, upper=True, dtype=torch.int64, device=torch.device("cpu")):
+    assert nnz <= n * (n + 1) // 2 and nnz >= n, "nnz must be >= n and <= n*(n+1)/2 for non-strict triangular"
+    coords = set((i, i) for i in range(n))
+    import random
+
+    while len(coords) < nnz:
+        r, c = random.randrange(n), random.randrange(n)
+        if (r < c and upper) or (r > c and not upper) or (r == c):
+            coords.add((r, c))
+    return torch.stack([torch.tensor(x, dtype=dtype, device=device) for x in coords], dim=-1)
+
+
+def generate_random_sparse_triangular_coo_matrix(
+    size,
+    nnz,
+    *,
+    upper=True,
+    indices_dtype=torch.int64,
+    values_dtype=torch.float32,
+    device=torch.device("cpu"),
+    value_range=(0, 1),
+):
+    if len(size) < 2:
+        raise ValueError("size must have at least 2 dimensions")
+    elif len(size) > 3:
+        raise ValueError("size must have at most 3 dimensions")
+    if size[-2] != size[-1]:
+        raise ValueError("size must be a square matrix or batched square matrix")
+    n = size[-2]
+    if nnz > n * (n + 1) // 2 or nnz < n:
+        raise ValueError("nnz must be between n and n*(n+1)/2")
+    if (indices_dtype != torch.int64) and (indices_dtype != torch.int32):
+        raise ValueError("indices_dtype must be torch.int64 or torch.int32 for sparse COO tensors")
+
+    if len(size) == 2:
+        coo_idx = _gen_indices_2d_coo_nonstrict_tri(n, nnz, upper=upper, dtype=indices_dtype, device=device)
+        values = torch.rand(nnz, dtype=values_dtype, device=device)
+    else:
+        coo_idx = torch.cat(
+            [
+                _gen_indices_2d_coo_nonstrict_tri(n, nnz, upper=upper, dtype=indices_dtype, device=device)
+                for _ in range(size[0])
+            ],
+            dim=-1,
+        )
+        batch_idx = torch.arange(size[0], dtype=indices_dtype, device=device).repeat_interleave(nnz).unsqueeze(0)
+        coo_idx = torch.cat([batch_idx, coo_idx], dim=0)
+        values = torch.rand(nnz * size[0], dtype=values_dtype, device=device)
+
+    values = values * (value_range[1] - value_range[0]) + value_range[0]
+    return torch.sparse_coo_tensor(coo_idx, values, size, device=device).coalesce()
+
+
+def generate_random_sparse_triangular_csr_matrix(
+    size,
+    nnz,
+    *,
+    upper=True,
+    indices_dtype=torch.int64,
+    values_dtype=torch.float32,
+    device=torch.device("cpu"),
+    value_range=(0, 1),
+):
+    if len(size) < 2:
+        raise ValueError("size must have at least 2 dimensions")
+    elif len(size) > 3:
+        raise ValueError("size must have at most 3 dimensions")
+    if size[-2] != size[-1]:
+        raise ValueError("size must be a square matrix or batched square matrix")
+    n = size[-2]
+    if nnz > n * (n + 1) // 2 or nnz < n:
+        raise ValueError("nnz must be between n and n*(n+1)/2")
+    if (indices_dtype != torch.int64) and (indices_dtype != torch.int32):
+        raise ValueError("indices_dtype must be torch.int64 or torch.int32 for sparse CSR tensors")
+
+    if len(size) == 2:
+        coo_idx = _gen_indices_2d_coo_nonstrict_tri(n, nnz, upper=upper, dtype=indices_dtype, device=device)
+        crow, col, _ = convert_coo_to_csr_indices_values(coo_idx, n, values=None)
+        values = torch.rand(nnz, dtype=values_dtype, device=device)
+    else:
+        coo_idx = torch.cat(
+            [
+                _gen_indices_2d_coo_nonstrict_tri(n, nnz, upper=upper, dtype=indices_dtype, device=device)
+                for _ in range(size[0])
+            ],
+            dim=-1,
+        )
+        batch_idx = torch.arange(size[0], dtype=indices_dtype, device=device).repeat_interleave(nnz).unsqueeze(0)
+        coo_idx = torch.cat([batch_idx, coo_idx], dim=0)
+        crow, col, _ = convert_coo_to_csr_indices_values(coo_idx, n, values=None)
+        values = torch.rand((size[0], nnz), dtype=values_dtype, device=device)
+
+    values = values * (value_range[1] - value_range[0]) + value_range[0]
+    return torch.sparse_csr_tensor(crow, col, values, size, device=device)
