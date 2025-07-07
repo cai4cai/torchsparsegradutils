@@ -250,3 +250,56 @@ def test_torch_linalg_solve_triangular_backward_fail(
                 unitriangular=unitriangular,
             )
         sol.sum().backward()
+
+
+def test_sparse_triangular_solve_optimize_A_multiple_steps(layout, device, value_dtype, index_dtype):
+    # small problem
+    N, M, NNZ = 30, 10, 50
+    A = rand_sparse_tri(
+        (N, N),
+        NNZ,
+        layout,
+        upper=True,
+        strict=False,
+        indices_dtype=index_dtype,
+        values_dtype=value_dtype,
+        device=device,
+    )
+    if layout == torch.sparse_coo:
+        A = A.coalesce()
+    B = torch.randn(N, M, dtype=value_dtype, device=device)
+
+    # make A require gradients on its values
+    A.requires_grad_()
+    lr = 1e-2
+
+    for step in range(3):
+        # forward: solve A X = B
+        X = sparse_triangular_solve(A, B, upper=True, unitriangular=False, transpose=False)
+        loss = X.sum()
+
+        # backward
+        loss.backward()
+        assert A.grad is not None
+        # B should not get a grad
+        assert not hasattr(B, "grad") or B.grad is None
+
+        # grab values and grads
+        if layout == torch.sparse_coo:
+            vals = A._values()
+            gvals = A.grad._values()
+        else:
+            vals = A.values()
+            gvals = A.grad.values()
+
+        old = vals.clone()
+        # gradient step on A.values()
+        with torch.no_grad():
+            vals.sub_(lr * gvals)
+
+        # zero gradients for next iteration
+        A.grad = None  # NOTE: only COO CUDA seems to care about this
+        # w/o this, CUDA COO: RuntimeError: The size of tensor a (50) must match the size of tensor b (100) at non-singleton dimension 0
+
+        # confirm that the values actually changed
+        assert not torch.allclose(old, vals), f"Step {step}: A.values did not update"

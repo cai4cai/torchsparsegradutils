@@ -336,6 +336,7 @@ def test_sparse_mm_optimize_A_multiple_steps(layout, device, value_dtype, index_
 
         # zero gradients for next step
         A.grad = None  # NOTE: only COO CUDA seems to care about this, both for torch.sparse.mm and sparse_mm
+        # w/o this CUDA COO: RuntimeError: The size of tensor a (50) must match the size of tensor b (100) at non-singleton dimension 0
 
         new = vals
         # confirm that the values actually changed
