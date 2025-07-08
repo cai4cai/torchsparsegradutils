@@ -28,7 +28,10 @@
                 "python.formatting.provider": "black",
                 "python.linting.enabled": true,
                 "python.linting.flake8Enabled": true,
-                "python.linting.pylintEnabled": false
+                "python.linting.pylintEnabled": false,
+                "python.languageServer": "Pylance",
+                "python.analysis.indexing": true,
+                "python.analysis.logLevel": "Trace"
             },
             "extensions": [
                 "dbaeumer.vscode-eslint",
