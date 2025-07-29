@@ -43,11 +43,6 @@ def sparse_triangular_solve(A, B, upper=True, unitriangular=False, transpose=Fal
         The gradient with respect to the sparse matrix A is computed only for its
         non-zero values to save memory.
 
-        For the backpropagation, a workaround is implemented for a known issue with
-        torch.triangular_solve on the CPU for lower triangular matrices. This issue and the
-        subsequent workaround are relevant only for PyTorch versions lower than 2.0 (see PyTorch
-        issue #88890).
-
     References:
         https://github.com/pytorch/pytorch/issues/87358
         https://github.com/pytorch/pytorch/issues/88890
@@ -107,28 +102,11 @@ class SparseTriangularSolve(torch.autograd.Function):
             A = convert_coo_to_csr(A)  # triangular solve doesn't work with sparse coo
             ctx.csr = False
 
-        # Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
-        workaround88890 = (
-            A.device == torch.device("cpu")
-            and (not ctx.upper)
-            and ctx.unitriangular
-            and (torch.__version__ < (2,))
-            and ctx.transpose
-        )
-        if not workaround88890:
-            x = torch.triangular_solve(
-                B.detach(), A.detach(), upper=upper, unitriangular=unitriangular, transpose=transpose
-            ).solution
-        else:
-            n = A.shape[0]
-            id_csr = torch.sparse_csr_tensor(
-                torch.arange(n + 1),
-                torch.arange(n),
-                torch.ones(n, device=A.device, dtype=A.dtype),
-                (n, n),
-                device=A.device,
-            )
-            x = torch.triangular_solve(B.detach(), A.detach() + id_csr, upper=ctx.upper, transpose=transpose).solution
+        # NOTE: DEPRECATED: Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
+
+        x = torch.triangular_solve(
+            B.detach(), A.detach(), upper=upper, unitriangular=unitriangular, transpose=transpose
+        ).solution
 
         x.requires_grad = grad_flag
         ctx.save_for_backward(A, x.detach())
@@ -146,30 +124,11 @@ class SparseTriangularSolve(torch.autograd.Function):
         A, x = ctx.saved_tensors
 
         # Backprop rule: gradB = A^{-T} grad
-        # Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
-        workaround88890 = (
-            A.device == torch.device("cpu")
-            and (not ctx.upper)
-            and ctx.unitriangular
-            and (torch.__version__ < (2,))
-            and not ctx.transpose
-        )
-        if not workaround88890:
-            gradB = torch.triangular_solve(
-                grad, A, upper=ctx.upper, transpose=not ctx.transpose, unitriangular=ctx.unitriangular
-            ).solution
-        else:
-            # Not sure which workaround it best but for now let's assume we don't want to explicitly transpose A
-            # but prefer to let torch.triangular_solve do this inernally
-            n = A.shape[0]
-            id_csr = torch.sparse_csr_tensor(
-                torch.arange(n + 1),
-                torch.arange(n),
-                torch.ones(n, device=A.device, dtype=A.dtype),
-                (n, n),
-                device=A.device,
-            )
-            gradB = torch.triangular_solve(grad, A + id_csr, upper=ctx.upper, transpose=not ctx.transpose).solution
+        # NOTE: DEPRECATED: Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
+
+        gradB = torch.triangular_solve(
+            grad, A, upper=ctx.upper, transpose=not ctx.transpose, unitriangular=ctx.unitriangular
+        ).solution
 
         # The gradient with respect to the matrix A seen as a dense matrix would
         # lead to a backprop rule as follows
