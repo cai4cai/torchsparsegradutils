@@ -99,7 +99,7 @@ class SparseTriangularSolve(torch.autograd.Function):
             B = torch.cat([*B])
 
         if A.layout == torch.sparse_coo:
-            A = convert_coo_to_csr(A)  # triangular solve doesn't work with sparse coo
+            A = convert_coo_to_csr(A)  # NOTE: triangular solve doesn't work with sparse coo
             ctx.csr = False
 
         # NOTE: DEPRECATED: Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
