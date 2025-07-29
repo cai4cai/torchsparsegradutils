@@ -380,3 +380,16 @@ def test_sparse_mm_double_backward_error(layout, device):
     # second backward on the *same* loss should raise the usual PyTorch error
     with pytest.raises(RuntimeError, match=".*second time.*"):
         loss.backward()
+
+
+def test_torch_sparse_mm_errors_on_batched(layout, device, value_dtype, index_dtype):
+    # Batched sparse mm unsupported in native torch.sparse.mm
+    batch, M, N, P, A_nnz = 2, 4, 6, 2, 8
+    A = rand_sparse((batch, M, N), A_nnz, layout, indices_dtype=index_dtype, values_dtype=value_dtype, device=device)
+    if layout == torch.sparse_coo:
+        A = A.coalesce()
+    B = torch.randn(batch, N, P, dtype=value_dtype, device=device)
+
+    # native torch.sparse.mm should error on batched inputs
+    with pytest.raises(RuntimeError):
+        torch.sparse.mm(A, B)
