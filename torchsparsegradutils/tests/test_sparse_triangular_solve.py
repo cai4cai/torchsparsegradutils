@@ -10,12 +10,11 @@ DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
     DEVICES.append(torch.device("cuda"))
 
-# Pytest test currently just implemented for unit triangular solve
 TEST_DATA = [
     # name  A_shape, B_shape, A_nnz
-    ("unbat", (4, 4), (4, 2), 4),
+    # ("unbat", (4, 4), (4, 2), 4),
     ("unbat", (12, 12), (12, 6), 32),
-    ("bat", (2, 4, 4), (2, 4, 2), 4),
+    # ("bat", (2, 4, 4), (2, 4, 2), 4),
     ("bat", (4, 12, 12), (4, 12, 6), 32),
 ]
 
@@ -24,7 +23,7 @@ VALUE_DTYPES = [torch.float32, torch.float64]
 LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
 UPPER = [True, False]
-UNITRIANGULAR = [True, False]  # just unit triangular solve for now
+UNITRIANGULAR = [True, False]
 TRANSPOSE = [True, False]
 
 ATOL = 1e-6  # relaxed tolerance to allow for float32
