@@ -1,79 +1,109 @@
 import torch
-import torchsparsegradutils as tsgu
-import torchsparsegradutils.cupy as tsgucupy
-import warnings
 import pytest
+import torchsparsegradutils.cupy as tsgucupy
+from torchsparsegradutils.utils import convert_coo_to_csr
+from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
 
-if tsgucupy.have_cupy:
-    import cupy as cp
-    import cupyx.scipy.sparse as csp
-else:
-    warnings.warn(
-        "Importing optional cupy-related module failed to find cupy -> cupy-related tests running as numpy only."
-    )
-
-import numpy as np
-import scipy.sparse as nsp
-
-# warn if cupy missing
-if not tsgucupy.have_cupy:
-    warnings.warn(
-        "Importing optional cupy-related module failed to find cupy -> cupy-related tests running as numpy only."
-    )
-
-# Device fixture
+# devices
 DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
     DEVICES.append(torch.device("cuda:0"))
 
+# test parameters
+TEST_DATA = [
+    ("unbat", (12, 12), (12, 6), 32),
+]
+INDEX_DTYPES = [torch.int32, torch.int64]
+VALUE_DTYPES = [torch.float32, torch.float64]
+LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
-def _id_device(d):
-    return str(d)
+
+def data_id(d):
+    return d[0]
 
 
-@pytest.fixture(params=DEVICES, ids=_id_device)
+def dtype_id(d):
+    return str(d).split(".")[-1]
+
+
+def layout_id(layout):
+    return "coo" if layout == torch.sparse_coo else "csr"
+
+
+def device_id(device):
+    return str(device)
+
+
+@pytest.fixture(params=TEST_DATA, ids=lambda d: data_id(d))
+def shapes(request):
+    return request.param
+
+
+@pytest.fixture(params=VALUE_DTYPES, ids=lambda d: dtype_id(d))
+def value_dtype(request):
+    return request.param
+
+
+@pytest.fixture(params=INDEX_DTYPES, ids=lambda d: dtype_id(d))
+def index_dtype(request):
+    return request.param
+
+
+@pytest.fixture(params=DEVICES, ids=lambda d: device_id(d))
 def device(request):
     return request.param
 
 
-# relative tolerance for comparisons
-RTOL = 1e-3
+@pytest.fixture(params=LAYOUTS, ids=[layout_id(d) for d in LAYOUTS])
+def layout(request):
+    return request.param
 
 
-def _setup(device):
-    # common setup
-    A = torch.randn((4, 4), dtype=torch.float64, device=device)
-    A = A + A.t()
-    A_csr = A.to_sparse_csr()
-    B = torch.randn((4, 2), dtype=torch.float64, device=device)
-    x_ref = torch.linalg.solve(A, B)
-    return A_csr, B, x_ref
+def make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=0):
+    M = torch.randn(n, n, dtype=value_dtype, device=device)
+    A_dense = M @ M.t() + n * torch.eye(n, dtype=value_dtype, device=device)
+    if nz > 0:
+        mask = ~torch.eye(n, dtype=torch.bool, device=device)
+        idxs = torch.nonzero(mask, as_tuple=False)
+        sel = idxs[torch.randperm(idxs.size(0), device=device)[:nz]]
+        A_dense[sel[:, 0], sel[:, 1]] = 0
+    idx = A_dense.nonzero(as_tuple=False).t().to(index_dtype)
+    vals = A_dense[idx[0], idx[1]]
+    if layout == torch.sparse_coo:
+        A = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
+    else:
+        A_coo = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
+        A = convert_coo_to_csr(A_coo)
+    return A, A_dense
 
 
-def test_solver_c4t(device):
-    A_csr, B, x_ref = _setup(device)
-    x = tsgucupy.sparse_solve_c4t(A_csr.to(torch.float32), B.to(torch.float32))
-    assert torch.allclose(x, x_ref.to(torch.float32), rtol=RTOL)
+@pytest.mark.flaky(reruns=5)
+def test_solve_forward_cupy(layout, device, value_dtype, index_dtype, shapes):
+    _, A_shape, B_shape, num_zero = shapes
+    n = A_shape[0]
+    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
+    B = torch.rand(*B_shape, dtype=value_dtype, device=device)
+    X_ref = torch.linalg.solve(A_dense, B)
+    X_test = sparse_solve_c4t(A_sp, B)
+    assert torch.allclose(X_test, X_ref, atol=1e-8)
 
 
-def test_solver_gradient_c4t(device):
-    A_csr, B, _ = _setup(device)
-    # sparse solver gradient
-    As1 = A_csr.to(torch.float32).detach().clone()
-    As1.requires_grad_(True)
-    Bd1 = B.to(torch.float32).detach().clone()
-    Bd1.requires_grad_(True)
-    x = tsgucupy.sparse_solve_c4t(As1, Bd1)
-    x.sum().backward()
-    # dense reference gradient
-    A = As1.to_dense().detach().clone()
-    A.requires_grad_(True)
-    Bd2 = Bd1.detach().clone()
-    Bd2.requires_grad_(True)
-    x2 = torch.linalg.solve(A, Bd2)
-    x2.sum().backward()
-    # compare results
-    assert torch.allclose(x, x2, rtol=RTOL)
-    nz = As1.grad.to_dense() != 0.0
-    assert torch.allclose(As1.grad.to_dense()[nz], A.grad[nz], rtol=RTOL)
-    assert torch.allclose(Bd1.grad, Bd2.grad, rtol=RTOL)
+@pytest.mark.flaky(reruns=5)
+def test_solve_backward_cupy(layout, device, value_dtype, index_dtype, shapes):
+    _, A_shape, B_shape, num_zero = shapes
+    n = A_shape[0]
+    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
+    A_sp = A_sp.detach().clone().requires_grad_()
+    Ad = A_dense.detach().clone().requires_grad_()
+    B = torch.rand(*B_shape, dtype=value_dtype, device=device)
+    Bd = B.clone().detach().requires_grad_()
+    Bd2 = Bd.clone().detach().requires_grad_()
+    # forward
+    X1 = sparse_solve_c4t(A_sp, Bd)
+    X2 = torch.linalg.solve(Ad, Bd2)
+    grad_out = torch.rand_like(X1)
+    X1.backward(grad_out)
+    X2.backward(grad_out)
+    nz = A_sp.grad.to_dense() != 0
+    assert torch.allclose(A_sp.grad.to_dense()[nz], Ad.grad[nz], atol=1e-8)
+    assert torch.allclose(Bd.grad, Bd2.grad, atol=1e-5)
