@@ -1,5 +1,4 @@
 import torch
-
 import jax
 import jax.numpy as jnp
 import jax.scipy.sparse.linalg
@@ -18,6 +17,10 @@ def sparse_solve_j4t(A, B, solve=None, transpose_solve=None):
         if transpose_solve is None:
             transpose_solve = lambda A, B: jax.scipy.sparse.linalg.bicgstab(A.transpose(), B)
 
+    if A.dtype == torch.float64 or B.dtype == torch.float64:
+        # Use double precision for JAX
+        jax.config.update("jax_enable_x64", True)
+
     return SparseSolveJ4T.apply(A, B, solve, transpose_solve)
 
 
@@ -34,6 +37,15 @@ class SparseSolveJ4T(torch.autograd.Function):
         else:
             raise TypeError(f"Unsupported layout type: {A.layout}")
         B_j = _t2j(B.detach())
+
+        # pin JAX arrays to the same device as A
+        if A.device.type == "cpu":
+            jax_dev = jax.devices("cpu")[0]
+        else:
+            jax_dev = jax.devices("gpu")[A.device.index]
+        ctx.jax_device = jax_dev
+        A_j = jax.device_put(A_j, jax_dev)
+        B_j = jax.device_put(B_j, jax_dev)
 
         x_j, exit_code = solve(A_j, B_j)
 
@@ -54,6 +66,8 @@ class SparseSolveJ4T(torch.autograd.Function):
             x = x.unsqueeze(-1)
 
         grad_j = _t2j(grad.detach())
+        # pin gradient to the same JAX device
+        grad_j = jax.device_put(grad_j, ctx.jax_device)
 
         # Backprop rule: gradB = A^{-T} grad
         gradB_j, exit_code = ctx.transpose_solve(ctx.A_j.transpose(), grad_j)
