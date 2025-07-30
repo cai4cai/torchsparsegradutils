@@ -34,3 +34,26 @@ def test_bicgstab(device):
     assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
     solves = bicgstab(matrix_sparse, rhs=rhs)
     assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
+
+
+def test_bicgstab_2d_rhs(device):
+    size = 100
+    # build SPD test problem
+    matrix_dense = torch.randn(size, size, dtype=torch.float64, device=device) + 10 * torch.eye(
+        size, dtype=torch.float64, device=device
+    )
+    matrix_sparse = matrix_dense.to_sparse_csr()
+
+    # multiple RHS columns
+    rhs2d = torch.randn(size, 5, dtype=torch.float64, device=device)
+
+    # reference solution
+    actual = torch.linalg.solve(matrix_dense, rhs2d)
+
+    # dense-matrix API
+    solves = bicgstab(matrix_dense, rhs=rhs2d)
+    assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
+
+    # sparse-matrix API
+    solves = bicgstab(matrix_sparse, rhs=rhs2d)
+    assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)

@@ -62,6 +62,20 @@ def bicgstab(
         :guess:      Initial guess (Numpy array, default: 0)
         :matvec_max: Max. number of matrix-vector produts (2n)
     """
+    # support multiple right‐hand sides by solving each column separately
+    if rhs.dim() > 1:
+        cols = rhs.shape[1]
+        sols = [
+            bicgstab(
+                matmul_closure,
+                rhs[:, i],
+                None if initial_guess is None else initial_guess[:, i],
+                settings,
+            )
+            for i in range(cols)
+        ]
+        return torch.stack(sols, dim=1)
+
     n = rhs.shape[0]
     nMatvec = 0
 
