@@ -1,3 +1,8 @@
+import os
+
+# disable JAX’s 90%‐of‐GPU preallocation
+# os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 import importlib
 
 jax_spec = importlib.util.find_spec("jax")
