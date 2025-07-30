@@ -28,6 +28,8 @@ class SparseSolveC4T(torch.autograd.Function):
             x_c = solve(A_c, B_c)
         elif (B.ndim == 1) or (B.shape[1] == 1):
             # xp.sparse.linalg.spsolve only works if B is a vector but is fully on GPU with cupy
+            # TODO: Is this still true?
+            # see: https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.linalg.spsolve.html#scipy.sparse.linalg.spsolve
             x_c = xsp.linalg.spsolve(A_c, B_c)
         else:
             # Make use of a factorisation (only the solver is then on the GPU with cupy)
