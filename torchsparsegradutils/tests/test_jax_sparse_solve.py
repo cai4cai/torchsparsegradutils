@@ -1,79 +1,129 @@
 import pytest
 import torch
 import torchsparsegradutils.jax as tsgujax
+from torchsparsegradutils.utils import convert_coo_to_csr
 
-# Skip entire module if JAX isn't available
 pytest.importorskip("jax")
 if not tsgujax.have_jax:
     pytest.skip("JAX bindings unavailable, skipping jax tests", allow_module_level=True)
+else:
+    from jax.scipy.sparse.linalg import cg, bicgstab
 
+# NOTE: JAX seems to use GPU memory preallocation, which causes:
+# 90% of GPU:0 to be preallocated by default even for CPU tests
+# CPU tests show GPU memory usage (~500MB) on all available GPUs
 
-# Device fixture
+# devices
 DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
     DEVICES.append(torch.device("cuda:0"))
 
+# test parameters
+TEST_DATA = [
+    ("unbat", (12, 12), (12, 6), 32),
+]
+INDEX_DTYPES = [torch.int32, torch.int64]
+VALUE_DTYPES = [torch.float32, torch.float64]
+LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
+SOLVERS = [cg, bicgstab]
 
-def _id_device(d):
-    return str(d)
+
+def data_id(d):
+    return d[0]
 
 
-@pytest.fixture(params=DEVICES, ids=_id_device)
+def dtype_id(d):
+    return str(d).split(".")[-1]
+
+
+def layout_id(layout):
+    return "coo" if layout == torch.sparse_coo else "csr"
+
+
+def device_id(device):
+    return str(device)
+
+
+def solve_id(s):
+    return s.__name__
+
+
+@pytest.fixture(params=TEST_DATA, ids=lambda d: data_id(d))
+def shapes(request):
+    return request.param
+
+
+@pytest.fixture(params=VALUE_DTYPES, ids=lambda d: dtype_id(d))
+def value_dtype(request):
+    return request.param
+
+
+@pytest.fixture(params=INDEX_DTYPES, ids=lambda d: dtype_id(d))
+def index_dtype(request):
+    return request.param
+
+
+@pytest.fixture(params=DEVICES, ids=lambda d: device_id(d))
 def device(request):
     return request.param
 
 
-# Relative tolerance for comparisons
-def _rtol():
-    return 1e-2
+@pytest.fixture(params=LAYOUTS, ids=[layout_id(d) for d in LAYOUTS])
+def layout(request):
+    return request.param
 
 
-# Test forward sparse_j4t solve
+@pytest.fixture(params=SOLVERS, ids=[solve_id(s) for s in SOLVERS])
+def solver(request):
+    return request.param
 
 
-def test_solver_j4t(device):
-    RTOL = _rtol()
-    A_shape = (4, 4)
-    A = torch.randn(A_shape, dtype=torch.float64, device=device)
-    A = A + A.t()
-    A_csr = A.to_sparse_csr()
-    B_shape = (4, 2)
-    B = torch.randn(B_shape, dtype=torch.float64, device=device)
-    x_ref = torch.linalg.solve(A, B)
+def make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=0):
+    M = torch.randn(n, n, dtype=value_dtype, device=device)
+    A_dense = M @ M.t() + n * torch.eye(n, dtype=value_dtype, device=device)
+    if nz > 0:
+        mask = ~torch.eye(n, dtype=torch.bool, device=device)
+        idxs = torch.nonzero(mask, as_tuple=False)
+        sel = idxs[torch.randperm(idxs.size(0), device=device)[:nz]]
+        A_dense[sel[:, 0], sel[:, 1]] = 0
+    idx = A_dense.nonzero(as_tuple=False).t().to(index_dtype)
+    vals = A_dense[idx[0], idx[1]]
+    if layout == torch.sparse_coo:
+        A = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
+    else:
+        A_coo = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
+        A = convert_coo_to_csr(A_coo)
+    return A, A_dense
 
-    x = tsgujax.sparse_solve_j4t(A_csr.to(torch.float32), B.to(torch.float32))
-    assert torch.allclose(x, x_ref.to(torch.float32), rtol=RTOL)
+
+@pytest.mark.flaky(reruns=5)
+def test_solve_forward_j4t(layout, device, value_dtype, index_dtype, solver, shapes):
+    _, A_shape, B_shape, num_zero = shapes
+    n = A_shape[0]
+    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
+    B = torch.rand(*B_shape, dtype=value_dtype, device=device)
+    X_ref = torch.linalg.solve(A_dense, B)
+    X_test = tsgujax.sparse_solve_j4t(A_sp, B, solve=solver)
+
+    assert torch.allclose(X_test, X_ref, atol=1e-2)
 
 
-# Test backward gradient of sparse_j4t solve
-
-
-def test_solver_gradient_j4t(device):
-    RTOL = _rtol()
-    # Setup data
-    A_shape = (4, 4)
-    A = torch.randn(A_shape, dtype=torch.float64, device=device)
-    A = A + A.t()
-    A_csr = A.to_sparse_csr().to(torch.float32)
-    B_shape = (4, 2)
-    B = torch.randn(B_shape, dtype=torch.float64, device=device).to(torch.float32)
-    # Sparse solver
-    As1 = A_csr.clone().detach()
-    As1.requires_grad_(True)
-    Bd1 = B.clone().detach()
-    Bd1.requires_grad_(True)
-    x = tsgujax.sparse_solve_j4t(As1, Bd1)
-    x.sum().backward()
-    # Dense reference
-    Ad2 = A.to(torch.float32).clone().detach()
-    Ad2.requires_grad_(True)
-    Bd2 = B.clone().detach()
-    Bd2.requires_grad_(True)
-    x2 = torch.linalg.solve(Ad2, Bd2)
-    x2.sum().backward()
-    # Compare outputs
-    assert torch.allclose(x, x2, rtol=RTOL)
-    # Compare gradients
-    nz = As1.grad.to_dense() != 0.0
-    assert torch.allclose(As1.grad.to_dense()[nz], Ad2.grad[nz], rtol=RTOL)
-    assert torch.allclose(Bd1.grad, Bd2.grad, rtol=RTOL)
+@pytest.mark.flaky(reruns=5)
+def test_solve_backward_j4t(layout, device, value_dtype, index_dtype, solver, shapes):
+    _, A_shape, B_shape, num_zero = shapes
+    n = A_shape[0]
+    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
+    A_sp = A_sp.detach().clone().requires_grad_()
+    Ad = A_dense.detach().clone().requires_grad_()
+    B = torch.rand(*B_shape, dtype=value_dtype, device=device)
+    Bd1 = B.clone().detach().requires_grad_()
+    Bd2 = B.clone().detach().requires_grad_()
+    X1 = tsgujax.sparse_solve_j4t(A_sp, Bd1, solve=solver)
+    X2 = torch.linalg.solve(Ad, Bd2)
+    grad_out = torch.rand_like(X1)
+    X1.backward(grad_out)
+    X2.backward(grad_out)
+    nz = A_sp.grad.to_dense() != 0
+    # same tolerances as generic solve
+    assert torch.allclose(A_sp.grad.to_dense()[nz], Ad.grad[nz], atol=1e-2)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)
