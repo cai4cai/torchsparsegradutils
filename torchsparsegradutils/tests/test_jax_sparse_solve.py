@@ -25,7 +25,7 @@ TEST_DATA = [
 INDEX_DTYPES = [torch.int32, torch.int64]
 VALUE_DTYPES = [torch.float32, torch.float64]
 LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
-SOLVERS = [cg, bicgstab]
+SOLVERS = [None, cg, bicgstab]
 
 
 def data_id(d):
@@ -45,7 +45,9 @@ def device_id(device):
 
 
 def solve_id(s):
-    return s.__name__
+    if s:
+        return s.__name__
+    return "default"
 
 
 @pytest.fixture(params=TEST_DATA, ids=lambda d: data_id(d))
