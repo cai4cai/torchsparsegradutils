@@ -4,6 +4,11 @@ import torchsparsegradutils.cupy as tsgucupy
 from torchsparsegradutils.utils import convert_coo_to_csr
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
 
+# TODO: testing different solvers
+# NOTE: I think methods like cg and lsqr are for B being a vector
+# from cupyx.scipy.sparse.linalg import cg, lsqr
+# from scipy.sparse.linalg import minres, lsqr, cg, bicgstab, gmres
+
 # devices
 DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
