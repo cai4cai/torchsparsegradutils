@@ -11,7 +11,7 @@ import warnings
 def j2t(x_jax):
     # Convert a jax array to a torch tensor
     # See https://github.com/lucidrains/jax2torch/blob/main/jax2torch/jax2torch.py
-    x_torch = torch_dlpack.from_dlpack(jax_dlpack.to_dlpack(x_jax))
+    x_torch = torch.from_dlpack(x_jax)
     return x_torch
 
 
@@ -19,7 +19,7 @@ def t2j(x_torch):
     # Convert a torch tensor to a jax array
     # See https://github.com/lucidrains/jax2torch/blob/main/jax2torch/jax2torch.py
     x_torch = x_torch.contiguous()  # https://github.com/google/jax/issues/8082
-    x_jax = jax_dlpack.from_dlpack(torch_dlpack.to_dlpack(x_torch))
+    x_jax = jax_dlpack.from_dlpack(x_torch)
     return x_jax
 
 
@@ -68,6 +68,8 @@ def t2j_coo(x_torch):
     row_j = t2j(x_torch.indices()[0, :])
     col_j = t2j(x_torch.indices()[1, :])
     x_jax = jax.experimental.sparse.COO((data_j, row_j, col_j), shape=x_torch.shape)
+    # ensure indices are sorted to avoid CuSparseEfficiencyWarning on GPU
+    x_jax = x_jax._sort_indices()
     return x_jax
 
 
