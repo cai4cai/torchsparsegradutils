@@ -185,7 +185,7 @@ def main():
     ]
 
     md = df.to_markdown(index=False)
-    out_path = "torchsparsegradutils/tests/benchmark_results_batched_mm.md"
+    out_path = "torchsparsegradutils/benchmarks/batched_sparse_mm_rand_results.md"
     with open(out_path, "w") as f:
         f.write("# Batched sparse_mm vs list-of-unbatched benchmarks\n\n")
         f.write(md)

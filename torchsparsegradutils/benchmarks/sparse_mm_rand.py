@@ -19,8 +19,6 @@ assert torch.cuda.is_available(), "This benchmark requires a CUDA GPU"
 
 REPEATS = 100
 
-# TODO: also be good to test batched matmul, using torch.bmm or torch.stack([torch.sparsse.mm(A, B) for ...])
-
 # problem sizes: (label, N, M, nnz)
 SIZES = [
     ("small", 2_000, 128, 4_000),
@@ -134,7 +132,7 @@ def main():
     mm_group = ["sparse.mm", "sparse_mm", "dense.mm"]
     sub = df[df["algo"].isin(mm_group)]
     md = sub.to_markdown(index=False)
-    out_path = "torchsparsegradutils/tests/benchmark_results_sparse_mm.md"
+    out_path = "torchsparsegradutils/benchmarks/sparse_mm_rand_results.md"
     with open(out_path, "w") as f:
         f.write("# sparse_mm vs torch.sparse.mm vs dense.mm benchmark\n\n")
         f.write(md)
