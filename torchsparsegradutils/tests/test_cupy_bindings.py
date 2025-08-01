@@ -4,6 +4,7 @@ import warnings
 import numpy as np
 import scipy.sparse as nsp
 import torchsparsegradutils.cupy as tsgucupy
+from torchsparsegradutils.utils import rand_sparse
 
 
 # Device fixture
@@ -11,13 +12,30 @@ DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
     DEVICES.append(torch.device("cuda:0"))
 
+INDEX_DTYPES = [torch.int32, torch.int64]
+VALUE_DTYPES = [torch.float32, torch.float64]
+
 
 def _id_device(d):
     return str(d)
 
 
+def _id_dtype(dtype):
+    return str(dtype).split(".")[-1]
+
+
 @pytest.fixture(params=DEVICES, ids=_id_device)
 def device(request):
+    return request.param
+
+
+@pytest.fixture(params=INDEX_DTYPES, ids=_id_dtype)
+def index_dtype(request):
+    return request.param
+
+
+@pytest.fixture(params=VALUE_DTYPES, ids=_id_dtype)
+def value_dtype(request):
     return request.param
 
 
@@ -34,16 +52,23 @@ def _c2n(x_cupy):
 
 # I/O setup fixture
 @pytest.fixture
-def cupy_bindings_io(device):
-    x_shape = (4, 2)
-    x_t = torch.randn(x_shape, dtype=torch.float64, device=device)
-    rng = np.random.default_rng()
-    x_n = rng.standard_normal(x_shape, dtype=np.float64)
+def cupy_bindings_io(device, index_dtype, value_dtype):
+    x_shape = (4, 6)
+    nnz = 8
+    # Use rand_sparse to create a sparse tensor with actual zero values
+    x_t = rand_sparse(
+        x_shape, nnz, torch.sparse_coo, indices_dtype=index_dtype, values_dtype=value_dtype, device=device
+    )
+
     if tsgucupy.have_cupy and device.type == "cuda":
         xp, xsp = cp, csp
     else:
         xp, xsp = np, nsp
-    x_c = xp.asarray(x_n)
+
+    # Convert to dense, then to numpy/cupy for creating sparse matrices
+    x_dense = x_t.to_dense()
+    x_c = xp.asarray(x_dense.cpu().numpy())
+
     return x_t, x_c, xsp
 
 
