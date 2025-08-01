@@ -81,12 +81,8 @@ def run_sparse_mm_benchmark():
 
                             # build random A for matmul
                             A_sparse = rand_sparse(
-                                A_shape, nnz, torch.sparse_coo, indices_dtype=idx_dt, values_dtype=val_dt, device=device
-                            ).coalesce()
-
-                            # Convert to requested layout
-                            if layout == torch.sparse_csr:
-                                A_sparse = A_sparse.to_sparse_csr()
+                                A_shape, nnz, layout, indices_dtype=idx_dt, values_dtype=val_dt, device=device
+                            )
 
                             # run benchmark
                             t_fwd, std_fwd, mem_fwd, std_mem_fwd, t_bwd, std_bwd, mem_bwd, std_mem_bwd = measure_op(
