@@ -1,33 +1,49 @@
 #!/usr/bin/env python3
+"""
+Sparse Matrix Multiplication Benchmark - Random Matrices
+
+This benchmark tests sparse matrix multiplication operations using randomly
+generated sparse matrices of various sizes and sparsity patterns.
+"""
+
 import sys
 import os
 
 # Add the parent directory to sys.path to allow importing torchsparsegradutils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import time
 import torch
 import pandas as pd
-from tqdm import trange
+import numpy as np
+from tqdm import tqdm
 
 from torchsparsegradutils import sparse_mm
 from torchsparsegradutils.utils import rand_sparse
 
-# Only run on CUDA
-device = torch.device("cuda:1")
-assert torch.cuda.is_available(), "This benchmark requires a CUDA GPU"
+from benchmark_utils import (
+    measure_op,
+    print_benchmark_header,
+    print_results_table_header,
+    print_result_row,
+    format_time,
+    save_benchmark_results,
+    REPEATS,
+)
 
-REPEATS = 100
+# Only run on CUDA
+device = torch.device("cuda")
+assert torch.cuda.is_available(), "This benchmark requires a CUDA GPU"
 
 # problem sizes: (label, N, M, nnz)
 SIZES = [
-    ("small", 2_000, 128, 4_000),
-    ("medium", 5_000, 256, 10_000),
-    ("large", 10_000, 512, 20_000),
+    ("small", 2**10, 2**6, 2**12),
+    ("medium", 2**14, 2**8, 2**14),
+    ("large", 2**18, 2**9, 2**16),
 ]
 
 INDEX_DTYPES = [torch.int32, torch.int64]
 VALUE_DTYPES = [torch.float32, torch.float64]
+LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
 ALGORITHMS = [
     ("sparse.mm", lambda A, B: torch.sparse.mm(A, B)),
@@ -36,109 +52,113 @@ ALGORITHMS = [
 ]
 
 
-def measure_op(op, A, B, repeats=REPEATS):
-    """
-    Measure average forward/backward times and peak mem over multiple runs.
-    Returns (avg_fwd_time, max_fwd_mem, avg_bwd_time, max_bwd_mem).
-    """
-    # -- forward timing & memory --
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats(device)
-    torch.cuda.synchronize(device)
-    t0 = time.perf_counter()
-    for _ in trange(repeats, desc="forward repeats", leave=False):
-        A1 = A.detach().clone().requires_grad_(True)
-        B1 = B.detach().clone().requires_grad_(True)
-        op(A1, B1)
-    torch.cuda.synchronize(device)
-    t1 = time.perf_counter()
-    mem_fwd = torch.cuda.max_memory_allocated(device) / 1e6
+def run_sparse_mm_benchmark():
+    """Run the sparse matrix multiplication benchmark suite."""
 
-    # -- backward timing & memory --
-    torch.cuda.reset_peak_memory_stats(device)
-    torch.cuda.synchronize(device)
-    t2 = time.perf_counter()
-    for _ in trange(repeats, desc="backward repeats", leave=False):
-        A1 = A.detach().clone().requires_grad_(True)
-        B1 = B.detach().clone().requires_grad_(True)
-        out = op(A1, B1)
-        out.sum().backward()
-    torch.cuda.synchronize(device)
-    t3 = time.perf_counter()
-    mem_bwd = torch.cuda.max_memory_allocated(device) / 1e6
+    print_benchmark_header("Sparse Matrix Multiplication Benchmark - Random Matrices")
 
-    avg_fwd = (t1 - t0) / repeats
-    avg_bwd = (t3 - t2) / repeats
-    return avg_fwd, mem_fwd, avg_bwd, mem_bwd
-
-
-def main():
     records = []
-    for size_label, N, M, nnz in SIZES:
+
+    for size_label, N, M, nnz in tqdm(SIZES, desc="Problem sizes"):
+        print(f"\n🔍 Testing size: {size_label} (N={N}, M={M}, nnz={nnz})")
+
         A_shape = (N, N)
         B_shape = (N, M)
 
-        for idx_dt in INDEX_DTYPES:
-            for val_dt in VALUE_DTYPES:
-                B = torch.randn(B_shape, dtype=val_dt, device=device)
+        for idx_dt in tqdm(INDEX_DTYPES, desc="Index dtypes", leave=False):
+            for val_dt in tqdm(VALUE_DTYPES, desc="Value dtypes", leave=False):
+                for layout in tqdm(LAYOUTS, desc="Layouts", leave=False):
+                    layout_name = "coo" if layout == torch.sparse_coo else "csr"
+                    print(f"\n  📊 Configuration: idx_dtype={idx_dt}, val_dtype={val_dt}, layout={layout_name}")
 
-                for alg_name, alg_fn in ALGORITHMS:
-                    # build random A for matmul
-                    A_coo = rand_sparse(
-                        A_shape, nnz, torch.sparse_coo, indices_dtype=idx_dt, values_dtype=val_dt, device=device
-                    ).coalesce()
-                    A_csr = A_coo.to_sparse_csr()
+                    B = torch.randn(B_shape, dtype=val_dt, device=device)
 
-                    for layout_name, A in [("coo", A_coo), ("csr", A_csr)]:
-                        # run
-                        t_fwd, mem_fwd, t_bwd, mem_bwd = measure_op(alg_fn, A, B)
-                        records.append(
-                            {
-                                "size": size_label,
-                                "layout": layout_name,
-                                "algo": alg_name,
-                                "index_dt": str(idx_dt).split(".")[-1],
-                                "value_dt": str(val_dt).split(".")[-1],
-                                "N": N,
-                                "M": M,
-                                "nnz": nnz,
-                                "fwd_time_s": f"{t_fwd:.3f}",
-                                "fwd_mem_MB": f"{mem_fwd:.1f}",
-                                "bwd_time_s": f"{t_bwd:.3f}",
-                                "bwd_mem_MB": f"{mem_bwd:.1f}",
-                            }
-                        )
+                    print_results_table_header()
 
-    df = pd.DataFrame.from_records(records)
-    # reorder columns for clarity
-    df = df[
-        [
-            "size",
-            "layout",
-            "algo",
-            "index_dt",
-            "value_dt",
-            "N",
-            "M",
-            "nnz",
-            "fwd_time_s",
-            "fwd_mem_MB",
-            "bwd_time_s",
-            "bwd_mem_MB",
-        ]
-    ]
+                    for alg_name, alg_fn in ALGORITHMS:
+                        try:
+                            print(f"    🧮 Testing {alg_name} ({layout_name})...")
 
-    # write only the mat-mul results
-    mm_group = ["sparse.mm", "sparse_mm", "dense.mm"]
-    sub = df[df["algo"].isin(mm_group)]
-    md = sub.to_markdown(index=False)
-    out_path = "torchsparsegradutils/benchmarks/sparse_mm_rand_results.md"
-    with open(out_path, "w") as f:
-        f.write("# sparse_mm vs torch.sparse.mm vs dense.mm benchmark\n\n")
-        f.write(md)
-        f.write("\n")
-    print(f"Written results to {out_path}")
+                            # build random A for matmul
+                            A_sparse = rand_sparse(
+                                A_shape, nnz, torch.sparse_coo, indices_dtype=idx_dt, values_dtype=val_dt, device=device
+                            ).coalesce()
+
+                            # Convert to requested layout
+                            if layout == torch.sparse_csr:
+                                A_sparse = A_sparse.to_sparse_csr()
+
+                            # run benchmark
+                            t_fwd, std_fwd, mem_fwd, std_mem_fwd, t_bwd, std_bwd, mem_bwd, std_mem_bwd = measure_op(
+                                alg_fn, A_sparse, B, repeats=REPEATS, device=device, desc=f"{alg_name} ({layout_name})"
+                            )
+
+                            # Print result
+                            print_result_row(
+                                f"{alg_name} ({layout_name})",
+                                (N, M),
+                                t_fwd,
+                                std_fwd,
+                                mem_fwd,
+                                std_mem_fwd,
+                                t_bwd,
+                                std_bwd,
+                                mem_bwd,
+                                std_mem_bwd,
+                            )
+
+                            records.append(
+                                {
+                                    "size": size_label,
+                                    "layout": layout_name,
+                                    "algo": alg_name,
+                                    "index_dt": str(idx_dt).split(".")[-1],
+                                    "value_dt": str(val_dt).split(".")[-1],
+                                    "N": N,
+                                    "M": M,
+                                    "nnz": nnz,
+                                    "fwd_time_us": t_fwd,
+                                    "fwd_time_std_us": std_fwd,
+                                    "fwd_mem_MB": mem_fwd,
+                                    "fwd_mem_std_MB": std_mem_fwd,
+                                    "bwd_time_us": t_bwd,
+                                    "bwd_time_std_us": std_bwd,
+                                    "bwd_mem_MB": mem_bwd,
+                                    "bwd_mem_std_MB": std_mem_bwd,
+                                }
+                            )
+
+                        except Exception as e:
+                            print(f"    ❌ {alg_name} ({layout_name}) failed: {e}")
+
+                            records.append(
+                                {
+                                    "size": size_label,
+                                    "layout": layout_name,
+                                    "algo": alg_name,
+                                    "index_dt": str(idx_dt).split(".")[-1],
+                                    "value_dt": str(val_dt).split(".")[-1],
+                                    "N": N,
+                                    "M": M,
+                                    "nnz": nnz,
+                                    "fwd_time_us": np.nan,
+                                    "fwd_time_std_us": np.nan,
+                                    "fwd_mem_MB": np.nan,
+                                    "fwd_mem_std_MB": np.nan,
+                                    "bwd_time_us": np.nan,
+                                    "bwd_time_std_us": np.nan,
+                                    "bwd_mem_MB": np.nan,
+                                    "bwd_mem_std_MB": np.nan,
+                                    "error": str(e),
+                                }
+                            )
+
+    # Save results
+    if records:
+        save_benchmark_results(records, "sparse_mm_rand")
+
+    print("\n✅ Sparse matrix multiplication benchmark completed!")
 
 
 if __name__ == "__main__":
-    main()
+    run_sparse_mm_benchmark()
