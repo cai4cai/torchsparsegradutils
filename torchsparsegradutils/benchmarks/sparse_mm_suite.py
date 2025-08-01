@@ -87,7 +87,14 @@ def run_sparse_mm_suite_benchmark():
 
                         # Measure performance
                         t_fwd, std_fwd, mem_fwd, std_mem_fwd, t_bwd, std_bwd, mem_bwd, std_mem_bwd = measure_op(
-                            alg_fn, A_sparse, B, repeats=REPEATS, device=device, desc=alg_name
+                            alg_fn,
+                            A_sparse,
+                            B,
+                            repeats=REPEATS,
+                            device=device,
+                            desc=alg_name,
+                            warmup_runs=10,
+                            remove_outliers=True,
                         )
 
                         # Print result

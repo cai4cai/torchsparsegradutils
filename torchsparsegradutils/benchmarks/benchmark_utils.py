@@ -118,9 +118,11 @@ def _parse_oom(e):
     return 0.0
 
 
-def measure_op(op, A, B, repeats=REPEATS, device=None, backward=True, desc="operation"):
+def measure_op(
+    op, A, B, repeats=REPEATS, device=None, backward=True, desc="operation", warmup_runs=5, remove_outliers=True
+):
     """
-    Measure average forward/backward times and peak memory over multiple runs.
+    Measure average forward/backward times and peak memory over multiple runs with improved accuracy.
 
     Args:
         op (callable): Operation to measure, should take (A, B) as arguments
@@ -130,6 +132,8 @@ def measure_op(op, A, B, repeats=REPEATS, device=None, backward=True, desc="oper
         device (torch.device): CUDA device to use for memory measurements
         backward (bool): Whether to measure backward pass
         desc (str): Description for progress bar
+        warmup_runs (int): Number of warmup runs to discard
+        remove_outliers (bool): Whether to remove statistical outliers
 
     Returns:
         tuple: (avg_fwd_time_us, std_fwd_time_us, max_fwd_mem_mb, std_fwd_mem_mb,
@@ -139,28 +143,66 @@ def measure_op(op, A, B, repeats=REPEATS, device=None, backward=True, desc="oper
     if device is None:
         device = A.device if hasattr(A, "device") else torch.device("cuda")
 
+    def remove_outliers_iqr(data):
+        """Remove outliers using IQR method"""
+        if len(data) < 4:
+            return data
+        q1 = np.percentile(data, 25)
+        q3 = np.percentile(data, 75)
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        return [x for x in data if lower_bound <= x <= upper_bound]
+
     # -- Forward timing & memory --
     try:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(device)
         torch.cuda.synchronize(device)
 
+        # Warmup runs
+        for _ in range(warmup_runs):
+            torch.cuda.reset_peak_memory_stats(device)
+            torch.cuda.synchronize(device)
+
+            A1 = A.detach().clone()
+            B1 = B.detach().clone()
+            result = op(A1, B1)
+
+            torch.cuda.synchronize(device)
+            del result, A1, B1  # Explicit cleanup
+
         fwd_times = []
         fwd_mems = []
 
         for _ in trange(repeats, desc=f"{desc} (forward)", leave=False):
+            # Clear cache and reset memory stats before each run
+            torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats(device)
             torch.cuda.synchronize(device)
 
             t0 = time.perf_counter()
             A1 = A.detach().clone().requires_grad_(True)
             B1 = B.detach().clone().requires_grad_(True)
-            op(A1, B1)
+            result = op(A1, B1)
             torch.cuda.synchronize(device)
             t1 = time.perf_counter()
 
             fwd_times.append((t1 - t0) * 1e6)  # Convert to microseconds
             fwd_mems.append(torch.cuda.max_memory_allocated(device) / 1e6)  # Convert to MB
+
+            # Clean up
+            del result, A1, B1
+
+        # Remove outliers if requested
+        if remove_outliers and len(fwd_times) >= 4:
+            fwd_times_clean = remove_outliers_iqr(fwd_times)
+            fwd_mems_clean = remove_outliers_iqr(fwd_mems)
+
+            # Only use cleaned data if we have enough points
+            if len(fwd_times_clean) >= max(3, len(fwd_times) // 2):
+                fwd_times = fwd_times_clean
+                fwd_mems = fwd_mems_clean
 
         avg_fwd = np.mean(fwd_times)
         std_fwd = np.std(fwd_times)
@@ -178,13 +220,28 @@ def measure_op(op, A, B, repeats=REPEATS, device=None, backward=True, desc="oper
 
     # -- Backward timing & memory --
     try:
+        torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(device)
         torch.cuda.synchronize(device)
+
+        # Warmup runs for backward pass
+        for _ in range(warmup_runs):
+            torch.cuda.reset_peak_memory_stats(device)
+            torch.cuda.synchronize(device)
+
+            A1 = A.detach().clone().requires_grad_(True)
+            B1 = B.detach().clone().requires_grad_(True)
+            out = op(A1, B1)
+            out.sum().backward()
+
+            torch.cuda.synchronize(device)
+            del out, A1, B1
 
         bwd_times = []
         bwd_mems = []
 
         for _ in trange(repeats, desc=f"{desc} (backward)", leave=False):
+            torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats(device)
             torch.cuda.synchronize(device)
 
@@ -198,6 +255,18 @@ def measure_op(op, A, B, repeats=REPEATS, device=None, backward=True, desc="oper
 
             bwd_times.append((t1 - t0) * 1e6)  # Convert to microseconds
             bwd_mems.append(torch.cuda.max_memory_allocated(device) / 1e6)  # Convert to MB
+
+            # Clean up
+            del out, A1, B1
+
+        # Remove outliers if requested
+        if remove_outliers and len(bwd_times) >= 4:
+            bwd_times_clean = remove_outliers_iqr(bwd_times)
+            bwd_mems_clean = remove_outliers_iqr(bwd_mems)
+
+            if len(bwd_times_clean) >= max(3, len(bwd_times) // 2):
+                bwd_times = bwd_times_clean
+                bwd_mems = bwd_mems_clean
 
         avg_bwd = np.mean(bwd_times)
         std_bwd = np.std(bwd_times)
