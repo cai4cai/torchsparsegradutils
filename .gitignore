@@ -130,3 +130,6 @@ dmypy.json
 
 # VScode
 .vscode/
+
+# Benchmark data
+torchsparsegradutils/benchmarks/.benchmark_data/
