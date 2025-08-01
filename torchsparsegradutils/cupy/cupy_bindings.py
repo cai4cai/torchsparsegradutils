@@ -40,7 +40,7 @@ def t2c_csr(x_torch):
     data_c = xp.asarray(x_torch.values())
     col_idx_c = xp.asarray(x_torch.col_indices())
     ind_ptr_c = xp.asarray(x_torch.crow_indices())
-    x_cupy = xsp.csr_matrix((data_c, col_idx_c, ind_ptr_c))
+    x_cupy = xsp.csr_matrix((data_c, col_idx_c, ind_ptr_c), shape=x_torch.shape)
     return x_cupy
 
 
@@ -64,7 +64,7 @@ def t2c_coo(x_torch):
         x_torch = x_torch.coalesce()
     data_c = xp.asarray(x_torch.values())
     idx_cp = xp.asarray(x_torch.indices())
-    x_cupy = xsp.coo_matrix((data_c, idx_cp))
+    x_cupy = xsp.coo_matrix((data_c, idx_cp), shape=x_torch.shape)
     return x_cupy
 
 
