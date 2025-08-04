@@ -37,6 +37,10 @@ class SparseSolveC4T(torch.autograd.Function):
             ctx.factorisedsolver = xsp.linalg.factorized(A_c)
             x_c = ctx.factorisedsolver(B_c)
 
+        if isinstance(x_c, tuple):
+            # If the solver returns a tuple, we assume the first element is the solution
+            x_c = x_c[0]
+
         x = torch.as_tensor(x_c, device=A.device)
 
         if (B.ndim == 2) and (x.ndim == 1):
@@ -67,6 +71,10 @@ class SparseSolveC4T(torch.autograd.Function):
         else:
             # Re-use factorised solver from forward pass
             gradB_c = ctx.factorisedsolver(grad_c, trans="T")
+
+        if isinstance(gradB_c, tuple):
+            # If the solver returns a tuple, we assume the first element is the gradient
+            gradB_c = gradB_c[0]
 
         gradB = torch.as_tensor(gradB_c, device=A.device)
 
