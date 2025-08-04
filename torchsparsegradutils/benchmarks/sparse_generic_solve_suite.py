@@ -1,205 +1,189 @@
 #!/usr/bin/env python3
+"""
+Sparse Generic Solve Benchmark - SuiteSparse Collection
+
+This benchmark tests sparse linear solve operations using matrices from
+the SuiteSparse Matrix Collection. It compares different iterative solvers
+for solving linear systems Ax = B where A is sparse.
+"""
+
 import sys
 import os
 
 # add project root for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import time
 import torch
 import pandas as pd
 import numpy as np
-import scipy.io
-import scipy.sparse
-import urllib
-import tarfile
-import re
+from tqdm import tqdm
 
 from torchsparsegradutils.sparse_solve import sparse_generic_solve
 from torchsparsegradutils.utils import convert_coo_to_csr, linear_cg, bicgstab, minres
 from jax.scipy.sparse.linalg import cg as cg_jax, bicgstab as bicgstab_jax
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
-from cupyx.scipy.sparse.linalg._solve import spsolve_triangular
+from cupyx.scipy.sparse.linalg._solve import lsqr as lsqr_cu, minres as minres_cu, spsolve as spsolve_cu
 import torchsparsegradutils.jax as tsgujax
 
+from benchmark_utils import (
+    load_mat_from_suitesparse_collection,
+    measure_op,
+    print_benchmark_header,
+    print_results_table_header,
+    print_result_row,
+    format_time,
+    format_memory,
+    save_benchmark_results,
+)
+
+M = 1  # number of columns in B
+REPEATS = 1
+WARMUP_RUNS = 0
 # Only run on CUDA
-device = torch.device("cuda:1")
+device = torch.device("cuda")
 assert torch.cuda.is_available(), "This benchmark requires a CUDA GPU"
 
-REPEATS = 1
-BACKWARD = True
+INDEX_DTYPES = [torch.int32, torch.int64]
+VALUE_DTYPES = [torch.float32, torch.float64]
+LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
-INDEX_DTYPES = [torch.int32]  # , torch.int64
-VALUE_DTYPES = [torch.float32]  # , torch.float64
+# BUG: Sometimes I am getting: Backward OOM: attempted 36373575.7 MiB. Not sure what is causing this.
+
 ALGORITHMS = [
-    # ("dense.solve", lambda A, B: torch.linalg.solve(A.to_dense(), B)),  # requires ~64GB VRAM for forward
-    ("sparse generic cg", lambda A, B: sparse_generic_solve(A, B, solve=linear_cg)),  # requires ~35TB for backward
-    ("sparse generic bicgstab", lambda A, B: sparse_generic_solve(A, B, solve=bicgstab)),  # requires ~35TB for backward
-    ("sparse generic minres", lambda A, B: sparse_generic_solve(A, B, solve=minres)),  # requires ~35TB for backward
-    # ("cupy default", lambda A, B: sparse_solve_c4t(A, B)),  # requires ~35TB for backward  # BUG: cupy_backends.cuda.libs.cusolver.CUSOLVERError: CUSOLVER_STATUS_ALLOC_FAILED
-    ("jax default", lambda A, B: tsgujax.sparse_solve_j4t(A, B)),  # requires ~35TB for backward
-    ("jax cg", lambda A, B: tsgujax.sparse_solve_j4t(A, B, solve=cg_jax)),  # requires ~35TB for backward
-    ("jax bicgstab", lambda A, B: tsgujax.sparse_solve_j4t(A, B, solve=bicgstab_jax)),  # requires ~35TB for backward
+    ("dense.solve", lambda A, B: torch.linalg.solve(A.to_dense(), B)),
+    ("sparse_generic_cg", lambda A, B: sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg)),
+    ("sparse_generic_bicgstab", lambda A, B: sparse_generic_solve(A, B, solve=bicgstab, transpose_solve=bicgstab)),
+    ("sparse_generic_minres", lambda A, B: sparse_generic_solve(A, B, solve=minres, transpose_solve=minres)),
+    ("cupy_spsolve", lambda A, B: sparse_solve_c4t(A, B, solve=spsolve_cu, transpose_solve=spsolve_cu)),
+    ("cupy_lsqr", lambda A, B: sparse_solve_c4t(A, B, solve=lsqr_cu, transpose_solve=lsqr_cu)),
+    ("cupy_minres", lambda A, B: sparse_solve_c4t(A, B, solve=minres_cu, transpose_solve=minres_cu)),
+    ("jax_default", lambda A, B: tsgujax.sparse_solve_j4t(A, B)),
+    ("jax_cg", lambda A, B: tsgujax.sparse_solve_j4t(A, B, solve=cg_jax, transpose_solve=cg_jax)),
+    ("jax_bicgstab", lambda A, B: tsgujax.sparse_solve_j4t(A, B, solve=bicgstab_jax, transpose_solve=bicgstab_jax)),
 ]
 
 
-# -- load SuiteSparse matrix once --
-def load_mat_from_suitesparse_collection(dirname, matname):
-    # eg: https://suitesparse-collection-website.herokuapp.com/Rothberg/cfd2
-    base_url = "https://suitesparse-collection-website.herokuapp.com/MM/"
-    url = base_url + dirname + "/" + matname + ".tar.gz"
-    compressed = matname + ".tar.gz"
-    if not os.path.exists(compressed):
-        print(f"Downloading {url}")
-        urllib.request.urlretrieve(url, filename=compressed)
-    folder = "./" + matname
-    localfile = f"{folder}/{matname}.mtx"
-    if not os.path.exists(localfile):
-        print(f"Extracting {compressed}")
-        with tarfile.open(compressed) as tf:
-            tf.extractall("./")
-    A_np_coo = scipy.io.mmread(localfile)
-    print(f"Loaded suitesparse matrix {dirname}/{matname}: shape={A_np_coo.shape}")
-    return A_np_coo
+def run_sparse_solve_benchmark():
+    """Run the sparse solve benchmark suite with SuiteSparse matrices."""
 
+    print_benchmark_header("Sparse Generic Solve Benchmark - SuiteSparse Collection")
 
-def make_spd_sparse(n, layout, value_dtype, index_dtype, device):
-    # ...existing code from tests...
-    M = torch.randn(n, n, dtype=value_dtype, device=device)
-    A_dense = M @ M.t() + n * torch.eye(n, dtype=value_dtype, device=device)
-    idx = A_dense.nonzero(as_tuple=False).t().to(index_dtype)
-    vals = A_dense[idx[0], idx[1]].clone()
-    if layout == torch.sparse_coo:
-        A = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
-    else:
-        A_coo = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
-        A = convert_coo_to_csr(A_coo)
-    return A, A_dense
-
-
-# helper to extract attempted allocation (in MiB) from OOM message
-def _parse_oom(e):
-    msg = str(e)
-    m = re.search(r"Tried to allocate ([\d\.]+) GiB", msg)
-    if m:
-        return float(m.group(1)) * 1024.0
-    m = re.search(r"Tried to allocate ([\d\.]+) MiB", msg)
-    if m:
-        return float(m.group(1))
-    return 0.0
-
-
-def measure_op(op, A, B, repeats=REPEATS):
-    # -- forward timing & memory --
-    try:
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats(device)
-        torch.cuda.synchronize(device)
-        t0 = time.perf_counter()
-        for _ in range(repeats):
-            A1 = A.detach().clone().requires_grad_(True)
-            B1 = B.detach().clone().requires_grad_(True)
-            op(A1, B1)
-        torch.cuda.synchronize(device)
-        t1 = time.perf_counter()
-        avg_fwd = (t1 - t0) / repeats
-        mem_fwd = torch.cuda.max_memory_allocated(device) / 1e6
-    except torch.cuda.OutOfMemoryError as e:
-        # forward OOM: record attempted alloc and skip backward
-        mem_attempt = _parse_oom(e)
-        return 0.0, mem_attempt, 0.0, 0.0
-
-    if not BACKWARD:
-        return avg_fwd, mem_fwd, 0.0, 0.0
-
-    # -- backward timing & memory --
-    try:
-        torch.cuda.reset_peak_memory_stats(device)
-        torch.cuda.synchronize(device)
-        t2 = time.perf_counter()
-        for _ in range(repeats):
-            A1 = A.detach().clone().requires_grad_(True)
-            B1 = B.detach().clone().requires_grad_(True)
-            out = op(A1, B1)
-            out.sum().backward()
-        torch.cuda.synchronize(device)
-        t3 = time.perf_counter()
-        avg_bwd = (t3 - t2) / repeats
-        mem_bwd = torch.cuda.max_memory_allocated(device) / 1e6
-    except torch.cuda.OutOfMemoryError as e:
-        # backward OOM: record attempted alloc
-        mem_attempt = _parse_oom(e)
-        return avg_fwd, mem_fwd, 0.0, mem_attempt
-
-    return avg_fwd, mem_fwd, avg_bwd, mem_bwd
-
-
-def main():
-
+    # Load the same sparse matrix as other benchmarks
     A_np_coo = load_mat_from_suitesparse_collection("Rothberg", "cfd2")
     N = A_np_coo.shape[0]
 
+    print(f"📊 Matrix: Rothberg/cfd2, shape={A_np_coo.shape}, nnz={A_np_coo.nnz}")
+
     records = []
-    # reuse the loaded matrix, build sparse tensors per dtype/layout
-    b_np = np.random.randn(N)
-    for idx_dt in INDEX_DTYPES:
-        for val_dt in VALUE_DTYPES:
-            # build torch COO and CSR from A_np_coo using raw row/col to match data
-            row = A_np_coo.row
-            col = A_np_coo.col
-            idx = torch.stack(
-                [
-                    torch.as_tensor(row, dtype=idx_dt, device=device),
-                    torch.as_tensor(col, dtype=idx_dt, device=device),
-                ],
-                dim=0,
-            )
-            vals = torch.as_tensor(A_np_coo.data, dtype=val_dt, device=device)
 
-            A_coo = torch.sparse_coo_tensor(idx, vals, (N, N), dtype=val_dt, device=device).coalesce()
-            A_csr = A_coo.to_sparse_csr()
+    # Build and test for each dtype and layout
+    for idx_dt in tqdm(INDEX_DTYPES, desc="Index dtypes"):
+        for val_dt in tqdm(VALUE_DTYPES, desc="Value dtypes", leave=False):
+            for layout in tqdm(LAYOUTS, desc="Layouts", leave=False):
+                layout_name = "coo" if layout == torch.sparse_coo else "csr"
+                print(f"\n🔍 Testing configuration: idx_dtype={idx_dt}, val_dtype={val_dt}, layout={layout_name}")
 
-            B = torch.from_numpy(b_np).to(dtype=val_dt, device=device)
-            for layout_name, A in [("coo", A_coo), ("csr", A_csr)]:
+                # Convert matrix to torch sparse tensor - optimize tensor creation
+                # Use numpy.stack to avoid the slow list-to-tensor conversion
+                indices_np = np.stack([A_np_coo.row, A_np_coo.col], axis=0)
+                indices = torch.from_numpy(indices_np).to(dtype=idx_dt, device=device)
+                values = torch.from_numpy(A_np_coo.data).to(dtype=val_dt, device=device)
+                A_sparse = torch.sparse_coo_tensor(
+                    indices, values, A_np_coo.shape, dtype=val_dt, device=device
+                ).coalesce()
+
+                # Convert to requested layout
+                if layout == torch.sparse_csr:
+                    A_sparse = A_sparse.to_sparse_csr()
+
+                print_results_table_header()
+
                 for alg_name, alg_fn in ALGORITHMS:
-                    print(f" Testing index_dt={idx_dt}, value_dt={val_dt} layout={layout_name}, algo={alg_name}")
-                    t_fwd, mem_fwd, t_bwd, mem_bwd = measure_op(alg_fn, A, B)
-                    records.append(
-                        {
-                            "layout": layout_name,
-                            "algo": alg_name,
-                            "index_dt": str(idx_dt).split(".")[-1],
-                            "value_dt": str(val_dt).split(".")[-1],
-                            "N": N,
-                            "fwd_time_s": f"{t_fwd:.3f}",
-                            "fwd_mem_MB": f"{mem_fwd:.1f}",
-                            "bwd_time_s": f"{t_bwd:.3f}",
-                            "bwd_mem_MB": f"{mem_bwd:.1f}",
-                        }
-                    )
+                    try:
+                        print(f"  🧮 Testing {alg_name}...")
 
-    df = pd.DataFrame.from_records(records)
-    # changed: only select columns that were actually recorded
-    df = df[
-        [
-            "layout",
-            "algo",
-            "index_dt",
-            "value_dt",
-            "N",
-            "fwd_time_s",
-            "fwd_mem_MB",
-            "bwd_time_s",
-            "bwd_mem_MB",
-        ]
-    ]
-    out_path = "torchsparsegradutils/tests/benchmark_results_sparse_solve.md"
-    with open(out_path, "w") as f:
-        f.write("# Sparse solve methods benchmark\n\n")
-        f.write(df.to_markdown(index=False))
-        f.write("\n")
-    print(f"Written results to {out_path}")
+                        # Right-hand side matrix B
+                        B = torch.randn(N, M, dtype=val_dt, device=device, requires_grad=True)
+                        B = B.squeeze(-1)  # Ensure B is 1D for M = 1
+
+                        # Measure performance
+                        t_fwd, std_fwd, mem_fwd, std_mem_fwd, t_bwd, std_bwd, mem_bwd, std_mem_bwd = measure_op(
+                            alg_fn,
+                            A_sparse,
+                            B,
+                            repeats=REPEATS,
+                            device=device,
+                            desc=alg_name,
+                            warmup_runs=WARMUP_RUNS,
+                            remove_outliers=True,
+                        )
+
+                        # Calculate residual norm for solution accuracy
+                        with torch.no_grad():
+                            x = alg_fn(A_sparse, B)
+                            residual = A_sparse @ x - B
+                            resnorm = torch.norm(residual).cpu().item()
+
+                        # Print result with residual norm
+                        print_result_row(
+                            alg_name, (N, M), t_fwd, std_fwd, mem_fwd, std_mem_fwd, t_bwd, std_bwd, mem_bwd, std_mem_bwd
+                        )
+                        print(f"    📐 Residual norm: {resnorm:.2e}")
+
+                        records.append(
+                            {
+                                "matrix": "Rothberg/cfd2",
+                                "N": N,
+                                "M": M,
+                                "nnz": A_np_coo.nnz,
+                                "index_dt": str(idx_dt).split(".")[-1],
+                                "value_dt": str(val_dt).split(".")[-1],
+                                "layout": layout_name,
+                                "algorithm": alg_name,
+                                "fwd_time_us": t_fwd,
+                                "fwd_time_std_us": std_fwd,
+                                "fwd_mem_MB": mem_fwd,
+                                "fwd_mem_std_MB": std_mem_fwd,
+                                "bwd_time_us": t_bwd,
+                                "bwd_time_std_us": std_bwd,
+                                "bwd_mem_MB": mem_bwd,
+                                "bwd_mem_std_MB": std_mem_bwd,
+                                "resnorm": resnorm,
+                            }
+                        )
+
+                    except Exception as e:
+                        print(f"  ❌ {alg_name} failed: {e}")
+
+                        records.append(
+                            {
+                                "matrix": "Rothberg/cfd2",
+                                "N": N,
+                                "M": M,
+                                "nnz": A_np_coo.nnz,
+                                "index_dt": str(idx_dt).split(".")[-1],
+                                "value_dt": str(val_dt).split(".")[-1],
+                                "layout": layout_name,
+                                "algorithm": alg_name,
+                                "fwd_time_us": np.nan,
+                                "fwd_time_std_us": np.nan,
+                                "fwd_mem_MB": np.nan,
+                                "fwd_mem_std_MB": np.nan,
+                                "bwd_time_us": np.nan,
+                                "bwd_time_std_us": np.nan,
+                                "bwd_mem_MB": np.nan,
+                                "bwd_mem_std_MB": np.nan,
+                                "error": str(e)[:100],
+                                "resnorm": np.nan,
+                            }
+                        )
+
+    # Save results
+    if records:
+        save_benchmark_results(records, "sparse_generic_solve_suite")
+
+    print("\n✅ Sparse generic solve benchmark completed!")
 
 
 if __name__ == "__main__":
-    main()
+    run_sparse_solve_benchmark()

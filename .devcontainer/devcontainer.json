@@ -44,7 +44,8 @@
                 "mhutchie.git-graph",
                 "waderyan.gitblame",
                 "ms-python.black-formatter",
-                "ms-python.flake8"
+                "ms-python.flake8",
+                "ReprEng.csv"
             ]
         }
     },
