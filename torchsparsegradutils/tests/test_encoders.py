@@ -3,6 +3,7 @@ import torch
 import json
 import yaml
 import os
+import warnings
 from pathlib import Path
 from ast import literal_eval
 
@@ -12,8 +13,12 @@ from operator import mul
 from torchsparsegradutils.encoders.pairwise_voxel_encoder import (
     _trim_nd,
     _gen_coords,
+    _gen_coords_nd,
     _gen_offsets,
+    _gen_offsets_nd,
     calc_pariwise_coo_indices,
+    calc_pairwise_coo_indices_nd,
+    PairwiseEncoder,
     PairwiseVoxelEncoder,
 )
 from torchsparsegradutils.utils.utils import _sort_coo_indices
@@ -332,7 +337,6 @@ def test_PVE_init():
         (1.0, (4, 5, 5, 5, 5, 5), torch.sparse_coo, torch.int64, ValueError),  # volume shape with too many dimensions
         (1.0, (4, 5, 5, 5), torch.sparse_coo, torch.float32, ValueError),  # indices_dtype is a float
         (1.0, (4, 5, 5, 5), torch.sparse_coo, torch.bool, ValueError),  # indices_dtype is bool
-        (1.0, (4, 5, 5, 5), torch.sparse_coo, torch.int32, ValueError),  # int32 is not allowed with COO layout
     ],
 )
 def test_PVE_init_invalid_inputs(radius, volume_shape, layout, indices_dtype, expected_error):
@@ -372,8 +376,6 @@ def test_PVE_call_invalid_inputs(values, expected_error):
 
 
 def test_PVE_dtype_device(batch_size, layout, indices_dtype, values_dtype, device):
-    if (indices_dtype == torch.int32) and (layout == torch.sparse_coo):
-        pytest.skip("Sparse COO with int32 indices is not supported")
 
     encoder = PairwiseVoxelEncoder(
         radius=1.0,
@@ -649,7 +651,7 @@ def test_pariwise_coo_indices_visually():
 
         # Adjust spacing between subplots and save figure
         plt.tight_layout()
-        plt.savefig(f"sparse_encodings_radius_{radius}.png")
+        plt.savefig(f"torchsparsegradutils/tests/test_outputs/sparse_encodings_radius_{radius}.png")
 
         # Create separate figure for the legend
         legend_elements = [
@@ -658,4 +660,129 @@ def test_pariwise_coo_indices_visually():
         fig_legend = plt.figure(figsize=(3, 8))
         plt.legend(handles=legend_elements, loc="center")
         plt.axis("off")
-        fig_legend.savefig(f"legend_radius_{radius}.png")
+        fig_legend.savefig(f"torchsparsegradutils/tests/test_outputs/legend_radius_{radius}.png")
+
+
+# Tests for N-dimensional functionality
+
+
+# Test 1D case
+def test_gen_coords_nd_1d():
+    coords = _gen_coords_nd(1.5, 1)
+    expected = {(-1,), (1,)}
+    assert coords == expected
+
+
+def test_gen_coords_nd_2d():
+    coords = _gen_coords_nd(1.5, 2)
+    expected = {(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)}
+    assert coords == expected
+
+
+def test_gen_coords_nd_3d_consistency():
+    # Test that 3D case matches the original function
+    coords_nd = _gen_coords_nd(1.5, 3)
+    coords_original = _gen_coords(1.5)
+    assert coords_nd == coords_original
+
+
+def test_gen_offsets_nd_consistency():
+    # Test that ND version matches original for 3D case
+    offsets_nd = _gen_offsets_nd(1.5, 3, None, 2, "indep")
+    offsets_original = _gen_offsets(1.5, None, 2, "indep")
+    assert offsets_nd == offsets_original
+
+
+def test_calc_pairwise_coo_indices_nd_2d():
+    # Test basic 2D functionality
+    volume_shape = (2, 3, 3)  # (C, H, W)
+    indices_dict = calc_pairwise_coo_indices_nd(1.0, volume_shape, diag=True)
+
+    # Should have diagonal and 4 spatial neighbors for 2D
+    assert (0, 0, 0) in indices_dict  # diagonal
+    assert (0, -1, 0) in indices_dict  # up
+    assert (0, 1, 0) in indices_dict  # down
+    assert (0, 0, -1) in indices_dict  # left
+    assert (0, 0, 1) in indices_dict  # right
+
+
+def test_PairwiseEncoder_2d():
+    # Test PairwiseEncoder with 2D spatial
+    volume_shape = (2, 4, 4)  # (C, H, W)
+    encoder = PairwiseEncoder(1.0, volume_shape, diag=True)
+
+    num_offsets = len(encoder.offsets)
+    values = torch.randn(num_offsets, 2, 4, 4)
+
+    sparse_matrix = encoder(values)
+    expected_size = (2 * 4 * 4, 2 * 4 * 4)
+    assert sparse_matrix.size() == expected_size
+
+
+def test_PairwiseEncoder_1d():
+    # Test PairwiseEncoder with 1D spatial
+    volume_shape = (3, 5)  # (C, L)
+    encoder = PairwiseEncoder(1.0, volume_shape, diag=True)
+
+    num_offsets = len(encoder.offsets)
+    values = torch.randn(num_offsets, 3, 5)
+
+    sparse_matrix = encoder(values)
+    expected_size = (3 * 5, 3 * 5)
+    assert sparse_matrix.size() == expected_size
+
+
+def test_PairwiseVoxelEncoder_deprecation_warning():
+    # Test that PairwiseVoxelEncoder issues deprecation warning
+    with pytest.warns(DeprecationWarning, match="PairwiseVoxelEncoder is deprecated"):
+        _ = PairwiseVoxelEncoder(1.0, (2, 3, 3, 3))
+
+
+def test_PairwiseVoxelEncoder_backward_compatibility():
+    # Test that PairwiseVoxelEncoder still works as before
+    volume_shape = (2, 3, 3, 3)
+
+    # Suppress deprecation warning for this test
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+
+        encoder_old = PairwiseVoxelEncoder(1.0, volume_shape, diag=True)
+        encoder_new = PairwiseEncoder(1.0, volume_shape, diag=True)
+
+        # Check that offsets are the same
+        assert encoder_old.offsets == encoder_new.offsets
+
+        # Test with same values
+        num_offsets = len(encoder_old.offsets)
+        values = torch.randn(num_offsets, 2, 3, 3, 3)
+
+        sparse_old = encoder_old(values)
+        sparse_new = encoder_new(values)
+
+        # Should produce identical results
+        assert torch.allclose(sparse_old.to_dense(), sparse_new.to_dense())
+
+
+def test_PairwiseEncoder_nd_batch():
+    # Test batched N-D encoder
+    volume_shape = (2, 3, 3)  # 2D case
+    encoder = PairwiseEncoder(1.0, volume_shape, diag=True)
+
+    batch_size = 3
+    num_offsets = len(encoder.offsets)
+    values = torch.randn(batch_size, num_offsets, 2, 3, 3)
+
+    sparse_matrix = encoder(values)
+    expected_size = (batch_size, 2 * 3 * 3, 2 * 3 * 3)
+    assert sparse_matrix.size() == expected_size
+
+
+# Test error handling for ND
+def test_PairwiseEncoder_invalid_dimensions():
+    with pytest.raises(ValueError, match="at least 2 positive integers"):
+        PairwiseEncoder(1.0, (3,))  # Only 1D - need at least channel + 1 spatial
+
+
+def test_calc_pairwise_coo_indices_nd_invalid_shape():
+    with pytest.raises(ValueError, match="at least 2 positive integers"):
+        calc_pairwise_coo_indices_nd(1.0, (3,))  # Only 1D
