@@ -11,7 +11,7 @@ except ImportError:
 def segment_mm(a, b, seglen_a):
     """
     Performs matrix multiplication according to segments.
-    See https://docs.dgl.ai/generated/dgl.ops.segment_mm.html
+    See https://www.dgl.ai/dgl_docs/generated/dgl.ops.segment_mm.html
 
     Suppose ``seglen_a == [10, 5, 0, 3]``, the operator will perform
     four matrix multiplications::
@@ -102,7 +102,7 @@ def gather_mm(a, b, idx_b):
     torchdevice = a.device
     src_idx = torch.arange(N, device=torchdevice)
 
-    # Ideally the conversions below to nested tensor would be handled without for looops and without copy
+    # Ideally the conversions below to nested tensor would be handled without for loops and without copy
     nested_a = torch.nested.as_nested_tensor([a[idx_b == i, :] for i in range(R)])
     src_idx_reshuffled = torch.cat([src_idx[idx_b == i] for i in range(R)])
     nested_b = torch.nested.as_nested_tensor(torch.split(b, 1, dim=0)).reshape((R, D1, D2))
