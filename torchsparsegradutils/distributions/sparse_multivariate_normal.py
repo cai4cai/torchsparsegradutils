@@ -1,4 +1,5 @@
 import math
+import warnings
 
 import torch
 from torch.distributions import constraints
@@ -10,7 +11,7 @@ from torchsparsegradutils import sparse_triangular_solve as spts
 
 # from .contraints import sparse_strictly_lower_triangular
 
-__all__ = ["SparseMultivariateNormal"]
+__all__ = ["SparseMultivariateNormal", "SparseMultivariateNormalNative"]
 
 
 def _batch_sparse_mv(op, bmat, bvec, **kwargs):
@@ -242,3 +243,148 @@ class SparseMultivariateNormal(Distribution):
                 )
 
         return self.loc + x
+
+
+class SparseMultivariateNormalNative(Distribution):
+    r"""
+    Creates a sparse multivariate normal (MVN) distribution using native torch.sparse.mm
+    parameterized by a mean vector :attr: `loc` and a sparse lower triangular matrix
+    :attr: `scale_tril` for covariance parameterization.
+
+    This distribution only supports LL^T parameterization where:
+        covariance = L @ L.T
+    Where L is a sparse lower triangular matrix with positive diagonal stored as CSR.
+
+    This implementation is restricted to:
+    - CSR layout only (torch.sparse.mm requirement)
+    - Unbatched matrices only (torch.sparse.mm limitation)
+    - Scale (covariance) parameterization only (no precision support)
+    - LL^T parameterization only (no LDL^T support)
+
+    The advantage is that this uses torch.sparse.mm which supports both forward and
+    backward passes with gradients through the sparse CSR matrix values.
+
+    Args:
+        loc (Tensor): mean of the distribution with shape `event_shape`
+        scale_tril (Tensor): sparse lower triangular matrix with shape `event_shape x event_shape`
+            in torch.sparse_csr layout with positive diagonal elements
+    """
+
+    arg_constraints = {
+        "loc": constraints.real_vector,
+        # TODO: create custom sparse lower triangular constraint
+        # 'scale_tril': constraints.lower_cholesky,
+    }
+    support = constraints.real_vector
+    has_rsample = True
+
+    def __init__(self, loc, scale_tril, validate_args=None):
+        if loc.dim() != 1:
+            raise ValueError("loc must be one-dimensional for SparseMultivariateNormalNative.")
+
+        if scale_tril.layout != torch.sparse_csr:
+            raise ValueError("scale_tril must be sparse CSR for SparseMultivariateNormalNative.")
+
+        if scale_tril.dim() != 2:
+            raise ValueError("scale_tril must be two-dimensional (unbatched) for SparseMultivariateNormalNative.")
+
+        if scale_tril.shape[0] != scale_tril.shape[1]:
+            raise ValueError("scale_tril must be square.")
+
+        if scale_tril.shape[0] != loc.shape[0]:
+            raise ValueError("scale_tril must have the same size as loc.")
+
+        event_shape = loc.shape
+        self._loc = loc
+        self._scale_tril = scale_tril
+
+        # No batch dimensions for this implementation
+        batch_shape = torch.Size()
+        super().__init__(batch_shape, event_shape, validate_args=validate_args)
+
+    @property
+    def scale_tril(self):
+        return self._scale_tril
+
+    @property
+    def loc(self):
+        return self._loc
+
+    @property
+    def mean(self):
+        return self._loc
+
+    @property
+    def mode(self):
+        return self._loc
+
+    @property
+    def covariance_matrix(self):
+        """Compute covariance matrix as L @ L.T using sparse operations."""
+        # Convert to dense for covariance computation - this is expensive but needed
+        warnings.warn(
+            "Computing covariance_matrix requires converting sparse matrix to dense format. "
+            "This may cause memory issues for large sparse matrices. "
+            "Consider using variance property for diagonal elements only.",
+            UserWarning,
+            stacklevel=2,
+        )
+        L_dense = self._scale_tril.to_dense()
+        return L_dense @ L_dense.T
+
+    @property
+    def variance(self):
+        """Compute diagonal of covariance matrix."""
+        # For LL^T parameterization, variance is sum of squares of each row
+        warnings.warn(
+            "Computing variance requires converting sparse matrix to dense format. "
+            "This may cause memory issues for large sparse matrices.",
+            UserWarning,
+            stacklevel=2,
+        )
+        L_dense = self._scale_tril.to_dense()
+        return (L_dense**2).sum(dim=-1)
+
+    def rsample(self, sample_shape=torch.Size()):
+        """Sample from the distribution using torch.sparse.mm."""
+        shape = self._extended_shape(sample_shape)
+        eps = _standard_normal(shape, dtype=self.loc.dtype, device=self.loc.device)
+
+        # For unbatched case: eps is (num_samples, event_size) or (event_size,)
+        # We need to use torch.sparse.mm(scale_tril, eps.T).T
+        if eps.dim() == 1:
+            # Single sample case
+            x = torch.sparse.mm(self._scale_tril, eps.unsqueeze(-1)).squeeze(-1)
+        else:
+            # Multiple samples case
+            x = torch.sparse.mm(self._scale_tril, eps.t()).t()
+
+        return self.loc + x
+
+    def log_prob(self, value):
+        """Compute log probability density."""
+        if self._validate_args:
+            self._validate_sample(value)
+
+        # Convert to dense for log_prob computation
+        warnings.warn(
+            "Computing log_prob requires converting sparse matrix to dense format. "
+            "This may cause memory issues for large sparse matrices. "
+            "Consider using rsample() only if you don't need log_prob computation.",
+            UserWarning,
+            stacklevel=2,
+        )
+        L_dense = self._scale_tril.to_dense()
+
+        # Solve L @ z = (value - loc) for z
+        diff = value - self.loc
+        if diff.dim() == 1:
+            z = torch.linalg.solve_triangular(L_dense, diff.unsqueeze(-1), upper=False).squeeze(-1)
+        else:
+            z = torch.linalg.solve_triangular(L_dense, diff.t(), upper=False).t()
+
+        # Compute log probability
+        M = (z**2).sum(-1)  # Mahalanobis distance squared
+        half_log_det = L_dense.diagonal().log().sum()
+
+        return -0.5 * (self.event_shape[0] * math.log(2 * math.pi) + M) - half_log_det
