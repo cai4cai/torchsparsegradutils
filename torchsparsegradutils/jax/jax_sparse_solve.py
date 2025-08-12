@@ -64,6 +64,7 @@ class SparseSolveJ4T(torch.autograd.Function):
         is_vector = x.ndim == 1
         if is_vector:
             x = x.unsqueeze(-1)
+            grad = grad.unsqueeze(-1)
 
         grad_j = _t2j(grad.detach())
         # pin gradient to the same JAX device
@@ -105,5 +106,9 @@ class SparseSolveJ4T(torch.autograd.Function):
             gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
             gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
+
+        # Squeeze gradB back to original shape if it was a vector
+        if is_vector:
+            gradB = gradB.squeeze(-1)
 
         return gradA, gradB, None, None

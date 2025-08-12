@@ -1,7 +1,7 @@
 {
     "name": "torchsparsegradutils Dev Container",
     "build": {
-        "dockerfile": "./Dockerfile",
+        "dockerfile": "./Dockerfile.stable",
         "context": "."
     },
     "runArgs": [
