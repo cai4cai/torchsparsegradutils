@@ -2,6 +2,7 @@ import pytest
 import torch
 import torchsparsegradutils.jax as tsgujax
 from torchsparsegradutils.utils import convert_coo_to_csr
+from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
 pytest.importorskip("jax")
 if not tsgujax.have_jax:
@@ -20,7 +21,9 @@ if torch.cuda.is_available():
 
 # test parameters
 TEST_DATA = [
-    ("unbat", (12, 12), (12, 6), 32),
+    ("vector_1d", (12, 12), (12,), 32),
+    ("vector_2d", (12, 12), (12, 1), 32),
+    ("multi_rhs", (12, 12), (12, 6), 32),
 ]
 INDEX_DTYPES = [torch.int32, torch.int64]
 VALUE_DTYPES = [torch.float32, torch.float64]
@@ -80,24 +83,6 @@ def solver(request):
     return request.param
 
 
-def make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=0):
-    M = torch.randn(n, n, dtype=value_dtype, device=device)
-    A_dense = M @ M.t() + n * torch.eye(n, dtype=value_dtype, device=device)
-    if nz > 0:
-        mask = ~torch.eye(n, dtype=torch.bool, device=device)
-        idxs = torch.nonzero(mask, as_tuple=False)
-        sel = idxs[torch.randperm(idxs.size(0), device=device)[:nz]]
-        A_dense[sel[:, 0], sel[:, 1]] = 0
-    idx = A_dense.nonzero(as_tuple=False).t().to(index_dtype)
-    vals = A_dense[idx[0], idx[1]]
-    if layout == torch.sparse_coo:
-        A = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
-    else:
-        A_coo = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
-        A = convert_coo_to_csr(A_coo)
-    return A, A_dense
-
-
 @pytest.mark.flaky(reruns=5)
 def test_solve_forward_j4t(layout, device, value_dtype, index_dtype, solver, shapes):
     _, A_shape, B_shape, num_zero = shapes
@@ -129,3 +114,107 @@ def test_solve_backward_j4t(layout, device, value_dtype, index_dtype, solver, sh
     # same tolerances as generic solve
     assert torch.allclose(A_sp.grad.to_dense()[nz], Ad.grad[nz], atol=1e-2)
     assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_jax_cg_kwargs(device, value_dtype, layout):
+    """Test sparse_solve_j4t with CG solver kwargs."""
+    n = 10
+    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+    B = torch.rand(n, dtype=value_dtype, device=device)
+
+    # Test with custom CG kwargs
+    X_ref = torch.linalg.solve(A_dense, B)
+    X_test = tsgujax.sparse_solve_j4t(A_sp, B, solve=cg, transpose_solve=cg, tol=1e-6, atol=1e-8, maxiter=500)
+
+    assert torch.allclose(X_test, X_ref, atol=1e-2)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_jax_bicgstab_kwargs(device, value_dtype, layout):
+    """Test sparse_solve_j4t with BiCGSTAB solver kwargs."""
+    n = 10
+    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+    B = torch.rand(n, dtype=value_dtype, device=device)
+
+    # Test with custom BiCGSTAB kwargs
+    X_ref = torch.linalg.solve(A_dense, B)
+    X_test = tsgujax.sparse_solve_j4t(
+        A_sp, B, solve=bicgstab, transpose_solve=bicgstab, tol=1e-6, atol=1e-8, maxiter=1000
+    )
+
+    assert torch.allclose(X_test, X_ref, atol=1e-2)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_jax_kwargs_backward_pass(device, value_dtype, layout):
+    """Test that JAX kwargs work correctly during backward pass."""
+    n = 10
+    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+
+    # Set up tensors with gradients
+    A_sp1 = A_sp.clone().requires_grad_()
+    Ad2 = A_dense.detach().clone().requires_grad_()
+    Bd1 = torch.rand(n, dtype=value_dtype, device=device).requires_grad_()
+    Bd2 = Bd1.clone().detach().requires_grad_()
+
+    # Test with custom kwargs
+    res_ref = torch.linalg.solve(Ad2, Bd2)
+    res_test = tsgujax.sparse_solve_j4t(A_sp1, Bd1, solve=cg, transpose_solve=cg, tol=1e-6, atol=1e-8, maxiter=500)
+
+    # Backward pass
+    grad_output = torch.rand_like(res_test)
+    res_ref.backward(grad_output)
+    res_test.backward(grad_output)
+
+    # Check gradients
+    nz_mask = A_sp1.grad.to_dense() != 0.0
+    assert torch.allclose(A_sp1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=1e-2)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_jax_multiple_kwargs(device, value_dtype):
+    """Test sparse_solve_j4t with multiple kwargs (like used in benchmarks)."""
+    n = 10
+    layout = torch.sparse_csr  # Use CSR for this test
+    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+    B = torch.rand(n, dtype=value_dtype, device=device)
+
+    # Test with multiple kwargs similar to the benchmark suite
+    X_ref = torch.linalg.solve(A_dense, B)
+    X_test = tsgujax.sparse_solve_j4t(
+        A_sp, B, solve=bicgstab, transpose_solve=bicgstab, tol=1e-5, atol=1e-8, maxiter=1000
+    )
+
+    assert torch.allclose(X_test, X_ref, atol=1e-2)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_jax_kwargs_with_different_solvers():
+    """Test that different JAX solvers with their respective kwargs produce similar results."""
+    device = torch.device("cpu")
+    value_dtype = torch.float64  # Use higher precision for better comparison
+    layout = torch.sparse_csr
+
+    n = 10
+    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+    B = torch.rand(n, dtype=value_dtype, device=device)
+
+    # Reference solution
+    X_ref = torch.linalg.solve(A_dense, B)
+
+    # Test CG with kwargs
+    X_cg = tsgujax.sparse_solve_j4t(A_sp, B, solve=cg, transpose_solve=cg, tol=1e-8, atol=1e-10, maxiter=1000)
+
+    # Test BiCGSTAB with kwargs
+    X_bicgstab = tsgujax.sparse_solve_j4t(
+        A_sp, B, solve=bicgstab, transpose_solve=bicgstab, tol=1e-8, atol=1e-10, maxiter=1000
+    )
+
+    # All solutions should be close to reference
+    assert torch.allclose(X_cg, X_ref, atol=1e-2)
+    assert torch.allclose(X_bicgstab, X_ref, atol=1e-2)
+
+    # Solutions should be close to each other
+    assert torch.allclose(X_cg, X_bicgstab, atol=1e-2)
