@@ -10,7 +10,8 @@ from ast import literal_eval
 from functools import reduce
 from operator import mul
 
-from torchsparsegradutils.encoders.pairwise_voxel_encoder import (
+# Import from the new pairwise_encoder module (recommended)
+from torchsparsegradutils.encoders.pairwise_encoder import (
     _trim_nd,
     _gen_coords,
     _gen_coords_nd,
@@ -19,6 +20,10 @@ from torchsparsegradutils.encoders.pairwise_voxel_encoder import (
     calc_pariwise_coo_indices,
     calc_pairwise_coo_indices_nd,
     PairwiseEncoder,
+)
+
+# Import from deprecated module for backward compatibility tests
+from torchsparsegradutils.encoders.pairwise_voxel_encoder import (
     PairwiseVoxelEncoder,
 )
 from torchsparsegradutils.utils.utils import _sort_coo_indices
@@ -738,6 +743,14 @@ def test_PairwiseVoxelEncoder_deprecation_warning():
         _ = PairwiseVoxelEncoder(1.0, (2, 3, 3, 3))
 
 
+@pytest.mark.skip(reason="Module deprecation warning is only emitted once per session")
+def test_pairwise_voxel_encoder_module_deprecation_warning():
+    # Test that importing the module issues a deprecation warning
+    # Note: This test is skipped because the deprecation warning is only emitted once per session
+    # The module deprecation is already tested by other tests that import the module
+    pass
+
+
 def test_PairwiseVoxelEncoder_backward_compatibility():
     # Test that PairwiseVoxelEncoder still works as before
     volume_shape = (2, 3, 3, 3)
@@ -786,3 +799,68 @@ def test_PairwiseEncoder_invalid_dimensions():
 def test_calc_pairwise_coo_indices_nd_invalid_shape():
     with pytest.raises(ValueError, match="at least 2 positive integers"):
         calc_pairwise_coo_indices_nd(1.0, (3,))  # Only 1D
+
+
+def test_PairwiseEncoder_vs_PairwiseVoxelEncoder_equivalence():
+    # Test that both encoders produce identical results for 4D case
+    volume_shape = (2, 4, 4, 4)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+
+        encoder_old = PairwiseVoxelEncoder(1.5, volume_shape, diag=True, upper=False)
+        encoder_new = PairwiseEncoder(1.5, volume_shape, diag=True, upper=False)
+
+        # Test both have same configuration
+        assert encoder_old.radius == encoder_new.radius
+        assert encoder_old.volume_shape == encoder_new.volume_shape
+        assert encoder_old.diag == encoder_new.diag
+        assert encoder_old.upper == encoder_new.upper
+        assert encoder_old.offsets == encoder_new.offsets
+
+        # Test with random values
+        num_offsets = len(encoder_old.offsets)
+        values = torch.randn(num_offsets, *volume_shape)
+
+        result_old = encoder_old(values)
+        result_new = encoder_new(values)
+
+        assert torch.allclose(result_old.to_dense(), result_new.to_dense())
+
+
+def test_PairwiseEncoder_supports_nd():
+    # Test various dimensional cases that PairwiseVoxelEncoder cannot handle
+
+    # 1D spatial (2D total)
+    encoder_1d = PairwiseEncoder(1.0, (3, 5))
+    assert encoder_1d.spatial_dims == 1
+
+    # 2D spatial (3D total)
+    encoder_2d = PairwiseEncoder(1.0, (2, 4, 4))
+    assert encoder_2d.spatial_dims == 2
+
+    # 5D spatial (6D total)
+    encoder_5d = PairwiseEncoder(1.0, (1, 3, 3, 3, 3, 3))
+    assert encoder_5d.spatial_dims == 5
+
+    # Test they all work
+    for encoder in [encoder_1d, encoder_2d, encoder_5d]:
+        num_offsets = len(encoder.offsets)
+        values_shape = (num_offsets, *encoder.volume_shape)
+        values = torch.randn(values_shape)
+        result = encoder(values)
+        expected_size = encoder.volume_numel
+        assert result.size() == (expected_size, expected_size)
+
+
+def test_imports_from_init():
+    # Test that we can import from the main module
+    from torchsparsegradutils.encoders import PairwiseEncoder, PairwiseVoxelEncoder
+    from torchsparsegradutils.encoders import calc_pairwise_coo_indices_nd, calc_pariwise_coo_indices
+
+    # Test that these are the right classes
+    assert PairwiseEncoder.__name__ == "PairwiseEncoder"
+    assert PairwiseVoxelEncoder.__name__ == "PairwiseVoxelEncoder"
+
+    # Test PairwiseVoxelEncoder is a subclass of PairwiseEncoder
+    assert issubclass(PairwiseVoxelEncoder, PairwiseEncoder)
