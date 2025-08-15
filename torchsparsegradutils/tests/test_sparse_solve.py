@@ -5,6 +5,7 @@ import pytest
 from torchsparsegradutils.sparse_solve import sparse_generic_solve
 from torchsparsegradutils.utils import convert_coo_to_csr
 from torchsparsegradutils.utils import linear_cg, bicgstab, minres
+from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
 DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
@@ -12,18 +13,15 @@ if torch.cuda.is_available():
 
 TEST_DATA = [
     # name  A_shape, B_shape, A_num_zero
-    # ("unbat", (4, 4), (4, 2), 4),
-    ("unbat", (12, 12), (12, 6), 32),
-    # ("bat", (2, 4, 4), (2, 4, 2), 4),
-    # ("bat", (4, 12, 12), (4, 12, 6), 32),
+    ("vector_1d", (12, 12), (12,), 32),
+    ("vector_2d", (12, 12), (12, 1), 32),
+    ("multi_rhs", (12, 12), (12, 6), 32),
 ]
 
 INDEX_DTYPES = [torch.int32, torch.int64]
 VALUE_DTYPES = [torch.float32, torch.float64]
 LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
-SOLVES = [linear_cg, bicgstab, minres]
-
-# TRANSPOSE = [True, False]
+SOLVES = [None, linear_cg, bicgstab, minres]
 
 
 # Define Test Names:
@@ -44,7 +42,9 @@ def layout_id(layout):
 
 
 def solve_id(solve):
-    return solve.__name__
+    if solve:
+        return solve.__name__
+    return "default"
 
 
 # Define Fixtures
@@ -80,32 +80,6 @@ def solve(request):
     return request.param
 
 
-def make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=0):
-    # generate dense SPD: M M^T + n*I
-    M = torch.randn(n, n, dtype=value_dtype, device=device)
-    A_dense = M @ M.transpose(-2, -1) + n * torch.eye(n, dtype=value_dtype, device=device)
-
-    # Randomly set 'nz' off-diagonal values to zero before extracting indices
-    if nz > 0:
-        # Find off-diagonal indices
-        off_diag_mask = ~torch.eye(n, dtype=torch.bool, device=device)
-        off_diag_indices = torch.nonzero(off_diag_mask, as_tuple=False)
-        num_off_diag = off_diag_indices.size(0)
-        if nz < num_off_diag and num_off_diag > 0:
-            zero_indices = off_diag_indices[torch.randperm(num_off_diag, device=device)[:nz]]
-            A_dense[zero_indices[:, 0], zero_indices[:, 1]] = 0
-
-    idx = A_dense.nonzero(as_tuple=False).t().to(index_dtype)
-    vals = A_dense[idx[0], idx[1]].clone()
-
-    if layout == torch.sparse_coo:
-        A = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
-    else:
-        A_coo = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
-        A = convert_coo_to_csr(A_coo)
-    return A, A_dense
-
-
 @pytest.mark.flaky(reruns=5)
 def test_solve_forward_routine(layout, solve, device, value_dtype, index_dtype, shapes):
 
@@ -115,7 +89,7 @@ def test_solve_forward_routine(layout, solve, device, value_dtype, index_dtype, 
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
 
     X_ref = torch.linalg.solve(A_dense, B)
-    X_test = sparse_generic_solve(A, B, solve=solve)
+    X_test = sparse_generic_solve(A, B, solve=solve, transpose_solve=solve)
 
     # NOTE: bicgstab seems to have tighter tolerances
     # NOTE: increasing num_zero increases the error
@@ -139,7 +113,7 @@ def test_solve_backward_routine(layout, solve, device, value_dtype, index_dtype,
     Bd2 = Bd1.clone().detach().requires_grad_()
 
     res_ref = torch.linalg.solve(Ad2, Bd2)
-    res_test = sparse_generic_solve(As1, Bd1, solve=solve)
+    res_test = sparse_generic_solve(As1, Bd1, solve=solve, transpose_solve=solve)
 
     grad_output = torch.rand_like(res_test)
     res_ref.backward(grad_output)
@@ -147,4 +121,156 @@ def test_solve_backward_routine(layout, solve, device, value_dtype, index_dtype,
 
     nz_mask = As1.grad.to_dense() != 0.0
     assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=1e-2)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)  # NOTE: Seems a bit loose
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)
+    # NOTE: Tolerance seems a bit loose. But it can be much tighter with less zeros in A
+
+
+@pytest.mark.flaky(reruns=5)
+def test_linear_cg_kwargs(device, value_dtype, layout):
+    """Test sparse_generic_solve with LinearCGSettings kwargs."""
+    from torchsparsegradutils.utils.linear_cg import LinearCGSettings
+
+    n = 10
+    A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+    B = torch.rand(n, dtype=value_dtype, device=device)
+
+    # Test with custom LinearCGSettings
+    settings = LinearCGSettings(
+        cg_tolerance=1e-6, max_cg_iterations=500, terminate_cg_by_size=False, verbose_linalg=False
+    )
+
+    X_ref = torch.linalg.solve(A_dense, B)
+    X_test = sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg, settings=settings)
+
+    assert torch.allclose(X_test, X_ref, atol=1e-2)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_bicgstab_kwargs(device, value_dtype, layout):
+    """Test sparse_generic_solve with BICGSTABSettings kwargs."""
+    from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
+
+    n = 10
+    A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+    B = torch.rand(n, dtype=value_dtype, device=device)
+
+    # Test with custom BICGSTABSettings
+    settings = BICGSTABSettings(reltol=1e-6, abstol=1e-8, matvec_max=1000, precon=None)
+
+    X_ref = torch.linalg.solve(A_dense, B)
+    X_test = sparse_generic_solve(A, B, solve=bicgstab, transpose_solve=bicgstab, settings=settings)
+
+    assert torch.allclose(X_test, X_ref, atol=1e-2)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_minres_kwargs(device, value_dtype, layout):
+    """Test sparse_generic_solve with MINRESSettings kwargs."""
+    from torchsparsegradutils.utils.minres import MINRESSettings
+
+    n = 10
+    A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+    B = torch.rand(n, dtype=value_dtype, device=device)
+
+    # Test with custom MINRESSettings
+    settings = MINRESSettings(minres_tolerance=1e-6, max_cg_iterations=500, verbose_linalg=False)
+
+    X_ref = torch.linalg.solve(A_dense, B)
+    X_test = sparse_generic_solve(A, B, solve=minres, transpose_solve=minres, settings=settings)
+
+    assert torch.allclose(X_test, X_ref, atol=1e-2)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_kwargs_backward_pass(device, value_dtype, layout):
+    """Test that kwargs work correctly during backward pass."""
+    from torchsparsegradutils.utils.linear_cg import LinearCGSettings
+
+    n = 10
+    A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+
+    # Set up tensors with gradients
+    As1 = A.clone().requires_grad_()
+    Ad2 = A_dense.detach().clone().requires_grad_()
+    Bd1 = torch.rand(n, dtype=value_dtype, device=device).requires_grad_()
+    Bd2 = Bd1.clone().detach().requires_grad_()
+
+    # Test with custom settings
+    settings = LinearCGSettings(
+        cg_tolerance=1e-6, max_cg_iterations=500, terminate_cg_by_size=False, verbose_linalg=False
+    )
+
+    res_ref = torch.linalg.solve(Ad2, Bd2)
+    res_test = sparse_generic_solve(As1, Bd1, solve=linear_cg, transpose_solve=linear_cg, settings=settings)
+
+    # Backward pass
+    grad_output = torch.rand_like(res_test)
+    res_ref.backward(grad_output)
+    res_test.backward(grad_output)
+
+    # Check gradients
+    nz_mask = As1.grad.to_dense() != 0.0
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=1e-2)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_multiple_kwargs(device, value_dtype):
+    """Test sparse_generic_solve with multiple kwargs (like used in benchmarks)."""
+    from torchsparsegradutils.utils.linear_cg import LinearCGSettings
+
+    n = 10
+    layout = torch.sparse_csr  # Use CSR for this test
+    A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+    B = torch.rand(n, dtype=value_dtype, device=device)
+
+    # Test with multiple kwargs similar to the benchmark suite
+    settings = LinearCGSettings(
+        cg_tolerance=1e-5, max_cg_iterations=1000, terminate_cg_by_size=False, verbose_linalg=False
+    )
+
+    # Pass both settings and additional kwargs
+    X_ref = torch.linalg.solve(A_dense, B)
+    X_test = sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg, settings=settings)
+
+    assert torch.allclose(X_test, X_ref, atol=1e-2)
+
+
+@pytest.mark.flaky(reruns=5)
+def test_kwargs_with_different_solvers_same_matrix():
+    """Test that different solvers with their respective kwargs produce similar results."""
+    from torchsparsegradutils.utils.linear_cg import LinearCGSettings
+    from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
+    from torchsparsegradutils.utils.minres import MINRESSettings
+
+    device = torch.device("cpu")
+    value_dtype = torch.float64  # Use higher precision for better comparison
+    layout = torch.sparse_csr
+
+    n = 10
+    A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+    B = torch.rand(n, dtype=value_dtype, device=device)
+
+    # Reference solution
+    X_ref = torch.linalg.solve(A_dense, B)
+
+    # Test linear_cg with settings
+    cg_settings = LinearCGSettings(cg_tolerance=1e-8, max_cg_iterations=1000)
+    X_cg = sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg, settings=cg_settings)
+
+    # Test bicgstab with settings
+    bicgstab_settings = BICGSTABSettings(reltol=1e-8, abstol=1e-10, matvec_max=2000)
+    X_bicgstab = sparse_generic_solve(A, B, solve=bicgstab, transpose_solve=bicgstab, settings=bicgstab_settings)
+
+    # Test minres with settings
+    minres_settings = MINRESSettings(minres_tolerance=1e-8, max_cg_iterations=1000)
+    X_minres = sparse_generic_solve(A, B, solve=minres, transpose_solve=minres, settings=minres_settings)
+
+    # All solutions should be close to reference
+    assert torch.allclose(X_cg, X_ref, atol=1e-3)
+    assert torch.allclose(X_bicgstab, X_ref, atol=1e-3)
+    assert torch.allclose(X_minres, X_ref, atol=1e-3)
+
+    # All solutions should be close to each other
+    assert torch.allclose(X_cg, X_minres, atol=1e-3)
+    assert torch.allclose(X_bicgstab, X_minres, atol=1e-3)
