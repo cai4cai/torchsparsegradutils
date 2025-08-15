@@ -1,14 +1,220 @@
 import torchsparsegradutils.cupy as tsgucupy
 import torch
+import warnings
+
+# from cupyx.scipy.sparse.linalg import cg, cgs, minres, gmres, spsolve
 
 
-def sparse_solve_c4t(A, B, solve=None, transpose_solve=None):
-    return SparseSolveC4T.apply(A, B, solve, transpose_solve)
+def sparse_solve_c4t(A, B, solve=None, transpose_solve=None, **kwargs):
+    """
+    Solve the sparse linear system Ax = B using CuPy or SciPy backends.
+
+    This function automatically selects the appropriate backend (CuPy for CUDA tensors,
+    SciPy for CPU tensors) and supports various iterative and direct solvers.
+
+    Args:
+        A (torch.Tensor): A 2D sparse square tensor in COO or CSR format. Must have
+                         shape (n, n) where n is the number of rows/columns.
+        B (torch.Tensor): A 1D or 2D tensor with shape (n,) or (n, k) where n matches
+                         the dimension of A and k is the number of right-hand sides.
+                         For iterative solvers, B must be a vector (1D or 2D with shape[1] == 1).
+        solve (str or callable, optional): Solver method to use. Can be:
+            - None: Use default solver (spsolve for single RHS, factorized for multi-RHS)
+            - "cg": Conjugate Gradient (iterative, vector RHS only, requires symmetric positive definite A)
+            - "cgs": Conjugate Gradient Squared (iterative, vector RHS only)
+            - "minres": Minimum Residual (iterative, vector RHS only, requires symmetric A)
+            - "gmres": Generalized Minimal Residual (iterative, vector RHS only)
+            - "spsolve": Direct sparse solver (supports both vector and multi-RHS)
+            - callable: Custom solver function
+        transpose_solve (str or callable, optional): Solver for the transpose system A^T x = b
+                                                   used in backpropagation. Same options as solve.
+                                                   If None, defaults to the same as solve.
+        **kwargs: Additional keyword arguments passed to the solver functions.
+                 Common parameters:
+                 - tol (float): Tolerance for iterative solvers (default 1e-5)
+                 - maxiter (int): Maximum number of iterations
+                 - atol (float): Absolute tolerance for some solvers
+
+    Returns:
+        torch.Tensor: Solution tensor X with the same shape as B.
+
+    Raises:
+        TypeError: If A is not a sparse tensor with supported layout (COO or CSR).
+        ValueError: If A is not square, if B has incompatible dimensions, or if iterative
+                   solver is used with multi-RHS (B.ndim == 2 and B.shape[1] > 1).
+
+    Note:
+        - For CPU tensors, SciPy backends are used
+        - For CUDA tensors, CuPy backends are used
+        - Iterative solvers (cg, cgs, minres, gmres) only support vector RHS:
+          * B must be 1D with shape (n,), or
+          * B must be 2D with shape (n, 1)
+        - Direct solver (spsolve) and factorized solver (None) support both vector and multi-RHS
+        - For multi-RHS problems (B.shape[1] > 1), use solve="spsolve" or solve=None
+        - Performance considerations:
+          * CSR format is generally more efficient than COO for most solvers
+          * Some solvers may automatically convert COO to CSR, which can impact performance
+          * On CPU, 'minres' solver may promote float32 inputs to float64 (warning will be issued)
+          * SciPy's spsolve prefers CSC or CSR format and may issue efficiency warnings for COO
+          * CuPy's solvers may convert to CSR format internally for better performance
+
+    Warnings:
+        - UserWarning: When using 'minres' on CPU with potential dtype promotion
+        - SparseEfficiencyWarning: When solvers need to convert matrix formats for efficiency
+    """
+    # Input validation
+    if not isinstance(A, torch.Tensor) or not isinstance(B, torch.Tensor):
+        raise ValueError("Both A and B should be instances of torch.Tensor")
+
+    if A.layout not in (torch.sparse_coo, torch.sparse_csr):
+        raise TypeError(f"Unsupported sparse layout: {A.layout}. Only COO and CSR are supported.")
+
+    if A.dim() != 2:
+        raise ValueError("A must be a 2D tensor")
+
+    if A.shape[0] != A.shape[1]:
+        raise ValueError("A must be square")
+
+    if B.dim() not in (1, 2):
+        raise ValueError("B must be a 1D or 2D tensor")
+
+    if B.shape[0] != A.shape[0]:
+        raise ValueError(f"Incompatible dimensions: A has shape {A.shape}, B has shape {B.shape}")
+
+    # Check for iterative solver compatibility with multi-RHS
+    vector_solvers = {"cg", "cgs", "minres", "gmres"}
+    is_multi_rhs = B.ndim == 2 and B.shape[1] > 1
+
+    if solve in vector_solvers and is_multi_rhs:
+        raise ValueError(
+            f"Solver '{solve}' does not support multi-RHS (B.shape={B.shape}). "
+            f"Use solve='spsolve' or solve=None for multi-RHS problems, or reshape B to a vector."
+        )
+
+    if transpose_solve in vector_solvers and is_multi_rhs:
+        raise ValueError(
+            f"Transpose solver '{transpose_solve}' does not support multi-RHS (B.shape={B.shape}). "
+            f"Use transpose_solve='spsolve' or transpose_solve=None for multi-RHS problems."
+        )
+
+    # Convert string solver names to actual solver functions
+    def _get_solver_function(solver_name, xsp):
+        """Get the appropriate solver function based on the backend."""
+        if solver_name is None or callable(solver_name):
+            return solver_name
+
+        def _wrap_iterative_solver(base_solver, backend_type, solver_name=None):
+            """Wrap an iterative solver to handle parameter mapping and return format."""
+
+            def wrapped_solver(A, b, **solver_kwargs):
+                # Create a copy to avoid modifying the original
+                filtered_kwargs = solver_kwargs.copy()
+
+                # Extract tolerance parameter and map to correct name for the backend
+                tolerance = filtered_kwargs.pop("tol", None)
+                atol = filtered_kwargs.pop("atol", None)
+
+                # Define solver-specific parameter support
+                solver_params = {
+                    "cg": {"rtol", "maxiter", "atol"} if backend_type == "scipy" else {"tol", "maxiter", "atol"},
+                    "cgs": {"rtol", "maxiter", "atol"} if backend_type == "scipy" else {"tol", "maxiter", "atol"},
+                    "minres": {"rtol", "maxiter", "shift"} if backend_type == "scipy" else {"tol", "maxiter"},
+                    "gmres": {"rtol", "maxiter", "atol"} if backend_type == "scipy" else {"tol", "maxiter", "atol"},
+                }
+
+                # Get supported parameters for this solver
+                supported_params = solver_params.get(solver_name, set())
+
+                if tolerance is not None:
+                    # Map tolerance parameter based on backend and solver support
+                    if backend_type == "scipy" and "rtol" in supported_params:
+                        filtered_kwargs["rtol"] = tolerance
+                    elif backend_type == "cupy" and "tol" in supported_params:
+                        filtered_kwargs["tol"] = tolerance
+
+                # Handle atol parameter if supported
+                if atol is not None and "atol" in supported_params:
+                    filtered_kwargs["atol"] = atol
+
+                # Filter out unsupported parameters
+                final_kwargs = {
+                    k: v
+                    for k, v in filtered_kwargs.items()
+                    if k in supported_params
+                    or k in {"x0", "M", "callback", "show", "check"}  # Always allow common parameters
+                }
+
+                # Call the base solver
+                result = base_solver(A, b, **final_kwargs)
+
+                # Handle return format - some solvers return (solution, info) tuples
+                if isinstance(result, tuple):
+                    return result[0]  # Return just the solution
+                return result
+
+            return wrapped_solver
+
+        def _wrap_direct_solver(base_solver):
+            """Wrap a direct solver to ignore tolerance parameters."""
+
+            def wrapped_solver(A, b, **solver_kwargs):
+                # Direct solvers don't use iterative solver parameters, so ignore them all
+                filtered_kwargs = {
+                    k: v
+                    for k, v in solver_kwargs.items()
+                    if k not in ["tol", "tolerance", "atol", "rtol", "maxiter", "matvec_max"]
+                }
+                return base_solver(A, b, **filtered_kwargs)
+
+            return wrapped_solver
+
+        # Determine backend type
+        backend_type = "scipy" if A.device.type == "cpu" else "cupy"
+
+        solver_map = {
+            "cg": _wrap_iterative_solver(xsp.linalg.cg, backend_type, "cg"),
+            "cgs": _wrap_iterative_solver(xsp.linalg.cgs, backend_type, "cgs"),
+            "minres": _wrap_iterative_solver(xsp.linalg.minres, backend_type, "minres"),
+            "gmres": _wrap_iterative_solver(xsp.linalg.gmres, backend_type, "gmres"),
+            "spsolve": _wrap_direct_solver(xsp.linalg.spsolve),
+        }
+
+        if solver_name not in solver_map:
+            raise ValueError(f"Unknown solver: {solver_name}. Supported solvers: {list(solver_map.keys())}")
+
+        return solver_map[solver_name]
+
+    # Get the appropriate backend modules
+    xp, xsp = tsgucupy._get_array_modules(A.data)
+
+    # Warn about dtype issues with minres on CPU
+    if solve == "minres" and A.device.type == "cpu":
+        warnings.warn(
+            "Using 'minres' solver on CPU may change the output dtype to float64 "
+            "even with float32 inputs due to SciPy implementation. Consider using "
+            "'cg' or 'spsolve' for consistent dtype behavior.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if transpose_solve == "minres" and A.device.type == "cpu":
+        warnings.warn(
+            "Using 'minres' transpose solver on CPU may change the output dtype to float64 "
+            "even with float32 inputs due to SciPy implementation.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    # Convert string solver names to functions
+    solve_func = _get_solver_function(solve, xsp)
+    transpose_solve_func = _get_solver_function(transpose_solve, xsp)
+
+    return SparseSolveC4T.apply(A, B, solve_func, transpose_solve_func, kwargs)
 
 
 class SparseSolveC4T(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, A, B, solve, transpose_solve):
+    def forward(ctx, A, B, solve, transpose_solve, kwargs):
         xp, xsp = tsgucupy._get_array_modules(A.data)
         grad_flag = A.requires_grad or B.requires_grad
         ctx.transpose_solve = transpose_solve
@@ -24,8 +230,9 @@ class SparseSolveC4T(torch.autograd.Function):
 
         # Solve the sparse system
         ctx.factorisedsolver = None
+        ctx.kwargs = kwargs  # Store kwargs for backward pass
         if solve is not None:
-            x_c = solve(A_c, B_c)
+            x_c = solve(A_c, B_c, **kwargs)
         elif (B.ndim == 1) or (B.shape[1] == 1):
             # xp.sparse.linalg.spsolve only works if B is a vector but is fully on GPU with cupy
             # TODO: Is this still true?
@@ -42,6 +249,10 @@ class SparseSolveC4T(torch.autograd.Function):
             x_c = x_c[0]
 
         x = torch.as_tensor(x_c, device=A.device)
+
+        # Ensure output dtype matches input dtype
+        if x.dtype != A.dtype:
+            x = x.to(dtype=A.dtype)
 
         if (B.ndim == 2) and (x.ndim == 1):
             x = x.unsqueeze(-1)
@@ -66,7 +277,7 @@ class SparseSolveC4T(torch.autograd.Function):
 
         # Backprop rule: gradB = A^{-T} grad
         if ctx.transpose_solve is not None:
-            gradB_c = ctx.transpose_solve(ctx.A_c, grad_c)
+            gradB_c = ctx.transpose_solve(ctx.A_c, grad_c, **ctx.kwargs)
         elif ctx.factorisedsolver is None:
             gradB_c = xsp.linalg.spsolve(xp.transpose(ctx.A_c), grad_c)
         else:
@@ -78,6 +289,10 @@ class SparseSolveC4T(torch.autograd.Function):
             gradB_c = gradB_c[0]
 
         gradB = torch.as_tensor(gradB_c, device=A.device)
+
+        # Ensure gradient dtype matches input dtype
+        if gradB.dtype != A.dtype:
+            gradB = gradB.to(dtype=A.dtype)
 
         if (grad.ndim == 2) and (gradB.ndim == 1):
             gradB = gradB.unsqueeze(-1)
@@ -110,6 +325,10 @@ class SparseSolveC4T(torch.autograd.Function):
         mgbx = mgradbselect * xselect
         gradA = torch.sum(mgbx, dim=1)
 
+        # Ensure gradient dtype matches input dtype
+        if gradA.dtype != A.dtype:
+            gradA = gradA.to(dtype=A.dtype)
+
         if A.layout == torch.sparse_coo:
             gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
@@ -119,4 +338,4 @@ class SparseSolveC4T(torch.autograd.Function):
         if is_vector:
             gradB = gradB.squeeze(-1)
 
-        return gradA, gradB, None, None
+        return gradA, gradB, None, None, None
