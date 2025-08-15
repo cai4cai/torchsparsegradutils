@@ -28,8 +28,10 @@ from benchmark_utils import (
     print_result_row,
     format_time,
     save_benchmark_results,
-    REPEATS,
 )
+
+REPEATS = 100
+WARMUP_RUNS = 10
 
 # Only run on CUDA
 device = torch.device("cuda")
@@ -62,7 +64,9 @@ ALGORITHMS = [
 ]
 
 
-def measure_batched_op(op, A, B, repeats=REPEATS, device=None, desc="operation", warmup_runs=5, remove_outliers=True):
+def measure_batched_op(
+    op, A, B, repeats=REPEATS, device=None, desc="operation", warmup_runs=WARMUP_RUNS, remove_outliers=True
+):
     """
     Measure performance for batched sparse operations with improved accuracy.
     A, B may be either Tensors (batched) or lists of Tensors (unbatched).
@@ -312,7 +316,7 @@ def run_batched_sparse_mm_benchmark():
                                             repeats=REPEATS,
                                             device=device,
                                             desc=f"{alg_name} ({layout_name})",
-                                            warmup_runs=10,  # More warmup for stable results
+                                            warmup_runs=WARMUP_RUNS,
                                             remove_outliers=True,
                                         )
                                     )
@@ -363,7 +367,7 @@ def run_batched_sparse_mm_benchmark():
                                             repeats=REPEATS,
                                             device=device,
                                             desc=f"{alg_name} ({layout_name})",
-                                            warmup_runs=10,  # More warmup for stable results
+                                            warmup_runs=WARMUP_RUNS,
                                             remove_outliers=True,
                                         )
                                     )

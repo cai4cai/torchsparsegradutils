@@ -18,6 +18,7 @@ from tqdm import trange
 
 # Default configuration
 REPEATS = 100
+WARMUP_RUNS = 10
 BENCHMARK_DATA_DIR = os.path.join(os.path.dirname(__file__), ".benchmark_data")
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 
@@ -119,7 +120,15 @@ def _parse_oom(e):
 
 
 def measure_op(
-    op, A, B, repeats=REPEATS, device=None, backward=True, desc="operation", warmup_runs=5, remove_outliers=True
+    op,
+    A,
+    B,
+    repeats=REPEATS,
+    device=None,
+    backward=True,
+    desc="operation",
+    warmup_runs=WARMUP_RUNS,
+    remove_outliers=True,
 ):
     """
     Measure average forward/backward times and peak memory over multiple runs with improved accuracy.

@@ -27,8 +27,10 @@ from benchmark_utils import (
     print_result_row,
     format_time,
     save_benchmark_results,
-    REPEATS,
 )
+
+REPEATS = 100
+WARMUP_RUNS = 10
 
 # Only run on CUDA
 device = torch.device("cuda")
@@ -93,7 +95,7 @@ def run_sparse_mm_suite_benchmark():
                             repeats=REPEATS,
                             device=device,
                             desc=alg_name,
-                            warmup_runs=10,
+                            warmup_runs=WARMUP_RUNS,
                             remove_outliers=True,
                         )
 

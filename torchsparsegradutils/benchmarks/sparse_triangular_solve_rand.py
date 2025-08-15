@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import torch
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
 
 from torchsparsegradutils import sparse_triangular_solve
@@ -22,6 +23,10 @@ from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
 from cupyx.scipy.sparse.linalg._solve import spsolve_triangular
 
+
+# from jax.lax.linalg import triangular_solve  # NOTE: jax doesn't have a sparse triangular solve
+# import torchsparsegradutils.jax as tsgujax
+
 from benchmark_utils import (
     measure_op,
     print_benchmark_header,
@@ -29,8 +34,10 @@ from benchmark_utils import (
     print_result_row,
     format_time,
     save_benchmark_results,
-    REPEATS,
 )
+
+REPEATS = 1
+WARMUP_RUNS = 0
 
 # Only run on CUDA
 device = torch.device("cuda")
@@ -38,9 +45,9 @@ assert torch.cuda.is_available(), "This benchmark requires a CUDA GPU"
 
 # problem sizes: (label, N, M, nnz)
 SIZES = [
-    ("small", 2**10, 2**6, 2**12),
-    ("medium", 2**14, 2**8, 2**14),
-    ("large", 2**18, 2**9, 2**16),
+    ("small", 2**10, 2**1, 2**11),
+    ("medium", 2**14, 2**2, 2**15),
+    ("large", 2**18, 2**3, 2**19),
 ]
 
 UPPER = False
@@ -68,8 +75,26 @@ ALGORITHMS = [
         "sparse_triangular_solve",
         lambda A, B: sparse_triangular_solve(A, B, upper=UPPER, unitriangular=UNITRIANGULAR, transpose=TRANSPOSE),
     ),
-    # ("cupy.spsolve_triangular", lambda A, B: sparse_solve_c4t(A, B, solve=spsolve_triangular)),  # TODO: add lower and unit_diagonal
-    # NOTE: This is very very slow
+    (
+        "cupy.spsolve_triangular",
+        lambda A, B: sparse_solve_c4t(
+            A,
+            B,
+            solve=lambda A_inner, b_inner: spsolve_triangular(
+                A_inner, b_inner, lower=not UPPER, unit_diagonal=UNITRIANGULAR
+            ),
+        ),
+    ),
+    # (
+    #     "jax.triangular_solve",
+    #     lambda A, B: tsgujax.sparse_solve_j4t(
+    #         A,
+    #         B,
+    #         solve=lambda A_jax, B_jax: triangular_solve(
+    #             A_jax, B_jax, left_side=True, lower=not UPPER, transpose_a=TRANSPOSE, unit_diagonal=UNITRIANGULAR
+    #         ),
+    #     ),
+    # ),
 ]
 
 
@@ -106,10 +131,12 @@ def run_sparse_triangular_solve_benchmark():
                                 nnz,
                                 layout,
                                 upper=UPPER,
-                                strict=not UNITRIANGULAR,
+                                strict=UNITRIANGULAR,
                                 indices_dtype=idx_dt,
                                 values_dtype=val_dt,
                                 device=device,
+                                well_conditioned=True,
+                                min_diag_value=1.0,
                             )
 
                             # Measure performance
@@ -120,11 +147,30 @@ def run_sparse_triangular_solve_benchmark():
                                 repeats=REPEATS,
                                 device=device,
                                 desc=f"{alg_name} ({layout_name})",
-                                warmup_runs=10,
+                                warmup_runs=WARMUP_RUNS,
                                 remove_outliers=True,
                             )
 
-                            # Print result
+                            # Calculate residual norm for solution accuracy
+                            with torch.no_grad():
+                                x = alg_fn(A_sparse, B)
+                                residual = A_sparse @ x - B
+                                resnorm = torch.norm(residual).cpu().item()
+                                relative_resnorm = resnorm / torch.norm(B).cpu().item()
+
+                            # # Calculate residual norm for solution accuracy
+                            # with torch.no_grad():
+                            #     x = alg_fn(A_sparse, B)
+                            #     # Calculate Ax - B for triangular solve verification
+                            #     if A_sparse.layout == torch.sparse_coo or A_sparse.layout == torch.sparse_csr:
+                            #         Ax = torch.sparse.mm(A_sparse, x)
+                            #     else:
+                            #         Ax = A_sparse @ x
+                            #     residual = Ax - B
+                            #     resnorm = torch.norm(residual).cpu().item()
+                            #     relative_resnorm = resnorm / torch.norm(B).cpu().item()
+
+                            # Print result with residual norm
                             print_result_row(
                                 f"{alg_name} ({layout_name})",
                                 (N, M),
@@ -137,6 +183,7 @@ def run_sparse_triangular_solve_benchmark():
                                 mem_bwd,
                                 std_mem_bwd,
                             )
+                            print(f"      📐 Residual norm: {resnorm:.2e}, Relative: {relative_resnorm:.2e}")
 
                             records.append(
                                 {
@@ -156,6 +203,8 @@ def run_sparse_triangular_solve_benchmark():
                                     "bwd_time_std_us": std_bwd,
                                     "bwd_mem_MB": mem_bwd,
                                     "bwd_mem_std_MB": std_mem_bwd,
+                                    "resnorm": resnorm,
+                                    "relative_resnorm": relative_resnorm,
                                 }
                             )
 
@@ -165,17 +214,23 @@ def run_sparse_triangular_solve_benchmark():
                             records.append(
                                 {
                                     "size": size_label,
-                                    "layout": "unknown",
+                                    "layout": layout_name,
                                     "algo": alg_name,
                                     "index_dt": str(idx_dt).split(".")[-1],
                                     "value_dt": str(val_dt).split(".")[-1],
                                     "N": N,
                                     "M": M,
                                     "nnz": nnz,
-                                    "fwd_time_s": 0.0,
-                                    "fwd_mem_MB": 0.0,
-                                    "bwd_time_s": 0.0,
-                                    "bwd_mem_MB": 0.0,
+                                    "fwd_time_us": np.nan,
+                                    "fwd_time_std_us": np.nan,
+                                    "fwd_mem_MB": np.nan,
+                                    "fwd_mem_std_MB": np.nan,
+                                    "bwd_time_us": np.nan,
+                                    "bwd_time_std_us": np.nan,
+                                    "bwd_mem_MB": np.nan,
+                                    "bwd_mem_std_MB": np.nan,
+                                    "resnorm": np.nan,
+                                    "relative_resnorm": np.nan,
                                     "error": str(e)[:100],
                                 }
                             )

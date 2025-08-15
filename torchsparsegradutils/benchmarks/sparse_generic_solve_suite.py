@@ -5,6 +5,16 @@ Sparse Generic Solve Benchmark - SuiteSparse Collection
 This benchmark tests sparse linear solve operations using matrices from
 the SuiteSparse Matrix Collection. It compares different iterative solvers
 for solving linear systems Ax = B where A is sparse.
+
+Fair Benchmarking Parameters:
+- All iterative solvers use consistent convergence criteria:
+  * Relative tolerance: 1e-5
+  * Absolute tolerance: 1e-8
+  * Maximum iterations: 1000
+  * No preconditioners (fair comparison)
+  * Verbose output disabled
+- Direct solvers (spsolve) ignore tolerance parameters as expected
+- BiCGSTAB uses 2x maxiter for matvec_max (2 matrix-vector products per iteration)
 """
 
 import sys
@@ -20,12 +30,11 @@ from tqdm import tqdm
 
 from torchsparsegradutils.sparse_solve import sparse_generic_solve
 from torchsparsegradutils.utils import convert_coo_to_csr, linear_cg, bicgstab, minres
-from jax.scipy.sparse.linalg import cg as cg_jax, bicgstab as bicgstab_jax
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
-from cupyx.scipy.sparse.linalg._solve import lsqr as lsqr_cu, minres as minres_cu, spsolve as spsolve_cu
+from jax.scipy.sparse.linalg import cg as cg_jax, bicgstab as bicgstab_jax
 import torchsparsegradutils.jax as tsgujax
 
-from benchmark_utils import (
+from torchsparsegradutils.benchmarks.benchmark_utils import (
     load_mat_from_suitesparse_collection,
     measure_op,
     print_benchmark_header,
@@ -36,9 +45,9 @@ from benchmark_utils import (
     save_benchmark_results,
 )
 
-M = 1  # number of columns in B
-REPEATS = 1
-WARMUP_RUNS = 0
+M = 1  # test 1D vector RHS only
+REPEATS = 10
+WARMUP_RUNS = 1
 # Only run on CUDA
 device = torch.device("cuda")
 assert torch.cuda.is_available(), "This benchmark requires a CUDA GPU"
@@ -47,19 +56,90 @@ INDEX_DTYPES = [torch.int32, torch.int64]
 VALUE_DTYPES = [torch.float32, torch.float64]
 LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
-# BUG: Sometimes I am getting: Backward OOM: attempted 36373575.7 MiB. Not sure what is causing this.
+# Common parameters for fair benchmarking across all iterative solvers
+SOLVER_TOL = 1e-5  # Relative tolerance for convergence
+SOLVER_ATOL = 1e-8  # Absolute tolerance for convergence
+SOLVER_MAXITER = 1000  # Maximum number of iterations
+SOLVER_VERBOSE = False  # Disable verbose output for benchmarking
+
+
+def make_generic_solver_with_tol(solver_func):
+    """Create a generic solver wrapper with consistent parameters."""
+    if solver_func == linear_cg:
+        # linear_cg uses LinearCGSettings with cg_tolerance parameter
+        from torchsparsegradutils.utils.linear_cg import LinearCGSettings
+
+        settings = LinearCGSettings(
+            cg_tolerance=SOLVER_TOL,
+            max_cg_iterations=SOLVER_MAXITER,
+            terminate_cg_by_size=False,  # Use fixed maxiter for fair comparison
+            verbose_linalg=SOLVER_VERBOSE,
+        )
+        return lambda A, B: sparse_generic_solve(
+            A, B, solve=solver_func, transpose_solve=solver_func, settings=settings
+        )
+    elif solver_func == bicgstab:
+        # bicgstab uses settings with reltol
+        from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
+
+        settings = BICGSTABSettings(
+            reltol=SOLVER_TOL,
+            abstol=SOLVER_ATOL,
+            matvec_max=SOLVER_MAXITER * 2,  # bicgstab uses 2 matvecs per iteration
+            precon=None,  # No preconditioner for fair comparison
+            # logger uses default _null_log (disabled logger) for benchmarking
+        )
+        return lambda A, B: sparse_generic_solve(
+            A, B, solve=solver_func, transpose_solve=solver_func, settings=settings
+        )
+    elif solver_func == minres:
+        # minres uses settings with minres_tolerance
+        from torchsparsegradutils.utils.minres import MINRESSettings
+
+        settings = MINRESSettings(
+            minres_tolerance=SOLVER_TOL, max_cg_iterations=SOLVER_MAXITER, verbose_linalg=SOLVER_VERBOSE
+        )
+        return lambda A, B: sparse_generic_solve(
+            A, B, solve=solver_func, transpose_solve=solver_func, settings=settings
+        )
+    else:
+        # Default fallback
+        return lambda A, B: sparse_generic_solve(A, B, solve=solver_func, transpose_solve=solver_func)
+
+
+def make_cupy_solver_with_tol(solver_name):
+    """Create a CuPy solver wrapper with consistent parameters."""
+    return lambda A, B: sparse_solve_c4t(
+        A, B, solve=solver_name, transpose_solve=solver_name, tol=SOLVER_TOL, atol=SOLVER_ATOL, maxiter=SOLVER_MAXITER
+    )
+
+
+def make_jax_solver_with_tol(solver_func):
+    """Create a JAX solver wrapper with consistent parameters."""
+    return lambda A, B: tsgujax.sparse_solve_j4t(
+        A, B, solve=solver_func, transpose_solve=solver_func, tol=SOLVER_TOL, atol=SOLVER_ATOL, maxiter=SOLVER_MAXITER
+    )
+
 
 ALGORITHMS = [
+    # Dense solve for reference
     ("dense.solve", lambda A, B: torch.linalg.solve(A.to_dense(), B)),
-    ("sparse_generic_cg", lambda A, B: sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg)),
-    ("sparse_generic_bicgstab", lambda A, B: sparse_generic_solve(A, B, solve=bicgstab, transpose_solve=bicgstab)),
-    ("sparse_generic_minres", lambda A, B: sparse_generic_solve(A, B, solve=minres, transpose_solve=minres)),
-    ("cupy_spsolve", lambda A, B: sparse_solve_c4t(A, B, solve=spsolve_cu, transpose_solve=spsolve_cu)),
-    ("cupy_lsqr", lambda A, B: sparse_solve_c4t(A, B, solve=lsqr_cu, transpose_solve=lsqr_cu)),
-    ("cupy_minres", lambda A, B: sparse_solve_c4t(A, B, solve=minres_cu, transpose_solve=minres_cu)),
-    ("jax_default", lambda A, B: tsgujax.sparse_solve_j4t(A, B)),
-    ("jax_cg", lambda A, B: tsgujax.sparse_solve_j4t(A, B, solve=cg_jax, transpose_solve=cg_jax)),
-    ("jax_bicgstab", lambda A, B: tsgujax.sparse_solve_j4t(A, B, solve=bicgstab_jax, transpose_solve=bicgstab_jax)),
+    # Sparse generic solve algorithms (from test_sparse_solve.py) with consistent tolerance
+    ("sparse_generic_cg", make_generic_solver_with_tol(linear_cg)),
+    ("sparse_generic_bicgstab", make_generic_solver_with_tol(bicgstab)),
+    ("sparse_generic_minres", make_generic_solver_with_tol(minres)),
+    # CuPy/SciPy solve algorithms (from test_cupy_sparse_solve.py) with consistent tolerance
+    ("cupy_cg", make_cupy_solver_with_tol("cg")),
+    ("cupy_cgs", make_cupy_solver_with_tol("cgs")),
+    ("cupy_minres", make_cupy_solver_with_tol("minres")),
+    ("cupy_gmres", make_cupy_solver_with_tol("gmres")),
+    (
+        "cupy_spsolve",
+        lambda A, B: sparse_solve_c4t(A, B, solve="spsolve", transpose_solve="spsolve"),
+    ),  # Direct solver - no tolerance
+    # JAX solve algorithms (from test_jax_sparse_solve.py) with consistent tolerance
+    ("jax_cg", make_jax_solver_with_tol(cg_jax)),
+    ("jax_bicgstab", make_jax_solver_with_tol(bicgstab_jax)),
 ]
 
 
@@ -123,12 +203,15 @@ def run_sparse_solve_benchmark():
                             x = alg_fn(A_sparse, B)
                             residual = A_sparse @ x - B
                             resnorm = torch.norm(residual).cpu().item()
+                            relative_resnorm = (
+                                resnorm / torch.norm(B).cpu().item() if torch.norm(B).cpu().item() > 0 else 0.0
+                            )
 
                         # Print result with residual norm
                         print_result_row(
                             alg_name, (N, M), t_fwd, std_fwd, mem_fwd, std_mem_fwd, t_bwd, std_bwd, mem_bwd, std_mem_bwd
                         )
-                        print(f"    📐 Residual norm: {resnorm:.2e}")
+                        print(f"    📐 Residual norm: {resnorm:.2e}, Relative: {relative_resnorm:.2e}")
 
                         records.append(
                             {
@@ -149,6 +232,7 @@ def run_sparse_solve_benchmark():
                                 "bwd_mem_MB": mem_bwd,
                                 "bwd_mem_std_MB": std_mem_bwd,
                                 "resnorm": resnorm,
+                                "relative_resnorm": relative_resnorm,
                             }
                         )
 
@@ -175,6 +259,7 @@ def run_sparse_solve_benchmark():
                                 "bwd_mem_std_MB": np.nan,
                                 "error": str(e)[:100],
                                 "resnorm": np.nan,
+                                "relative_resnorm": np.nan,
                             }
                         )
 
