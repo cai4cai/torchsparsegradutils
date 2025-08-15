@@ -442,8 +442,8 @@ def sparse_eye(
     values = torch.ones(size[-1], dtype=values_dtype, device=device)
 
     if layout == torch.sparse_coo:
-        if indices_dtype != torch.int64:
-            raise ValueError("For sparse_coo layout, indices_dtype has to be torch.int64.")
+        if indices_dtype not in [torch.int32, torch.int64]:
+            raise ValueError("For sparse_coo layout, indices_dtype can either be torch.int32 or torch.int64.")
 
         indices = torch.arange(0, size[-1], dtype=indices_dtype, device=device)
         indices = torch.stack([indices, indices], dim=0)
