@@ -10,7 +10,10 @@ from .utils import (
     stack_csr,
     sparse_eye,
 )
-from .random_sparse import rand_sparse, rand_sparse_tri
+from .random_sparse import (
+    rand_sparse,
+    rand_sparse_tri,
+)
 
 __all__ = [
     "linear_cg",
