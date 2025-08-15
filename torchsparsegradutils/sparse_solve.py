@@ -179,7 +179,95 @@ class SparseTriangularSolve(torch.autograd.Function):
         return gradA, gradB, None, None, None
 
 
-def sparse_generic_solve(A, B, solve=None, transpose_solve=None):
+def sparse_generic_solve(A, B, solve=None, transpose_solve=None, **kwargs):
+    """
+    Solve the sparse linear system Ax = B using custom iterative solvers.
+
+    This function provides a generic interface for sparse linear system solving using
+    custom solver functions. It supports both vector and multi-RHS systems and maintains
+    gradient computation through the sparse structure during backpropagation.
+
+    Args:
+        A (torch.Tensor): A 2D sparse square tensor in COO or CSR format. Must have
+                         shape (n, n) where n is the number of rows/columns.
+        B (torch.Tensor): A 1D or 2D tensor with shape (n,) or (n, k) where n matches
+                         the dimension of A and k is the number of right-hand sides.
+        solve (callable, optional): Solver function to use. Should be a function that takes
+                                   (A, B) and returns the solution X. Can be:
+            - None: Use default solver (minres from utils)
+            - torchsparsegradutils.utils.linear_cg: Conjugate Gradient (requires symmetric positive definite A)
+            - torchsparsegradutils.utils.bicgstab: Biconjugate Gradient Stabilized
+            - torchsparsegradutils.utils.minres: Minimum Residual (requires symmetric A, default)
+            - Custom solver function with signature solve(A, B) -> X
+        transpose_solve (callable, optional): Solver for the transpose system A^T x = b
+                                            used in backpropagation. Same options as solve.
+                                            If None, uses the same solver as solve.
+                                            For symmetric matrices (like with minres), can use the same solver.
+        **kwargs: Additional keyword arguments passed to the solver functions.
+                 Common parameters depend on the specific solver used:
+                 - tolerance (float): Tolerance for convergence (linear_cg)
+                 - settings: Settings objects for different solvers (BICGSTABSettings, MINRESSettings, etc.)
+
+    Returns:
+        torch.Tensor: Solution tensor X with the same shape as B.
+
+    Raises:
+        TypeError: If A is not a sparse tensor with supported layout (COO or CSR).
+        ValueError: If A is not square, if B has incompatible dimensions, or if inputs
+                   have mismatched dtypes.
+
+    Note:
+        - Both COO and CSR sparse formats are supported
+        - The function preserves the sparsity pattern during gradient computation
+        - Solver functions should be differentiable or the gradients will be computed
+          using the implicit function theorem
+        - For symmetric matrices, minres is often the best choice
+        - For general matrices, bicgstab or gmres-like solvers work better
+        - The transpose_solve is used during backpropagation; for symmetric matrices
+          it can be the same as the forward solve
+
+    Example:
+        >>> import torch
+        >>> from torchsparsegradutils.utils import linear_cg, bicgstab, minres
+        >>> # Create sparse system
+        >>> A = torch.sparse_coo_tensor([[0,1,1],[0,0,1]], [2.0,1.0,3.0], (2,2))
+        >>> B = torch.tensor([1.0, 2.0])
+        >>> # Solve with different solvers
+        >>> X1 = sparse_generic_solve(A, B, solve=linear_cg)    # Conjugate gradient
+        >>> X2 = sparse_generic_solve(A, B, solve=bicgstab)     # BiCGSTAB
+        >>> X3 = sparse_generic_solve(A, B)                     # Uses minres by default
+    """
+    # Input validation
+    if not isinstance(A, torch.Tensor) or not isinstance(B, torch.Tensor):
+        raise ValueError("Both A and B should be instances of torch.Tensor")
+
+    if A.layout not in (torch.sparse_coo, torch.sparse_csr):
+        raise TypeError(f"Unsupported sparse layout: {A.layout}. Only COO and CSR are supported.")
+
+    if A.dim() != 2:
+        raise ValueError("A must be a 2D tensor")
+
+    if A.shape[0] != A.shape[1]:
+        raise ValueError("A must be square")
+
+    if B.dim() not in (1, 2):
+        raise ValueError("B must be a 1D or 2D tensor")
+
+    if B.shape[0] != A.shape[0]:
+        raise ValueError(f"Incompatible dimensions: A has shape {A.shape}, B has shape {B.shape}")
+
+    # Check dtype compatibility (optional warning, not strict requirement)
+    if A.dtype != B.dtype:
+        import warnings
+
+        warnings.warn(
+            f"A and B have different dtypes: A={A.dtype}, B={B.dtype}. "
+            "This may cause unexpected behavior in some solvers.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    # Set default solvers
     if solve is None or transpose_solve is None:
         from .utils import minres
 
@@ -189,7 +277,7 @@ def sparse_generic_solve(A, B, solve=None, transpose_solve=None):
             # MINRES assumes A to be symmetric -> no need to transpose A
             transpose_solve = minres
 
-    return SparseGenericSolve.apply(A, B, solve, transpose_solve)
+    return SparseGenericSolve.apply(A, B, solve, transpose_solve, kwargs)
 
 
 class SparseGenericSolve(torch.autograd.Function):
@@ -208,11 +296,16 @@ class SparseGenericSolve(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, A, B, solve, transpose_solve):
+    def forward(ctx, A, B, solve, transpose_solve, kwargs):
         grad_flag = A.requires_grad or B.requires_grad
         ctx.transpose_solve = transpose_solve
+        ctx.kwargs = kwargs  # Store kwargs for backward pass
 
-        x = solve(A.detach(), B.detach())
+        x = solve(A.detach(), B.detach(), **kwargs)
+
+        # Ensure output dtype matches input dtype
+        if x.dtype != A.dtype:
+            x = x.to(dtype=A.dtype)
 
         x.requires_grad = grad_flag
 
@@ -230,7 +323,11 @@ class SparseGenericSolve(torch.autograd.Function):
             grad = grad.unsqueeze(-1)
 
         # Backprop rule: gradB = A^{-T} grad
-        gradB = ctx.transpose_solve(A, grad)
+        gradB = ctx.transpose_solve(A, grad, **ctx.kwargs)
+
+        # Ensure gradient dtype matches input dtype
+        if gradB.dtype != A.dtype:
+            gradB = gradB.to(dtype=A.dtype)
 
         # The gradient with respect to the matrix A seen as a dense matrix would
         # lead to a backprop rule as follows
@@ -260,6 +357,10 @@ class SparseGenericSolve(torch.autograd.Function):
         mgbx = mgradbselect * xselect
         gradA = torch.sum(mgbx, dim=1)
 
+        # Ensure gradient dtype matches input dtype
+        if gradA.dtype != A.dtype:
+            gradA = gradA.to(dtype=A.dtype)
+
         if A.layout == torch.sparse_coo:
             gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
@@ -269,4 +370,4 @@ class SparseGenericSolve(torch.autograd.Function):
         if is_vector:
             gradB = gradB.squeeze(-1)
 
-        return gradA, gradB, None, None
+        return gradA, gradB, None, None, None
