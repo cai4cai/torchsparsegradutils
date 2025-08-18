@@ -884,16 +884,16 @@ def generate_random_sparse_triangular_csr_matrix(
             # Ensure diagonal elements are sufficiently large for well-conditioning
             diagonal_mask = coo_idx[1] == coo_idx[2]  # For batched case, check row vs col indices
             if diagonal_mask.any():
-                # For batched case, we need to handle the values tensor shape differently
-                flat_diagonal_mask = diagonal_mask.repeat(size[0])
+                # The diagonal_mask already has the correct shape [batch_size * nnz]
+                # since coo_idx was created by concatenating batch_size matrices each with nnz elements
                 diagonal_values = (
-                    torch.rand(flat_diagonal_mask.sum(), dtype=values_dtype, device=device) * 0.5 + min_diag_value
+                    torch.rand(diagonal_mask.sum(), dtype=values_dtype, device=device) * 0.5 + min_diag_value
                 )
                 # Apply value_range to all values first
                 values = values * (value_range[1] - value_range[0]) + value_range[0]
                 # Then set well-conditioned diagonal values
                 values_flat = values.view(-1)
-                values_flat[flat_diagonal_mask] = diagonal_values
+                values_flat[diagonal_mask] = diagonal_values
                 values = values_flat.view(size[0], nnz)
             else:
                 values = values * (value_range[1] - value_range[0]) + value_range[0]
