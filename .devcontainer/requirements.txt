@@ -5,6 +5,7 @@ scipy
 ipykernel
 jupyter
 matplotlib
+seaborn
 tqdm
 pandas
 tabulate
