@@ -93,18 +93,37 @@ class BenchmarkVisualizer:
     def _create_memory_plot(self, combo_df, ax):
         """Create memory usage plot"""
         if "fwd_mem_MB" in combo_df.columns and "bwd_mem_MB" in combo_df.columns:
-            mem_stats = (
-                combo_df.groupby("algorithm")
-                .agg({"fwd_mem_MB": ["mean", "std"], "bwd_mem_MB": ["mean", "std"]})
-                .reset_index()
-            )
+            # Use existing std columns if available, otherwise calculate
+            fwd_std_col = "fwd_mem_std_MB" if "fwd_mem_std_MB" in combo_df.columns else None
+            bwd_std_col = "bwd_mem_std_MB" if "bwd_mem_std_MB" in combo_df.columns else None
+
+            if fwd_std_col and bwd_std_col:
+                # Use pre-calculated standard deviations
+                mem_stats = (
+                    combo_df.groupby("algorithm")
+                    .agg({"fwd_mem_MB": "mean", "bwd_mem_MB": "mean", fwd_std_col: "mean", bwd_std_col: "mean"})
+                    .reset_index()
+                )
+                fwd_mem_std = mem_stats[fwd_std_col].fillna(0).values
+                bwd_mem_std = mem_stats[bwd_std_col].fillna(0).values
+            else:
+                # Calculate standard deviations from grouped data
+                mem_stats = (
+                    combo_df.groupby("algorithm")
+                    .agg({"fwd_mem_MB": ["mean", "std"], "bwd_mem_MB": ["mean", "std"]})
+                    .reset_index()
+                )
+                fwd_mem_std = mem_stats[("fwd_mem_MB", "std")].fillna(0).values
+                bwd_mem_std = mem_stats[("bwd_mem_MB", "std")].fillna(0).values
 
             if not mem_stats.empty:
                 algorithms = mem_stats["algorithm"].values
-                fwd_mem = mem_stats[("fwd_mem_MB", "mean")].fillna(0).values
-                bwd_mem = mem_stats[("bwd_mem_MB", "mean")].fillna(0).values
-                fwd_mem_std = mem_stats[("fwd_mem_MB", "std")].fillna(0).values
-                bwd_mem_std = mem_stats[("bwd_mem_MB", "std")].fillna(0).values
+                if fwd_std_col and bwd_std_col:
+                    fwd_mem = mem_stats["fwd_mem_MB"].fillna(0).values
+                    bwd_mem = mem_stats["bwd_mem_MB"].fillna(0).values
+                else:
+                    fwd_mem = mem_stats[("fwd_mem_MB", "mean")].fillna(0).values
+                    bwd_mem = mem_stats[("bwd_mem_MB", "mean")].fillna(0).values
 
                 self._plot_phase_bars(
                     ax,
@@ -125,17 +144,36 @@ class BenchmarkVisualizer:
     def _create_time_plot(self, combo_df, ax):
         """Create computation time plot"""
         if "fwd_time_us" in combo_df.columns and "bwd_time_us" in combo_df.columns:
-            time_stats = (
-                combo_df.groupby("algorithm")
-                .agg({"fwd_time_us": ["mean", "std"], "bwd_time_us": ["mean", "std"]})
-                .reset_index()
-            )
+            # Use existing std columns if available, otherwise calculate
+            fwd_std_col = "fwd_time_std_us" if "fwd_time_std_us" in combo_df.columns else None
+            bwd_std_col = "bwd_time_std_us" if "bwd_time_std_us" in combo_df.columns else None
+
+            if fwd_std_col and bwd_std_col:
+                # Use pre-calculated standard deviations
+                time_stats = (
+                    combo_df.groupby("algorithm")
+                    .agg({"fwd_time_us": "mean", "bwd_time_us": "mean", fwd_std_col: "mean", bwd_std_col: "mean"})
+                    .reset_index()
+                )
+                fwd_time_std = time_stats[fwd_std_col].fillna(0).values
+                bwd_time_std = time_stats[bwd_std_col].fillna(0).values
+            else:
+                # Calculate standard deviations from grouped data
+                time_stats = (
+                    combo_df.groupby("algorithm")
+                    .agg({"fwd_time_us": ["mean", "std"], "bwd_time_us": ["mean", "std"]})
+                    .reset_index()
+                )
+                fwd_time_std = time_stats[("fwd_time_us", "std")].fillna(0).values
+                bwd_time_std = time_stats[("bwd_time_us", "std")].fillna(0).values
 
             algorithms = time_stats["algorithm"].values
-            fwd_time = time_stats[("fwd_time_us", "mean")].fillna(0).values
-            bwd_time = time_stats[("bwd_time_us", "mean")].fillna(0).values
-            fwd_time_std = time_stats[("fwd_time_us", "std")].fillna(0).values
-            bwd_time_std = time_stats[("bwd_time_us", "std")].fillna(0).values
+            if fwd_std_col and bwd_std_col:
+                fwd_time = time_stats["fwd_time_us"].fillna(0).values
+                bwd_time = time_stats["bwd_time_us"].fillna(0).values
+            else:
+                fwd_time = time_stats[("fwd_time_us", "mean")].fillna(0).values
+                bwd_time = time_stats[("bwd_time_us", "mean")].fillna(0).values
 
             self._plot_phase_bars(
                 ax,
@@ -388,7 +426,13 @@ class BenchmarkVisualizer:
             else:
                 algo_col = "algo"
 
-            perf_data = df.groupby(algo_col)["fwd_time_us"].agg(["mean", "std"]).reset_index()
+            # Use existing std columns if available, otherwise calculate
+            if "fwd_time_std_us" in df.columns:
+                perf_data = df.groupby(algo_col).agg({"fwd_time_us": "mean", "fwd_time_std_us": "mean"}).reset_index()
+                perf_data.columns = [algo_col, "mean", "std"]
+            else:
+                perf_data = df.groupby(algo_col)["fwd_time_us"].agg(["mean", "std"]).reset_index()
+
             perf_data = perf_data.sort_values("mean")
 
             axes[i, 0].barh(perf_data[algo_col], perf_data["mean"], xerr=perf_data["std"])
@@ -407,22 +451,46 @@ class BenchmarkVisualizer:
         plt.savefig(self.output_dir / "suite_performance.pdf", dpi=300, bbox_inches="tight")
         plt.close()
 
+    def _get_target_algorithms(self, dataset_name):
+        """Get the target algorithms for scaling analysis based on dataset name"""
+        if "sparse_mm" in dataset_name:
+            return ["sparse_mm"]
+        elif "triangular_solve" in dataset_name:
+            return ["sparse_triangular_solve"]
+        elif "generic_solve" in dataset_name:
+            # Return algorithms that start with "sparse_generic_"
+            return ["sparse_generic_cg", "sparse_generic_bicgstab", "sparse_generic_minres", "sparse_generic_lsmr"]
+        else:
+            return []  # Return empty list for unknown datasets
+
     def _plot_performance_scaling(self, scaling_datasets, axes, idx_dt, val_dt, layout):
         """Helper method to plot performance scaling by problem size"""
         for name, df in scaling_datasets:
-            if all(col in df.columns for col in ["index_dt", "value_dt", "layout"]):
-                combo_df = df[
-                    (df["index_dt"] == idx_dt) & (df["value_dt"] == val_dt) & (df["layout"] == layout)
-                ].dropna(subset=["fwd_time_us"])
+            if all(col in df.columns for col in ["index_dt", "value_dt", "layout", "N"]):
+                # Filter for target algorithms only
+                target_algos = self._get_target_algorithms(name)
+                if not target_algos:
+                    continue
 
-                if len(combo_df) > 0 and "size" in df.columns:
-                    size_scaling = combo_df.groupby("size")["fwd_time_us"].mean()
+                # Filter data for target algorithms and configuration
+                algo_col = "algo" if "algo" in df.columns else "algorithm"
+                combo_df = df[
+                    (df["index_dt"] == idx_dt)
+                    & (df["value_dt"] == val_dt)
+                    & (df["layout"] == layout)
+                    & (df[algo_col].isin(target_algos))
+                ].dropna(subset=["fwd_time_us", "N"])
+
+                if len(combo_df) > 0:
+                    # Use actual matrix dimension N instead of categorical size
+                    size_scaling = combo_df.groupby("N")["fwd_time_us"].mean()
                     if len(size_scaling) > 1:
                         axes[0, 0].plot(size_scaling.index, size_scaling.values, "o-", label=name.replace("_", " "))
 
-        axes[0, 0].set_title("Performance Scaling by Problem Size")
+        axes[0, 0].set_title("Performance Scaling by Matrix Size")
         axes[0, 0].set_ylabel("Forward Time (μs)")
-        axes[0, 0].set_xlabel("Problem Size")
+        axes[0, 0].set_xlabel("Matrix Size (N)")
+        axes[0, 0].set_xscale("log")
         axes[0, 0].set_yscale("log")
         axes[0, 0].legend()
 
@@ -430,8 +498,17 @@ class BenchmarkVisualizer:
         """Helper method to plot performance vs number of non-zeros"""
         for name, df in scaling_datasets:
             if all(col in df.columns for col in ["index_dt", "value_dt", "layout", "nnz"]):
+                # Filter for target algorithms only
+                target_algos = self._get_target_algorithms(name)
+                if not target_algos:
+                    continue
+
+                algo_col = "algo" if "algo" in df.columns else "algorithm"
                 combo_df = df[
-                    (df["index_dt"] == idx_dt) & (df["value_dt"] == val_dt) & (df["layout"] == layout)
+                    (df["index_dt"] == idx_dt)
+                    & (df["value_dt"] == val_dt)
+                    & (df["layout"] == layout)
+                    & (df[algo_col].isin(target_algos))
                 ].dropna(subset=["fwd_time_us", "nnz"])
 
                 if len(combo_df) > 0:
@@ -452,8 +529,17 @@ class BenchmarkVisualizer:
         memory_data_found = False
         for name, df in scaling_datasets:
             if all(col in df.columns for col in ["index_dt", "value_dt", "layout", "fwd_mem_MB", "N"]):
+                # Filter for target algorithms only
+                target_algos = self._get_target_algorithms(name)
+                if not target_algos:
+                    continue
+
+                algo_col = "algo" if "algo" in df.columns else "algorithm"
                 combo_df = df[
-                    (df["index_dt"] == idx_dt) & (df["value_dt"] == val_dt) & (df["layout"] == layout)
+                    (df["index_dt"] == idx_dt)
+                    & (df["value_dt"] == val_dt)
+                    & (df["layout"] == layout)
+                    & (df[algo_col].isin(target_algos))
                 ].dropna(subset=["fwd_mem_MB", "N"])
 
                 if len(combo_df) > 0:
