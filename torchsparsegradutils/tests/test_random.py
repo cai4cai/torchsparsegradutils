@@ -696,7 +696,7 @@ def test_make_spd_sparse_symmetry(layout, device):
 
     # Check symmetry (A = A^T)
     A_dense_T = A_dense.t()
-    assert torch.allclose(A_dense, A_dense_T, atol=1e0), "Generated matrix is not symmetric"
+    assert torch.allclose(A_dense, A_dense_T), "Generated matrix is not symmetric"
 
 
 @pytest.mark.parametrize("n", [4, 8, 16, 32])

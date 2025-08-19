@@ -917,9 +917,11 @@ def make_spd_sparse(n, layout, value_dtype, index_dtype, device, sparsity_ratio=
         value_dtype (torch.dtype): Data type for values
         index_dtype (torch.dtype): Data type for indices (may not be preserved due to PyTorch limitations)
         device (torch.device): Device to create tensors on
-        sparsity_ratio (float, optional): Approximate fraction of off-diagonal elements to zero out.
+        sparsity_ratio (float, optional): Approximate fraction of upper-triangular off-diagonal elements to zero out.
+            Each zeroed upper-triangular element also zeros its symmetric lower-triangular counterpart.
             Only used if nz is None. Defaults to 0.5.
-        nz (int, optional): If provided, randomly zero out exactly this many off-diagonal elements.
+        nz (int, optional): If provided, randomly zero out exactly this many symmetric pairs of off-diagonal elements.
+            Each pair consists of elements (i,j) and (j,i) where i != j. Total elements zeroed = 2*nz.
             If None, use sparsity_ratio instead. Defaults to None.
 
     Returns:
@@ -927,8 +929,12 @@ def make_spd_sparse(n, layout, value_dtype, index_dtype, device, sparsity_ratio=
 
     Note:
         The matrix is constructed as M @ M.T + n*I where M is random and I is identity.
-        This ensures positive definiteness. Then we randomly zero out off-diagonal elements
-        to create sparsity while preserving positive definiteness.
+        This ensures positive definiteness. Then we randomly zero out symmetric pairs of
+        off-diagonal elements to create sparsity while preserving both positive definiteness
+        and symmetry.
+
+        Symmetric zeroing: When element (i,j) is zeroed, element (j,i) is also zeroed to
+        maintain matrix symmetry. This is critical for maintaining the SPD property.
 
         This function returns unbatched (2D) sparse tensors only. For batched operations,
         use the appropriate functions from this module.
@@ -940,30 +946,39 @@ def make_spd_sparse(n, layout, value_dtype, index_dtype, device, sparsity_ratio=
     M = torch.randn(n, n, dtype=value_dtype, device=device)
     A_dense = M @ M.t() + n * torch.eye(n, dtype=value_dtype, device=device)
 
-    # Create sparsity by zeroing out random off-diagonal elements
+    # Create sparsity by zeroing out random off-diagonal elements SYMMETRICALLY
     if nz is not None:
         # Use exact number of elements to zero out
         if nz > 0:
-            # Get off-diagonal mask
-            mask = ~torch.eye(n, dtype=torch.bool, device=device)
-            off_diag_indices = torch.nonzero(mask, as_tuple=False)
+            # Get upper triangular off-diagonal mask (we'll mirror to lower triangle)
+            mask = torch.triu(torch.ones(n, n, dtype=torch.bool, device=device), diagonal=1)
+            upper_off_diag_indices = torch.nonzero(mask, as_tuple=False)
 
             # Ensure we don't try to zero out more elements than exist
-            n_to_zero = min(nz, off_diag_indices.size(0))
+            # Each upper triangular element corresponds to a pair (i,j) and (j,i)
+            n_to_zero = min(nz // 2, upper_off_diag_indices.size(0))  # Divide by 2 since we zero pairs
             if n_to_zero > 0:
-                selected_indices = off_diag_indices[torch.randperm(off_diag_indices.size(0), device=device)[:n_to_zero]]
+                selected_indices = upper_off_diag_indices[
+                    torch.randperm(upper_off_diag_indices.size(0), device=device)[:n_to_zero]
+                ]
+                # Zero out both (i,j) and (j,i) to maintain symmetry
                 A_dense[selected_indices[:, 0], selected_indices[:, 1]] = 0
+                A_dense[selected_indices[:, 1], selected_indices[:, 0]] = 0
     elif sparsity_ratio > 0:
         # Use sparsity ratio to determine how many elements to zero out
-        # Get off-diagonal mask
-        mask = ~torch.eye(n, dtype=torch.bool, device=device)
-        off_diag_indices = torch.nonzero(mask, as_tuple=False)
+        # Get upper triangular off-diagonal mask (we'll mirror to lower triangle)
+        mask = torch.triu(torch.ones(n, n, dtype=torch.bool, device=device), diagonal=1)
+        upper_off_diag_indices = torch.nonzero(mask, as_tuple=False)
 
-        # Randomly select elements to zero out
-        n_to_zero = int(sparsity_ratio * off_diag_indices.size(0))
+        # Randomly select elements to zero out (each selection zeros a symmetric pair)
+        n_to_zero = int(sparsity_ratio * upper_off_diag_indices.size(0))
         if n_to_zero > 0:
-            selected_indices = off_diag_indices[torch.randperm(off_diag_indices.size(0), device=device)[:n_to_zero]]
+            selected_indices = upper_off_diag_indices[
+                torch.randperm(upper_off_diag_indices.size(0), device=device)[:n_to_zero]
+            ]
+            # Zero out both (i,j) and (j,i) to maintain symmetry
             A_dense[selected_indices[:, 0], selected_indices[:, 1]] = 0
+            A_dense[selected_indices[:, 1], selected_indices[:, 0]] = 0
 
     # Convert to sparse format
     idx = A_dense.nonzero(as_tuple=False).t()

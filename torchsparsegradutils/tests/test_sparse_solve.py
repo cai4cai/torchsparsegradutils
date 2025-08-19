@@ -23,6 +23,8 @@ VALUE_DTYPES = [torch.float32, torch.float64]
 LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 SOLVES = [None, linear_cg, bicgstab, minres]
 
+ATOL = 1e-6
+
 
 # Define Test Names:
 def data_id(shapes):
@@ -91,13 +93,7 @@ def test_solve_forward_routine(layout, solve, device, value_dtype, index_dtype, 
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=solve, transpose_solve=solve)
 
-    # NOTE: bicgstab seems to have tighter tolerances
-    # NOTE: increasing num_zero increases the error
-
-    if solve == bicgstab:
-        assert torch.allclose(X_test, X_ref, atol=1e-7)
-    else:
-        assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -120,9 +116,8 @@ def test_solve_backward_routine(layout, solve, device, value_dtype, index_dtype,
     res_test.backward(grad_output)
 
     nz_mask = As1.grad.to_dense() != 0.0
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=1e-2)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)
-    # NOTE: Tolerance seems a bit loose. But it can be much tighter with less zeros in A
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -136,13 +131,13 @@ def test_linear_cg_kwargs(device, value_dtype, layout):
 
     # Test with custom LinearCGSettings
     settings = LinearCGSettings(
-        cg_tolerance=1e-6, max_cg_iterations=500, terminate_cg_by_size=False, verbose_linalg=False
+        cg_tolerance=ATOL, max_cg_iterations=500, terminate_cg_by_size=False, verbose_linalg=False
     )
 
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg, settings=settings)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -155,12 +150,12 @@ def test_bicgstab_kwargs(device, value_dtype, layout):
     B = torch.rand(n, dtype=value_dtype, device=device)
 
     # Test with custom BICGSTABSettings
-    settings = BICGSTABSettings(reltol=1e-6, abstol=1e-8, matvec_max=1000, precon=None)
+    settings = BICGSTABSettings(reltol=ATOL, abstol=1e-8, matvec_max=1000, precon=None)
 
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=bicgstab, transpose_solve=bicgstab, settings=settings)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -173,12 +168,12 @@ def test_minres_kwargs(device, value_dtype, layout):
     B = torch.rand(n, dtype=value_dtype, device=device)
 
     # Test with custom MINRESSettings
-    settings = MINRESSettings(minres_tolerance=1e-6, max_cg_iterations=500, verbose_linalg=False)
+    settings = MINRESSettings(minres_tolerance=ATOL, max_cg_iterations=500, verbose_linalg=False)
 
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=minres, transpose_solve=minres, settings=settings)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -197,7 +192,7 @@ def test_kwargs_backward_pass(device, value_dtype, layout):
 
     # Test with custom settings
     settings = LinearCGSettings(
-        cg_tolerance=1e-6, max_cg_iterations=500, terminate_cg_by_size=False, verbose_linalg=False
+        cg_tolerance=ATOL, max_cg_iterations=500, terminate_cg_by_size=False, verbose_linalg=False
     )
 
     res_ref = torch.linalg.solve(Ad2, Bd2)
@@ -210,8 +205,8 @@ def test_kwargs_backward_pass(device, value_dtype, layout):
 
     # Check gradients
     nz_mask = As1.grad.to_dense() != 0.0
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=1e-2)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -233,7 +228,7 @@ def test_multiple_kwargs(device, value_dtype):
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg, settings=settings)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -267,10 +262,10 @@ def test_kwargs_with_different_solvers_same_matrix():
     X_minres = sparse_generic_solve(A, B, solve=minres, transpose_solve=minres, settings=minres_settings)
 
     # All solutions should be close to reference
-    assert torch.allclose(X_cg, X_ref, atol=1e-3)
-    assert torch.allclose(X_bicgstab, X_ref, atol=1e-3)
-    assert torch.allclose(X_minres, X_ref, atol=1e-3)
+    assert torch.allclose(X_cg, X_ref, atol=ATOL)
+    assert torch.allclose(X_bicgstab, X_ref, atol=ATOL)
+    assert torch.allclose(X_minres, X_ref, atol=ATOL)
 
     # All solutions should be close to each other
-    assert torch.allclose(X_cg, X_minres, atol=1e-3)
-    assert torch.allclose(X_bicgstab, X_minres, atol=1e-3)
+    assert torch.allclose(X_cg, X_minres, atol=ATOL)
+    assert torch.allclose(X_bicgstab, X_minres, atol=ATOL)

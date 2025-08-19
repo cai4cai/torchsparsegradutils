@@ -30,6 +30,8 @@ VALUE_DTYPES = [torch.float32, torch.float64]
 LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 SOLVERS = [None, cg, bicgstab]
 
+ATOL = 1e-6
+
 
 def data_id(d):
     return d[0]
@@ -92,7 +94,7 @@ def test_solve_forward_j4t(layout, device, value_dtype, index_dtype, solver, sha
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = tsgujax.sparse_solve_j4t(A_sp, B, solve=solver)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -112,8 +114,8 @@ def test_solve_backward_j4t(layout, device, value_dtype, index_dtype, solver, sh
     X2.backward(grad_out)
     nz = A_sp.grad.to_dense() != 0
     # same tolerances as generic solve
-    assert torch.allclose(A_sp.grad.to_dense()[nz], Ad.grad[nz], atol=1e-2)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)
+    assert torch.allclose(A_sp.grad.to_dense()[nz], Ad.grad[nz], atol=ATOL)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -127,7 +129,7 @@ def test_jax_cg_kwargs(device, value_dtype, layout):
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = tsgujax.sparse_solve_j4t(A_sp, B, solve=cg, transpose_solve=cg, tol=1e-6, atol=1e-8, maxiter=500)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -143,7 +145,7 @@ def test_jax_bicgstab_kwargs(device, value_dtype, layout):
         A_sp, B, solve=bicgstab, transpose_solve=bicgstab, tol=1e-6, atol=1e-8, maxiter=1000
     )
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -169,8 +171,8 @@ def test_jax_kwargs_backward_pass(device, value_dtype, layout):
 
     # Check gradients
     nz_mask = A_sp1.grad.to_dense() != 0.0
-    assert torch.allclose(A_sp1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=1e-2)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)
+    assert torch.allclose(A_sp1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -187,7 +189,7 @@ def test_jax_multiple_kwargs(device, value_dtype):
         A_sp, B, solve=bicgstab, transpose_solve=bicgstab, tol=1e-5, atol=1e-8, maxiter=1000
     )
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -213,8 +215,8 @@ def test_jax_kwargs_with_different_solvers():
     )
 
     # All solutions should be close to reference
-    assert torch.allclose(X_cg, X_ref, atol=1e-2)
-    assert torch.allclose(X_bicgstab, X_ref, atol=1e-2)
+    assert torch.allclose(X_cg, X_ref, atol=ATOL)
+    assert torch.allclose(X_bicgstab, X_ref, atol=ATOL)
 
     # Solutions should be close to each other
-    assert torch.allclose(X_cg, X_bicgstab, atol=1e-2)
+    assert torch.allclose(X_cg, X_bicgstab, atol=ATOL)
