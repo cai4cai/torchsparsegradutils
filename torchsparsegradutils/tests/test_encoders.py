@@ -236,6 +236,8 @@ def test_pairwise_coo_indices_dtype_and_device(indices_dtype, device):
         radius, volume_shape, diag=True, upper=False, dtype=indices_dtype, device=device
     )
     for k, indices in indices_dict.items():
+        # NOTE: The calc_pariwise_coo_indices function returns regular tensors, not sparse tensors,
+        # so PyTorch's int32->int64 conversion only happens when creating sparse COO tensors
         assert indices.dtype == indices_dtype
         assert indices.device.type == device.type
 
@@ -403,10 +405,15 @@ def test_PVE_dtype_device(batch_size, layout, indices_dtype, values_dtype, devic
     assert sparse_matrix.values().device.type == device.type
 
     if layout == torch.sparse_coo:
-        assert sparse_matrix.indices().dtype == indices_dtype
+        # NOTE: PyTorch automatically converts int32 indices to int64 for COO tensors
+        if indices_dtype == torch.int32:
+            assert sparse_matrix.indices().dtype == torch.int64, "PyTorch converts int32 to int64 for COO tensors"
+        else:
+            assert sparse_matrix.indices().dtype == indices_dtype
         assert sparse_matrix.indices().device.type == device.type
 
     elif layout == torch.sparse_csr:
+        # CSR tensors preserve the requested index dtype
         assert sparse_matrix.crow_indices().dtype == indices_dtype
         assert sparse_matrix.crow_indices().device.type == device.type
         assert sparse_matrix.col_indices().dtype == indices_dtype
