@@ -36,8 +36,8 @@ from benchmark_utils import (
     save_benchmark_results,
 )
 
-REPEATS = 1
-WARMUP_RUNS = 0
+REPEATS = 10
+WARMUP_RUNS = 1
 
 # Only run on CUDA
 device = torch.device("cuda")
