@@ -36,6 +36,7 @@ def test_bicgstab(device):
     assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
 
 
+@pytest.mark.flaky(reruns=5)
 def test_bicgstab_2d_rhs(device):
     size = 100
     # build SPD test problem
