@@ -1,0 +1,385 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.2 20190208//EN"
+                  "JATS-publishing1.dtd">
+<article xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" dtd-version="1.2" article-type="other">
+<front>
+<journal-meta>
+<journal-id></journal-id>
+<journal-title-group>
+<journal-title>Journal of Open Source Software</journal-title>
+<abbrev-journal-title>JOSS</abbrev-journal-title>
+</journal-title-group>
+<issn publication-format="electronic">2475-9066</issn>
+<publisher>
+<publisher-name>Open Journals</publisher-name>
+</publisher>
+</journal-meta>
+<article-meta>
+<article-id pub-id-type="publisher-id">0</article-id>
+<article-id pub-id-type="doi">N/A</article-id>
+<title-group>
+<article-title>Sparsity-preserving gradient utility tools for
+PyTorch</article-title>
+</title-group>
+<contrib-group>
+<contrib contrib-type="author">
+<contrib-id contrib-id-type="orcid">https://orcid.org/0009-0005-2309-5238</contrib-id>
+<name>
+<surname>Barfoot</surname>
+<given-names>Theodore</given-names>
+</name>
+<xref ref-type="aff" rid="aff-1"/>
+</contrib>
+<contrib contrib-type="author">
+<contrib-id contrib-id-type="orcid">https://orcid.org/0000-0002-4897-9356</contrib-id>
+<name>
+<surname>Glocker</surname>
+<given-names>Ben</given-names>
+</name>
+<xref ref-type="aff" rid="aff-2"/>
+</contrib>
+<contrib contrib-type="author">
+<contrib-id contrib-id-type="orcid">https://orcid.org/0000-0003-1794-0456</contrib-id>
+<name>
+<surname>Vercauteren</surname>
+<given-names>Tom</given-names>
+</name>
+<xref ref-type="aff" rid="aff-1"/>
+</contrib>
+<aff id="aff-1">
+<institution-wrap>
+<institution>King’s College London, London, UK</institution>
+</institution-wrap>
+</aff>
+<aff id="aff-2">
+<institution-wrap>
+<institution>Imperial College London, London, UK</institution>
+</institution-wrap>
+</aff>
+</contrib-group>
+<pub-date date-type="pub" publication-format="electronic" iso-8601-date="2025-08-15">
+<day>15</day>
+<month>8</month>
+<year>2025</year>
+</pub-date>
+<volume>¿VOL?</volume>
+<issue>¿ISSUE?</issue>
+<fpage>¿PAGE?</fpage>
+<permissions>
+<copyright-statement>Authors of papers retain copyright and release the
+work under a Creative Commons Attribution 4.0 International License (CC
+BY 4.0)</copyright-statement>
+<copyright-year>1970</copyright-year>
+<copyright-holder>The article authors</copyright-holder>
+<license license-type="open-access" xlink:href="https://creativecommons.org/licenses/by/4.0/">
+<license-p>Authors of papers retain copyright and release the work under
+a Creative Commons Attribution 4.0 International License (CC BY
+4.0)</license-p>
+</license>
+</permissions>
+<kwd-group kwd-group-type="author">
+<kwd>Python</kwd>
+<kwd>PyTorch</kwd>
+<kwd>sparse tensors</kwd>
+<kwd>machine learning</kwd>
+<kwd>deep learning</kwd>
+</kwd-group>
+</article-meta>
+</front>
+<body>
+<sec id="summary">
+  <title>Summary</title>
+  <p>The <monospace>torchsparsegradutils</monospace> package provides
+  gradient-preserving sparse tensor operations for PyTorch
+  (<xref alt="Paszke et al., 2019" rid="ref-pytorch" ref-type="bibr">Paszke
+  et al., 2019</xref>), addressing the critical limitation that
+  PyTorch’s native sparse operations do not support sparse gradients
+  during backpropagation. This package enables memory-efficient
+  optimization of high-dimensional models by maintaining sparsity
+  patterns throughout the entire forward and backward pass
+  computation.</p>
+  <p>Key features include: (1) memory-efficient sparse matrix
+  multiplication with sparse gradient preservation, (2) sparse
+  triangular and generic linear system solvers with multiple algorithmic
+  backends (BICGSTAB, CG, LSMR, MINRES), (3) cross-platform sparse
+  solver wrappers for CuPy
+  (<xref alt="Okuta et al., 2017" rid="ref-cupy" ref-type="bibr">Okuta
+  et al., 2017</xref>) and JAX
+  (<xref alt="Bradbury et al., 2018" rid="ref-jax" ref-type="bibr">Bradbury
+  et al., 2018</xref>), (4) sparse multivariate normal distributions
+  with LL^T and LDL^T parameterizations supporting millions of
+  dimensions, and (5) specialized encoders for spatial neighborhood
+  relationships in volumetric data.</p>
+  <p>The package addresses PyTorch issue #41128 by implementing custom
+  autograd functions that preserve sparsity in gradients, enabling
+  practical training of models with sparse covariance structures on
+  high-dimensional data where dense alternatives become computationally
+  intractable.</p>
+</sec>
+<sec id="statement-of-need">
+  <title>Statement of need</title>
+  <p>Sparse tensors are essential for computationally tractable machine
+  learning on high-dimensional data, yet PyTorch’s sparse tensor
+  operations suffer from a critical limitation: gradients are computed
+  in dense format even when the forward pass maintains sparsity. This
+  results in prohibitive memory usage that scales quadratically with
+  problem dimension rather than linearly with the number of non-zero
+  elements.</p>
+  <p>For applications requiring sparse covariance modeling—such as
+  medical imaging with millions of voxels, spatial statistics, and
+  large-scale Gaussian processes—dense gradient computation renders
+  optimization infeasible. A sparse covariance matrix with 1 million
+  dimensions and 0.1% sparsity contains 1 billion non-zero elements, but
+  dense gradients would require storing 1 trillion parameters.</p>
+  <p>This package solves this fundamental limitation by implementing
+  custom autograd functions that preserve sparsity patterns throughout
+  both forward and backward passes. Our sparse multivariate normal
+  distribution enables optimization of million-dimensional Gaussian
+  models with memory usage scaling as O(nnz) rather than O(n²), where
+  nnz is the number of non-zero elements and n is the dimension.</p>
+  <p>Beyond memory efficiency, the package addresses the algorithmic
+  challenge of sparse linear system solving by providing multiple
+  iterative solver backends with automatic differentiation support. This
+  enables end-to-end optimization of complex probabilistic models that
+  would be computationally intractable with existing PyTorch sparse
+  operations.</p>
+</sec>
+<sec id="mathematics">
+  <title>Mathematics</title>
+  <sec id="sparse-matrix-operations">
+    <title>Sparse Matrix Operations</title>
+    <sec id="sparse-matrix-multiplication-with-gradient-preservation">
+      <title>Sparse Matrix Multiplication with Gradient
+      Preservation</title>
+      <p>The package implements sparse matrix multiplication
+      <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{C} = \boldsymbol{A}\boldsymbol{B}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐂</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐀</mml:mi><mml:mi>𝐁</mml:mi></mml:mrow></mml:math></alternatives></inline-formula>
+      where <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{A} \in \mathbb{R}^{m \times n}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>m</mml:mi><mml:mo>×</mml:mo><mml:mi>n</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+      is sparse and <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{B} \in \mathbb{R}^{n \times p}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐁</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+      is dense. The forward pass uses PyTorch’s native
+      <monospace>torch.sparse.mm</monospace>, but the backward pass is
+      reimplemented to preserve sparsity patterns.</p>
+      <p>For sparse matrix <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{A}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐀</mml:mi></mml:math></alternatives></inline-formula>
+      with indices <inline-formula><alternatives>
+      <tex-math><![CDATA[(\boldsymbol{A}_{\text{rows}}, \boldsymbol{A}_{\text{cols}})]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">rows</mml:mtext></mml:msub><mml:mo>,</mml:mo><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">cols</mml:mtext></mml:msub><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow></mml:math></alternatives></inline-formula>
+      and values <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{A}_{\text{values}}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">values</mml:mtext></mml:msub></mml:math></alternatives></inline-formula>,
+      the gradient with respect to <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{A}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐀</mml:mi></mml:math></alternatives></inline-formula>’s
+      values is computed as:</p>
+      <p><disp-formula><alternatives>
+      <tex-math><![CDATA[
+      \frac{\partial L}{\partial \boldsymbol{A}_{\text{values}}} = \left(\frac{\partial L}{\partial \boldsymbol{C}}[\boldsymbol{A}_{\text{rows}}, :] \odot \boldsymbol{B}[\boldsymbol{A}_{\text{cols}}, :]\right) \boldsymbol{1}
+      ]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">values</mml:mtext></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐂</mml:mi></mml:mrow></mml:mfrac><mml:mrow><mml:mo stretchy="true" form="prefix">[</mml:mo><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">rows</mml:mtext></mml:msub><mml:mo>,</mml:mo><mml:mo>:</mml:mo><mml:mo stretchy="true" form="postfix">]</mml:mo></mml:mrow><mml:mo>⊙</mml:mo><mml:mi>𝐁</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">[</mml:mo><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">cols</mml:mtext></mml:msub><mml:mo>,</mml:mo><mml:mo>:</mml:mo><mml:mo stretchy="true" form="postfix">]</mml:mo></mml:mrow><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:mn>𝟏</mml:mn></mml:mrow></mml:math></alternatives></disp-formula></p>
+      <p>where <inline-formula><alternatives>
+      <tex-math><![CDATA[\odot]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>⊙</mml:mi></mml:math></alternatives></inline-formula>
+      denotes element-wise multiplication, and
+      <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{1}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mn>𝟏</mml:mn></mml:math></alternatives></inline-formula>
+      is a summation vector. This selective computation maintains O(nnz)
+      memory complexity for gradients rather than O(mn).</p>
+    </sec>
+    <sec id="sparse-linear-system-solvers">
+      <title>Sparse Linear System Solvers</title>
+      <p>The package provides multiple approaches for solving sparse
+      linear systems <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{A}\boldsymbol{x} = \boldsymbol{b}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mi>𝐱</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐛</mml:mi></mml:mrow></mml:math></alternatives></inline-formula>:</p>
+      <p><bold>Triangular Systems</bold>: For triangular matrices
+      <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{T} \in \mathbb{R}^{n \times n}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐓</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>n</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>,
+      we use forward/backward substitution. The gradient computation
+      during backpropagation follows:</p>
+      <p><disp-formula><alternatives>
+      <tex-math><![CDATA[
+      \frac{\partial L}{\partial \boldsymbol{b}} = \boldsymbol{T}^{-T}\frac{\partial L}{\partial \boldsymbol{x}}, \quad \frac{\partial L}{\partial \boldsymbol{T}_{\text{values}}} = -\left(\boldsymbol{T}^{-T}\frac{\partial L}{\partial \boldsymbol{x}}\right) \otimes \boldsymbol{x}^T
+      ]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐛</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:msup><mml:mi>𝐓</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>T</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo>,</mml:mo><mml:mspace width="1.0em"></mml:mspace><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:msub><mml:mi>𝐓</mml:mi><mml:mtext mathvariant="normal">values</mml:mtext></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mi>−</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:msup><mml:mi>𝐓</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>T</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:mo>⊗</mml:mo><mml:msup><mml:mi>𝐱</mml:mi><mml:mi>T</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></disp-formula></p>
+      <p>where <inline-formula><alternatives>
+      <tex-math><![CDATA[\otimes]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>⊗</mml:mi></mml:math></alternatives></inline-formula>
+      denotes the outer product restricted to non-zero indices of
+      <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{T}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐓</mml:mi></mml:math></alternatives></inline-formula>.</p>
+      <p><bold>Generic Iterative Solvers</bold>: For general sparse
+      systems, we implement iterative methods including Conjugate
+      Gradient (CG), Biconjugate Gradient Stabilized (BICGSTAB), Least
+      Squares Minimal Residual (LSMR), and Minimal Residual (MINRES).
+      These methods solve <inline-formula><alternatives>
+      <tex-math><![CDATA[\boldsymbol{A}\boldsymbol{x} = \boldsymbol{b}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mi>𝐱</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐛</mml:mi></mml:mrow></mml:math></alternatives></inline-formula>
+      iteratively while maintaining differentiability through the
+      implicit function theorem.</p>
+    </sec>
+  </sec>
+  <sec id="sparse-multivariate-normal-distributions">
+    <title>Sparse Multivariate Normal Distributions</title>
+    <p>The package implements sparse multivariate normal distributions
+    <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{\eta} \sim \mathcal{N}(\boldsymbol{\mu}, \boldsymbol{\Sigma}) \equiv \mathcal{N}(\boldsymbol{\mu}, \boldsymbol{\Omega}^{-1})]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝛈</mml:mi><mml:mo>∼</mml:mo><mml:mi>𝒩</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>,</mml:mo><mml:mi>𝚺</mml:mi><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:mo>≡</mml:mo><mml:mi>𝒩</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>,</mml:mo><mml:msup><mml:mi>𝛀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mn>1</mml:mn></mml:mrow></mml:msup><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow></mml:mrow></mml:math></alternatives></inline-formula>
+    with two parameterizations for efficient sampling from
+    <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{\epsilon} \sim \mathcal{N}(\boldsymbol{0}, \boldsymbol{I})]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝛜</mml:mi><mml:mo>∼</mml:mo><mml:mi>𝒩</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:mn>𝟎</mml:mn><mml:mo>,</mml:mo><mml:mi>𝐈</mml:mi><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow></mml:mrow></mml:math></alternatives></inline-formula>:</p>
+    <p><bold>LDL^T Parameterization</bold>: Using sparse unit lower
+    triangular matrices <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{L}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐋</mml:mi></mml:math></alternatives></inline-formula>
+    and diagonal <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{D}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐃</mml:mi></mml:math></alternatives></inline-formula>:
+    <disp-formula><alternatives>
+    <tex-math><![CDATA[
+    \boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}\boldsymbol{D}^{1/2}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_\Omega^{-T}\boldsymbol{D}_\Omega^{-1/2}\boldsymbol{\epsilon}
+    ]]></tex-math>
+    <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝚺</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:mi>𝐋</mml:mi><mml:msup><mml:mi>𝐃</mml:mi><mml:mrow><mml:mn>1</mml:mn><mml:mi>/</mml:mi><mml:mn>2</mml:mn></mml:mrow></mml:msup><mml:mi>𝛜</mml:mi><mml:mo>,</mml:mo><mml:mspace width="1.0em"></mml:mspace><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝛀</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msubsup><mml:mi>𝐋</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>T</mml:mi></mml:mrow></mml:msubsup><mml:msubsup><mml:mi>𝐃</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mn>1</mml:mn><mml:mi>/</mml:mi><mml:mn>2</mml:mn></mml:mrow></mml:msubsup><mml:mi>𝛜</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
+    <p><bold>LL^T Parameterization</bold>: Using sparse lower triangular
+    matrices <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{L}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐋</mml:mi></mml:math></alternatives></inline-formula>
+    with positive diagonals: <disp-formula><alternatives>
+    <tex-math><![CDATA[
+    \boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Sigma}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Omega}^{-T}\boldsymbol{\epsilon}
+    ]]></tex-math>
+    <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝚺</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msub><mml:mi>𝐋</mml:mi><mml:mi>Σ</mml:mi></mml:msub><mml:mi>𝛜</mml:mi><mml:mo>,</mml:mo><mml:mspace width="1.0em"></mml:mspace><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝛀</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msubsup><mml:mi>𝐋</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>T</mml:mi></mml:mrow></mml:msubsup><mml:mi>𝛜</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
+    <p>The LDL^T parameterization provides superior numerical stability
+    for precision matrices by avoiding strict positive definiteness
+    constraints.</p>
+  </sec>
+</sec>
+<sec id="acknowledgements">
+  <title>Acknowledgements</title>
+  <p>The authors acknowledge the PyTorch development team for providing
+  the foundational sparse tensor infrastructure. We thank the SciPy
+  (<xref alt="Virtanen et al., 2020" rid="ref-scipy" ref-type="bibr">Virtanen
+  et al., 2020</xref>), CuPy
+  (<xref alt="Okuta et al., 2017" rid="ref-cupy" ref-type="bibr">Okuta
+  et al., 2017</xref>), and JAX
+  (<xref alt="Bradbury et al., 2018" rid="ref-jax" ref-type="bibr">Bradbury
+  et al., 2018</xref>) communities for high-performance sparse linear
+  algebra implementations. Algorithm implementations adapt and extend
+  methods from pykrylov (BICGSTAB), cornellius-gp/linear_operator (CG,
+  MINRES), and pytorch-minimize (LSMR)
+  (<xref alt="Saad, 2003" rid="ref-saad2003iterative" ref-type="bibr">Saad,
+  2003</xref>). This work was supported by the Wellcome/EPSRC Centre for
+  Interventional and Surgical Sciences and the School of Biomedical
+  Engineering &amp; Imaging Sciences, King’s College London.</p>
+</sec>
+</body>
+<back>
+<ref-list>
+  <title></title>
+  <ref id="ref-pytorch">
+    <element-citation publication-type="paper-conference">
+      <person-group person-group-type="author">
+        <name><surname>Paszke</surname><given-names>Adam</given-names></name>
+        <name><surname>Gross</surname><given-names>Sam</given-names></name>
+        <name><surname>Massa</surname><given-names>Francisco</given-names></name>
+        <name><surname>Lerer</surname><given-names>Adam</given-names></name>
+        <name><surname>Bradbury</surname><given-names>James</given-names></name>
+        <name><surname>Chanan</surname><given-names>Gregory</given-names></name>
+        <name><surname>Killeen</surname><given-names>Trevor</given-names></name>
+        <name><surname>Lin</surname><given-names>Zeming</given-names></name>
+        <name><surname>Gimelshein</surname><given-names>Natalia</given-names></name>
+        <name><surname>Antiga</surname><given-names>Luca</given-names></name>
+        <name><surname>others</surname></name>
+      </person-group>
+      <article-title>PyTorch: An imperative style, high-performance deep learning library</article-title>
+      <source>Advances in neural information processing systems</source>
+      <publisher-name>Curran Associates, Inc.</publisher-name>
+      <year iso-8601-date="2019">2019</year>
+      <volume>32</volume>
+      <fpage>8024</fpage>
+      <lpage>8035</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-cupy">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Okuta</surname><given-names>Ryosuke</given-names></name>
+        <name><surname>Unno</surname><given-names>Yuya</given-names></name>
+        <name><surname>Nishino</surname><given-names>Daisuke</given-names></name>
+        <name><surname>Hido</surname><given-names>Shohei</given-names></name>
+        <name><surname>Loomis</surname><given-names>Crissman</given-names></name>
+      </person-group>
+      <article-title>CuPy: A NumPy-compatible library for NVIDIA GPU calculations</article-title>
+      <source>Proceedings of Workshop on Machine Learning Systems (LearningSys) in The Thirty-first Annual Conference on Neural Information Processing Systems (NIPS)</source>
+      <year iso-8601-date="2017">2017</year>
+    </element-citation>
+  </ref>
+  <ref id="ref-jax">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Bradbury</surname><given-names>James</given-names></name>
+        <name><surname>Frostig</surname><given-names>Roy</given-names></name>
+        <name><surname>Hawkins</surname><given-names>Peter</given-names></name>
+        <name><surname>Johnson</surname><given-names>Matthew J.</given-names></name>
+        <name><surname>Leary</surname><given-names>Chris</given-names></name>
+        <name><surname>Maclaurin</surname><given-names>Dougal</given-names></name>
+        <name><surname>Necula</surname><given-names>George</given-names></name>
+        <name><surname>Paszke</surname><given-names>Adam</given-names></name>
+        <name><surname>VanderPlas</surname><given-names>Jake</given-names></name>
+        <name><surname>Wanderman-Milne</surname><given-names>Skyler</given-names></name>
+        <name><surname>Zhang</surname><given-names>Qiao</given-names></name>
+      </person-group>
+      <article-title>JAX: Composable transformations of python+NumPy programs</article-title>
+      <source>GitHub repository</source>
+      <publisher-name>https://github.com/google/jax</publisher-name>
+      <year iso-8601-date="2018">2018</year>
+    </element-citation>
+  </ref>
+  <ref id="ref-scipy">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Virtanen</surname><given-names>Pauli</given-names></name>
+        <name><surname>Gommers</surname><given-names>Ralf</given-names></name>
+        <name><surname>Oliphant</surname><given-names>Travis E.</given-names></name>
+        <name><surname>Haberland</surname><given-names>Matt</given-names></name>
+        <name><surname>Reddy</surname><given-names>Tyler</given-names></name>
+        <name><surname>Cournapeau</surname><given-names>David</given-names></name>
+        <name><surname>Burovski</surname><given-names>Evgeni</given-names></name>
+        <name><surname>Peterson</surname><given-names>Pearu</given-names></name>
+        <name><surname>Weckesser</surname><given-names>Warren</given-names></name>
+        <name><surname>Bright</surname><given-names>Jonathan</given-names></name>
+        <name><surname>others</surname></name>
+      </person-group>
+      <article-title>SciPy 1.0: Fundamental algorithms for scientific computing in python</article-title>
+      <source>Nature Methods</source>
+      <publisher-name>Nature Publishing Group</publisher-name>
+      <year iso-8601-date="2020">2020</year>
+      <volume>17</volume>
+      <issue>3</issue>
+      <fpage>261</fpage>
+      <lpage>272</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-saad2003iterative">
+    <element-citation publication-type="book">
+      <person-group person-group-type="author">
+        <name><surname>Saad</surname><given-names>Yousef</given-names></name>
+      </person-group>
+      <source>Iterative methods for sparse linear systems</source>
+      <publisher-name>SIAM</publisher-name>
+      <year iso-8601-date="2003">2003</year>
+      <edition>2nd</edition>
+    </element-citation>
+  </ref>
+</ref-list>
+</back>
+</article>
