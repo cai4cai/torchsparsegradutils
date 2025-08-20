@@ -787,7 +787,7 @@ class BenchmarkVisualizer:
                 algorithms = df[algo_col].value_counts()
                 print(f"  - Algorithms tested: {', '.join(algorithms.index[:5])}")
                 if len(algorithms) > 5:
-                    print(f"    (and {len(algorithms)-5} more)")
+                    print(f"    (and {len(algorithms) - 5} more)")
 
         print(f"\nVisualization files saved to: {self.output_dir}")
         print("Generated plots:")

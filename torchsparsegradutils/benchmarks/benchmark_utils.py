@@ -296,9 +296,9 @@ def format_time(t_us):
     if np.isnan(t_us):
         return "N/A"
     if t_us >= 1e6:  # >= 1 second
-        return f"{t_us/1e6:.3f}s"
+        return f"{t_us / 1e6:.3f}s"
     elif t_us >= 1e3:  # >= 1 millisecond
-        return f"{t_us/1e3:.1f}ms"
+        return f"{t_us / 1e3:.1f}ms"
     else:
         return f"{t_us:.1f}μs"
 
@@ -308,7 +308,7 @@ def format_memory(mem_mb):
     if np.isnan(mem_mb):
         return "N/A"
     if mem_mb >= 1024:
-        return f"{mem_mb/1024:.1f}GB"
+        return f"{mem_mb / 1024:.1f}GB"
     else:
         return f"{mem_mb:.1f}MB"
 
@@ -350,7 +350,7 @@ def print_results_table_header():
     print(
         f"  {'Algorithm':<25} {'Shape':<15} {'Fwd Time±Std':<15} {'Fwd Mem±Std':<15} {'Bwd Time±Std':<15} {'Bwd Mem±Std':<15}"
     )
-    print(f"  {'-'*25} {'-'*15} {'-'*15} {'-'*15} {'-'*15} {'-'*15}")
+    print(f"  {'-' * 25} {'-' * 15} {'-' * 15} {'-' * 15} {'-' * 15} {'-' * 15}")
 
 
 def save_benchmark_results(records, benchmark_name):
