@@ -11,14 +11,10 @@ SparseMultivariateNormal distribution, focusing on:
 
 # NOTE:
 # Current failure cases:
-1. 3d forward backward stability "OOM" for:
-    - large_3d CSR float64 LDLt  - could be an issue with reserved memory?
-    - Not an issue for COO or LLt or float32
+1. CSR integration tests use WAY TOO MUCH memory after .backward() compared to COO methods
+    TODO: This needs to be fixed. It may be related to the use of the CSR premutation in PairwiseEncoder
 2. 2d and 3d Gradient flow consistency "Gradients too large" for:
     - LLt prec  - gradients calculated with LLt precision parameterization are too large, maybe avoid this
-3. 3d parameter optimization "OOM" for:
-    - large_3d CSR float64 LLt  - could be an issue with reserved memory?
-    - Not an issue for COO or LDLt or float32
 """
 
 import torch
@@ -706,16 +702,11 @@ def test_integration_sparse_matrix_properties_3d(config_3d, device, layout, valu
     print(f"Matrix size: {expected_size}x{expected_size}, NNZ: {nnz}, Sparsity: {sparsity:.3f}")
 
 
-# Performance/Memory focused tests
 @pytest.mark.parametrize("config", TEST_CONFIGS_2D[-1:])  # Only largest config
-def test_integration_large_2d_memory_efficiency(config, device):
+def test_integration_large_2d_memory_efficiency(config, device, layout, value_dtype, index_dtype):
     """Test memory efficiency with large 2D configurations."""
     # CUDA check is no longer needed since the entire module is skipped without CUDA
 
-    # Use default parameters for this test
-    layout = torch.sparse_csr  # CSR typically more memory efficient
-    value_dtype = torch.float32  # Less memory than float64
-    index_dtype = torch.int32  # Less memory than int64
     parameterization = "llt"  # LLT parameterization
 
     initial_memory = check_memory_usage(device)
@@ -732,23 +723,19 @@ def test_integration_large_2d_memory_efficiency(config, device):
     loss.backward()
 
     final_memory = check_memory_usage(device)
-    memory_used = final_memory["allocated_mb"] - initial_memory["allocated_mb"]
+    memory_used = final_memory["max_allocated_mb"] - initial_memory["max_allocated_mb"]
 
     # Should use reasonable amount of memory (adjust threshold as needed)
-    assert memory_used < 2000, f"Memory usage too high: {memory_used:.2f}MB"
+    assert memory_used < 1000, f"Memory usage too high: {memory_used:.2f}MB"
 
     print(f"Large 2D config memory usage: {memory_used:.2f}MB")
 
 
 @pytest.mark.parametrize("config", TEST_CONFIGS_3D[-1:])  # Only largest config
-def test_integration_large_3d_memory_efficiency(config, device):
+def test_integration_large_3d_memory_efficiency(config, device, layout, value_dtype, index_dtype):
     """Test memory efficiency with large 3D configurations."""
     # CUDA check is no longer needed since the entire module is skipped without CUDA
 
-    # Use default parameters for this test
-    layout = torch.sparse_csr  # CSR typically more memory efficient
-    value_dtype = torch.float32  # Less memory than float64
-    index_dtype = torch.int32  # Less memory than int64
     parameterization = "llt"  # LLT parameterization
 
     initial_memory = check_memory_usage(device)
@@ -765,9 +752,9 @@ def test_integration_large_3d_memory_efficiency(config, device):
     loss.backward()
 
     final_memory = check_memory_usage(device)
-    memory_used = final_memory["allocated_mb"] - initial_memory["allocated_mb"]
+    memory_used = final_memory["max_allocated_mb"] - initial_memory["max_allocated_mb"]
 
     # 3D configs will use more memory, be more lenient
-    assert memory_used < 4000, f"Memory usage too high: {memory_used:.2f}MB"
+    assert memory_used < 2500, f"Memory usage too high: {memory_used:.2f}MB"
 
     print(f"Large 3D config memory usage: {memory_used:.2f}MB")
