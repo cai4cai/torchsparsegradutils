@@ -915,7 +915,9 @@ def make_spd_sparse(n, layout, value_dtype, index_dtype, device, sparsity_ratio=
         n (int): Matrix size (n x n)
         layout (torch.layout): Sparse tensor layout (torch.sparse_coo or torch.sparse_csr)
         value_dtype (torch.dtype): Data type for values
-        index_dtype (torch.dtype): Data type for indices (may not be preserved due to PyTorch limitations)
+        index_dtype (torch.dtype): Data type for indices. Should be torch.int32 or torch.int64.
+            Note: For COO tensors, PyTorch may automatically convert indices to int64 during
+            operations like coalesce(). For CSR tensors, the requested dtype should be preserved.
         device (torch.device): Device to create tensors on
         sparsity_ratio (float, optional): Approximate fraction of upper-triangular off-diagonal elements to zero out.
             Each zeroed upper-triangular element also zeros its symmetric lower-triangular counterpart.
@@ -939,8 +941,9 @@ def make_spd_sparse(n, layout, value_dtype, index_dtype, device, sparsity_ratio=
         This function returns unbatched (2D) sparse tensors only. For batched operations,
         use the appropriate functions from this module.
 
-        Warning: PyTorch may reset index dtypes during tensor operations (like coalesce),
-        so the final tensor may not preserve the requested index_dtype.
+        Warning: For COO tensors, PyTorch may automatically convert int32 indices to int64
+        during operations like coalesce(). For CSR tensors, the requested index_dtype should
+        be preserved. This is standard PyTorch behavior for sparse tensor index handling.
     """
     # Generate random matrix and make it SPD
     M = torch.randn(n, n, dtype=value_dtype, device=device)
@@ -984,9 +987,12 @@ def make_spd_sparse(n, layout, value_dtype, index_dtype, device, sparsity_ratio=
     idx = A_dense.nonzero(as_tuple=False).t()
     vals = A_dense[idx[0], idx[1]]
 
+    # Convert indices to requested dtype (though PyTorch may override this)
+    idx = idx.to(dtype=index_dtype)
+
     if layout == torch.sparse_coo:
         # For COO, create tensor and coalesce
-        # Note: PyTorch may reset index dtypes during coalesce operations
+        # Note: PyTorch automatically converts int32 indices to int64 during coalesce()
         A_sparse = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
     elif layout == torch.sparse_csr:
         # For CSR, first create COO then convert to CSR
