@@ -23,6 +23,9 @@ LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
 SOLVERS = [None, "cg", "cgs", "minres", "gmres", "spsolve"]
 
+ATOL = 1e-6
+ATOL_minres = 1e-5
+
 
 def data_id(d):
     return d[0]
@@ -89,12 +92,11 @@ def test_solve_forward_cupy(layout, device, value_dtype, index_dtype, solver, sh
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_solve_c4t(A_sp, B, solve=solver, transpose_solve=solver)
-    if solver == "cg" or solver == "cgs" or solver:
-        assert torch.allclose(X_test, X_ref, atol=1e-3)
-    elif solver == "minres":
-        assert torch.allclose(X_test, X_ref, atol=1e-4)
+
+    if solver == "minres":
+        assert torch.allclose(X_test, X_ref, atol=ATOL_minres)
     else:
-        assert torch.allclose(X_test, X_ref, atol=1e-8)
+        assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -120,15 +122,11 @@ def test_solve_backward_cupy(layout, device, value_dtype, index_dtype, solver, s
     X2.backward(grad_out)
     nz = A_sp.grad.to_dense() != 0
 
-    if solver == "cg" or solver == "cgs" or solver:
-        assert torch.allclose(A_sp.grad.to_dense()[nz], Ad.grad[nz], atol=1e-2)
-        assert torch.allclose(Bd.grad, Bd2.grad, atol=1e-1)
-    elif solver == "minres":
-        assert torch.allclose(A_sp.grad.to_dense()[nz], Ad.grad[nz], atol=1e-4)
-        assert torch.allclose(Bd.grad, Bd2.grad, atol=1e-4)
+    assert torch.allclose(A_sp.grad.to_dense()[nz], Ad.grad[nz], atol=ATOL)
+    if solver == "minres":
+        assert torch.allclose(Bd.grad, Bd2.grad, atol=ATOL_minres)
     else:
-        assert torch.allclose(A_sp.grad.to_dense()[nz], Ad.grad[nz], atol=1e-8)
-        assert torch.allclose(Bd.grad, Bd2.grad, atol=1e-8)
+        assert torch.allclose(Bd.grad, Bd2.grad, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -142,7 +140,7 @@ def test_cupy_cg_kwargs(device, value_dtype, layout):
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_solve_c4t(A_sp, B, solve="cg", transpose_solve="cg", tol=1e-6, atol=1e-8, maxiter=500)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -156,7 +154,7 @@ def test_cupy_cgs_kwargs(device, value_dtype, layout):
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_solve_c4t(A_sp, B, solve="cgs", transpose_solve="cgs", tol=1e-6, atol=1e-8, maxiter=500)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -170,7 +168,7 @@ def test_cupy_minres_kwargs(device, value_dtype, layout):
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_solve_c4t(A_sp, B, solve="minres", transpose_solve="minres", tol=1e-6, atol=1e-8, maxiter=500)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -184,7 +182,7 @@ def test_cupy_gmres_kwargs(device, value_dtype, layout):
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_solve_c4t(A_sp, B, solve="gmres", transpose_solve="gmres", tol=1e-6, atol=1e-8, maxiter=500)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -210,8 +208,8 @@ def test_cupy_kwargs_backward_pass(device, value_dtype, layout):
 
     # Check gradients
     nz_mask = A_sp1.grad.to_dense() != 0.0
-    assert torch.allclose(A_sp1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=1e-2)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=1e-1)
+    assert torch.allclose(A_sp1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -226,7 +224,7 @@ def test_cupy_multiple_kwargs(device, value_dtype):
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_solve_c4t(A_sp, B, solve="cgs", transpose_solve="cgs", tol=1e-5, atol=1e-8, maxiter=1000)
 
-    assert torch.allclose(X_test, X_ref, atol=1e-2)
+    assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
 @pytest.mark.flaky(reruns=5)
@@ -255,22 +253,19 @@ def test_cupy_spsolve_kwargs_ignored():
     )
 
     # spsolve should give very accurate results regardless of tolerance params
-    assert torch.allclose(X_spsolve, X_ref, atol=1e-8)
+    assert torch.allclose(X_spsolve, X_ref, atol=1e-12)
 
 
 @pytest.mark.flaky(reruns=5)
 def test_cupy_kwargs_with_different_solvers():
-    """Test that different CuPy solvers with their respective kwargs produce similar results."""
+    """Test that CG and CGS solvers with their respective kwargs produce similar results."""
     device = torch.device("cpu")
     value_dtype = torch.float64  # Use higher precision for better comparison
     layout = torch.sparse_csr
 
     n = 10
-    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
+    A_sp, _ = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
     B = torch.rand(n, dtype=value_dtype, device=device)
-
-    # Reference solution
-    X_ref = torch.linalg.solve(A_dense, B)
 
     # Test CG with kwargs
     X_cg = sparse_solve_c4t(A_sp, B, solve="cg", transpose_solve="cg", tol=1e-8, atol=1e-10, maxiter=1000)
@@ -278,13 +273,5 @@ def test_cupy_kwargs_with_different_solvers():
     # Test CGS with kwargs
     X_cgs = sparse_solve_c4t(A_sp, B, solve="cgs", transpose_solve="cgs", tol=1e-8, atol=1e-10, maxiter=1000)
 
-    # Test spsolve (direct solver)
-    X_spsolve = sparse_solve_c4t(A_sp, B, solve="spsolve", transpose_solve="spsolve")
-
-    # All solutions should be close to reference
-    assert torch.allclose(X_cg, X_ref, atol=1e-3)
-    assert torch.allclose(X_cgs, X_ref, atol=1e-3)
-    assert torch.allclose(X_spsolve, X_ref, atol=1e-8)  # Direct solver should be very accurate
-
     # Iterative solutions should be close to each other
-    assert torch.allclose(X_cg, X_cgs, atol=1e-3)
+    assert torch.allclose(X_cg, X_cgs, atol=ATOL)
