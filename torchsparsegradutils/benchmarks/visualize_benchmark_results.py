@@ -20,6 +20,9 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
+# Global configuration for output format
+OUTPUT_FORMAT = "png"  # Options: "pdf", "png"
+
 # Set style for publication-quality plots
 plt.style.use("seaborn-v0_8-whitegrid")
 sns.set_palette("husl")
@@ -329,7 +332,7 @@ class BenchmarkVisualizer:
             self._create_memory_and_time_plots(combo_df, axes, show_residual=False)
 
             plt.tight_layout()
-            filename = f"sparse_mm_suite_performance_{idx_dt}_{val_dt}_{layout}.pdf"
+            filename = f"sparse_mm_suite_performance_{idx_dt}_{val_dt}_{layout}.{OUTPUT_FORMAT}"
             plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
             plt.close()
             print(f"✓ Created {filename}")
@@ -362,7 +365,7 @@ class BenchmarkVisualizer:
             self._create_memory_and_time_plots(combo_df, axes, show_residual=True)
 
             plt.tight_layout()
-            filename = f"sparse_solve_suite_performance_{idx_dt}_{val_dt}_{layout}.pdf"
+            filename = f"sparse_solve_suite_performance_{idx_dt}_{val_dt}_{layout}.{OUTPUT_FORMAT}"
             plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
             plt.close()
             print(f"✓ Created {filename}")
@@ -395,7 +398,7 @@ class BenchmarkVisualizer:
             self._create_memory_and_time_plots(combo_df, axes, show_residual=True)
 
             plt.tight_layout()
-            filename = f"triangular_solve_suitesparse_performance_{idx_dt}_{val_dt}_{layout}.pdf"
+            filename = f"triangular_solve_suitesparse_performance_{idx_dt}_{val_dt}_{layout}.{OUTPUT_FORMAT}"
             plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
             plt.close()
             print(f"✓ Created {filename}")
@@ -448,7 +451,7 @@ class BenchmarkVisualizer:
                 axes[i, 1].set_xlabel("Memory (MB)")
 
         plt.tight_layout()
-        plt.savefig(self.output_dir / "suite_performance.pdf", dpi=300, bbox_inches="tight")
+        plt.savefig(self.output_dir / f"suite_performance.{OUTPUT_FORMAT}", dpi=300, bbox_inches="tight")
         plt.close()
 
     def _get_target_algorithms(self, dataset_name):
@@ -638,7 +641,7 @@ class BenchmarkVisualizer:
             self._plot_efficiency_analysis(scaling_datasets, axes, idx_dt, val_dt, layout)
 
             plt.tight_layout()
-            filename = f"scaling_analysis_rand_{idx_dt}_{val_dt}_{layout}.pdf"
+            filename = f"scaling_analysis_rand_{idx_dt}_{val_dt}_{layout}.{OUTPUT_FORMAT}"
             plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
             plt.close()
             print(f"✓ Created {filename}")
@@ -758,9 +761,9 @@ class BenchmarkVisualizer:
         self._plot_backend_comparison(suite_benchmarks, axes)
 
         plt.tight_layout()
-        plt.savefig(self.output_dir / "comparative_analysis_suite.pdf", dpi=300, bbox_inches="tight")
+        plt.savefig(self.output_dir / f"comparative_analysis_suite.{OUTPUT_FORMAT}", dpi=300, bbox_inches="tight")
         plt.close()
-        print("✓ Created comparative_analysis_suite.pdf")
+        print(f"✓ Created comparative_analysis_suite.{OUTPUT_FORMAT}")
 
     def create_summary_report(self):
         """Create a summary report with key findings"""
@@ -788,13 +791,13 @@ class BenchmarkVisualizer:
 
         print(f"\nVisualization files saved to: {self.output_dir}")
         print("Generated plots:")
-        for pdf_file in self.output_dir.glob("*.pdf"):
-            print(f"  - {pdf_file.name}")
+        for plot_file in self.output_dir.glob(f"*.{OUTPUT_FORMAT}"):
+            print(f"  - {plot_file.name}")
 
         print("\nRecommended plots for different use cases:")
-        print("  - Paper/Publication: comparative_analysis.pdf, scaling_analysis.pdf")
-        print("  - Documentation: sparse_mm_performance.pdf, sparse_solve_performance.pdf")
-        print("  - Detailed Analysis: All generated PDFs")
+        print(f"  - Paper/Publication: comparative_analysis.{OUTPUT_FORMAT}, scaling_analysis.{OUTPUT_FORMAT}")
+        print(f"  - Documentation: sparse_mm_performance.{OUTPUT_FORMAT}, sparse_solve_performance.{OUTPUT_FORMAT}")
+        print(f"  - Detailed Analysis: All generated {OUTPUT_FORMAT.upper()} files")
 
     def generate_all_visualizations(self):
         """Generate all visualization types"""
