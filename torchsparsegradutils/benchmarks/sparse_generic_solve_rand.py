@@ -39,8 +39,8 @@ from torchsparsegradutils.benchmarks.benchmark_utils import (
     save_benchmark_results,
 )
 
-REPEATS = 10
-WARMUP_RUNS = 1
+REPEATS = 50
+WARMUP_RUNS = 5
 
 # Only run on CUDA
 device = torch.device("cuda")
