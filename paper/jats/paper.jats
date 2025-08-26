@@ -95,26 +95,35 @@ a Creative Commons Attribution 4.0 International License (CC BY
   et al., 2019</xref>), addressing the critical limitation that
   PyTorch’s native sparse operations do not support sparse gradients
   during backpropagation. This package enables memory-efficient
-  optimization of high-dimensional models by maintaining sparsity
-  patterns throughout the entire forward and backward pass
-  computation.</p>
+  optimisation of high-dimensional models by maintaining sparsity
+  patterns throughout the entire forward and backward pass computation,
+  supporting both coordinate list (COO) and compressed sparse row (CSR)
+  formats.</p>
   <p>Key features include: (1) memory-efficient sparse matrix
   multiplication with sparse gradient preservation, (2) sparse
-  triangular and generic linear system solvers with multiple algorithmic
-  backends (BICGSTAB, CG, LSMR, MINRES), (3) cross-platform sparse
-  solver wrappers for CuPy
+  triangular and generic linear system solvers, enabling sparse
+  gradients during backpropagation, and multiple algorithmic backends
+  (BICGSTAB, CG, LSMR, MINRES), (3) cross-platform sparse solver
+  wrappers for CuPy
   (<xref alt="Okuta et al., 2017" rid="ref-cupy" ref-type="bibr">Okuta
   et al., 2017</xref>) and JAX
   (<xref alt="Bradbury et al., 2018" rid="ref-jax" ref-type="bibr">Bradbury
   et al., 2018</xref>), (4) sparse multivariate normal distributions
-  with LL^T and LDL^T parameterizations supporting millions of
-  dimensions, and (5) specialized encoders for spatial neighborhood
-  relationships in volumetric data.</p>
-  <p>The package addresses PyTorch issue #41128 by implementing custom
-  autograd functions that preserve sparsity in gradients, enabling
-  practical training of models with sparse covariance structures on
-  high-dimensional data where dense alternatives become computationally
-  intractable.</p>
+  with <inline-formula><alternatives>
+  <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{L}^T]]></tex-math>
+  <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>T</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+  and <inline-formula><alternatives>
+  <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^T]]></tex-math>
+  <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:mi>𝐃</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>T</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+  sparse covariance and precision matrix parameterisations with
+  reparameterised sampling methods, and (5) specialised encoders for
+  spatial neighbourhood relationships in volumetric data.</p>
+  <p>The package addresses PyTorch limitation of dense gradients
+  resulting in memory errors, such as issue #41128, by implementing
+  custom autograd functions that preserve sparsity in gradients,
+  enabling practical training of models with sparse covariance and
+  precision structures on high-dimensional data where dense alternatives
+  become computationally intractable.</p>
 </sec>
 <sec id="statement-of-need">
   <title>Statement of need</title>
@@ -124,23 +133,23 @@ a Creative Commons Attribution 4.0 International License (CC BY
   in dense format even when the forward pass maintains sparsity. This
   results in prohibitive memory usage that scales quadratically with
   problem dimension rather than linearly with the number of non-zero
-  elements.</p>
-  <p>For applications requiring sparse covariance modeling—such as
+  elements (nnz).</p>
+  <p>For applications requiring sparse covariance modelling—such as
   medical imaging with millions of voxels, spatial statistics, and
   large-scale Gaussian processes—dense gradient computation renders
-  optimization infeasible. A sparse covariance matrix with 1 million
+  optimisation infeasible. A sparse covariance matrix with 1 million
   dimensions and 0.1% sparsity contains 1 billion non-zero elements, but
   dense gradients would require storing 1 trillion parameters.</p>
   <p>This package solves this fundamental limitation by implementing
   custom autograd functions that preserve sparsity patterns throughout
   both forward and backward passes. Our sparse multivariate normal
-  distribution enables optimization of million-dimensional Gaussian
-  models with memory usage scaling as O(nnz) rather than O(n²), where
-  nnz is the number of non-zero elements and n is the dimension.</p>
+  distribution enables optimisation of million-dimensional Gaussian
+  models with memory usage scaling as O(nnz) rather than O(n²), where n
+  is the dimension of the multivariate distribution.</p>
   <p>Beyond memory efficiency, the package addresses the algorithmic
   challenge of sparse linear system solving by providing multiple
   iterative solver backends with automatic differentiation support. This
-  enables end-to-end optimization of complex probabilistic models that
+  enables end-to-end optimisation of complex probabilistic models that
   would be computationally intractable with existing PyTorch sparse
   operations.</p>
 </sec>
@@ -148,83 +157,86 @@ a Creative Commons Attribution 4.0 International License (CC BY
   <title>Mathematics</title>
   <sec id="sparse-matrix-operations">
     <title>Sparse Matrix Operations</title>
-    <sec id="sparse-matrix-multiplication-with-gradient-preservation">
-      <title>Sparse Matrix Multiplication with Gradient
-      Preservation</title>
+    <sec id="sparse-matrix-multiplication">
+      <title>Sparse Matrix Multiplication</title>
       <p>The package implements sparse matrix multiplication
       <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{C} = \boldsymbol{A}\boldsymbol{B}]]></tex-math>
+      <tex-math><![CDATA[\mathbf{C} = \mathbf{A}\mathbf{B}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐂</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐀</mml:mi><mml:mi>𝐁</mml:mi></mml:mrow></mml:math></alternatives></inline-formula>
       where <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{A} \in \mathbb{R}^{m \times n}]]></tex-math>
+      <tex-math><![CDATA[\mathbf{A} \in \mathbb{R}^{m \times n}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>m</mml:mi><mml:mo>×</mml:mo><mml:mi>n</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
       is sparse and <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{B} \in \mathbb{R}^{n \times p}]]></tex-math>
+      <tex-math><![CDATA[\mathbf{B} \in \mathbb{R}^{n \times p}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐁</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
       is dense. The forward pass uses PyTorch’s native
-      <monospace>torch.sparse.mm</monospace>, but the backward pass is
-      reimplemented to preserve sparsity patterns.</p>
-      <p>For sparse matrix <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{A}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐀</mml:mi></mml:math></alternatives></inline-formula>
-      with indices <inline-formula><alternatives>
-      <tex-math><![CDATA[(\boldsymbol{A}_{\text{rows}}, \boldsymbol{A}_{\text{cols}})]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">rows</mml:mtext></mml:msub><mml:mo>,</mml:mo><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">cols</mml:mtext></mml:msub><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow></mml:math></alternatives></inline-formula>
-      and values <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{A}_{\text{values}}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">values</mml:mtext></mml:msub></mml:math></alternatives></inline-formula>,
-      the gradient with respect to <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{A}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐀</mml:mi></mml:math></alternatives></inline-formula>’s
-      values is computed as:</p>
-      <p><disp-formula><alternatives>
-      <tex-math><![CDATA[
-      \frac{\partial L}{\partial \boldsymbol{A}_{\text{values}}} = \left(\frac{\partial L}{\partial \boldsymbol{C}}[\boldsymbol{A}_{\text{rows}}, :] \odot \boldsymbol{B}[\boldsymbol{A}_{\text{cols}}, :]\right) \boldsymbol{1}
-      ]]></tex-math>
-      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">values</mml:mtext></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐂</mml:mi></mml:mrow></mml:mfrac><mml:mrow><mml:mo stretchy="true" form="prefix">[</mml:mo><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">rows</mml:mtext></mml:msub><mml:mo>,</mml:mo><mml:mo>:</mml:mo><mml:mo stretchy="true" form="postfix">]</mml:mo></mml:mrow><mml:mo>⊙</mml:mo><mml:mi>𝐁</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">[</mml:mo><mml:msub><mml:mi>𝐀</mml:mi><mml:mtext mathvariant="normal">cols</mml:mtext></mml:msub><mml:mo>,</mml:mo><mml:mo>:</mml:mo><mml:mo stretchy="true" form="postfix">]</mml:mo></mml:mrow><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:mn>𝟏</mml:mn></mml:mrow></mml:math></alternatives></disp-formula></p>
-      <p>where <inline-formula><alternatives>
-      <tex-math><![CDATA[\odot]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>⊙</mml:mi></mml:math></alternatives></inline-formula>
-      denotes element-wise multiplication, and
-      <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{1}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mn>𝟏</mml:mn></mml:math></alternatives></inline-formula>
-      is a summation vector. This selective computation maintains O(nnz)
-      memory complexity for gradients rather than O(mn).</p>
+      <monospace>torch.sparse.mm</monospace>, while the backward pass is
+      reimplemented to preserve sparsity patterns in the gradients.</p>
+      <p>Given upstream gradient <inline-formula><alternatives>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{C}} \in \mathbb{R}^{m\times p}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐂</mml:mi></mml:mrow></mml:mfrac><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>m</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+      from some scalar objective function <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathcal{L}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>ℒ</mml:mi></mml:math></alternatives></inline-formula>,
+      the chain rule gives:</p>
+      <p><bold>Gradient wrt <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{B}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐁</mml:mi></mml:math></alternatives></inline-formula></bold>
+      (dense): <disp-formula><alternatives>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{B}} = \mathbf{A}^\top \frac{\partial \mathcal{L}}{\partial \mathbf{C}}.]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐁</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mi>⊤</mml:mi></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐂</mml:mi></mml:mrow></mml:mfrac><mml:mi>.</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
+      <p><bold>Gradient wrt <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{A}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐀</mml:mi></mml:math></alternatives></inline-formula></bold>
+      (sparse): For a nonzero entry <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{A}_{ij}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:msub><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>j</mml:mi></mml:mrow></mml:msub></mml:math></alternatives></inline-formula>,
+      <disp-formula><alternatives>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{A}_{ij}} = \sum_{k=1}^p \Big(\frac{\partial \mathcal{L}}{\partial \mathbf{C}_{ik}}\Big) \mathbf{B}_{jk}.]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:msub><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>j</mml:mi></mml:mrow></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:munderover><mml:mo>∑</mml:mo><mml:mrow><mml:mi>k</mml:mi><mml:mo>=</mml:mo><mml:mn>1</mml:mn></mml:mrow><mml:mi>p</mml:mi></mml:munderover><mml:mo minsize="1.8" maxsize="1.8" stretchy="false" form="prefix">(</mml:mo><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:msub><mml:mi>𝐂</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>k</mml:mi></mml:mrow></mml:msub></mml:mrow></mml:mfrac><mml:mo minsize="1.8" maxsize="1.8" stretchy="false" form="postfix">)</mml:mo><mml:msub><mml:mi>𝐁</mml:mi><mml:mrow><mml:mi>j</mml:mi><mml:mi>k</mml:mi></mml:mrow></mml:msub><mml:mi>.</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
     </sec>
     <sec id="sparse-linear-system-solvers">
       <title>Sparse Linear System Solvers</title>
       <p>The package provides multiple approaches for solving sparse
-      linear systems <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{A}\boldsymbol{x} = \boldsymbol{b}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mi>𝐱</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐛</mml:mi></mml:mrow></mml:math></alternatives></inline-formula>:</p>
-      <p><bold>Triangular Systems</bold>: For triangular matrices
-      <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{T} \in \mathbb{R}^{n \times n}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐓</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>n</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>,
-      we use forward/backward substitution. The gradient computation
-      during backpropagation follows:</p>
-      <p><disp-formula><alternatives>
-      <tex-math><![CDATA[
-      \frac{\partial L}{\partial \boldsymbol{b}} = \boldsymbol{T}^{-T}\frac{\partial L}{\partial \boldsymbol{x}}, \quad \frac{\partial L}{\partial \boldsymbol{T}_{\text{values}}} = -\left(\boldsymbol{T}^{-T}\frac{\partial L}{\partial \boldsymbol{x}}\right) \otimes \boldsymbol{x}^T
-      ]]></tex-math>
-      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐛</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:msup><mml:mi>𝐓</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>T</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo>,</mml:mo><mml:mspace width="1.0em"></mml:mspace><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:msub><mml:mi>𝐓</mml:mi><mml:mtext mathvariant="normal">values</mml:mtext></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mi>−</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:msup><mml:mi>𝐓</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>T</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>L</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:mo>⊗</mml:mo><mml:msup><mml:mi>𝐱</mml:mi><mml:mi>T</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></disp-formula></p>
-      <p>where <inline-formula><alternatives>
-      <tex-math><![CDATA[\otimes]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>⊗</mml:mi></mml:math></alternatives></inline-formula>
-      denotes the outer product restricted to non-zero indices of
-      <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{T}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐓</mml:mi></mml:math></alternatives></inline-formula>.</p>
-      <p><bold>Generic Iterative Solvers</bold>: For general sparse
-      systems, we implement iterative methods including Conjugate
-      Gradient (CG), Biconjugate Gradient Stabilized (BICGSTAB), Least
-      Squares Minimal Residual (LSMR), and Minimal Residual (MINRES).
-      These methods solve <inline-formula><alternatives>
-      <tex-math><![CDATA[\boldsymbol{A}\boldsymbol{x} = \boldsymbol{b}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mi>𝐱</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐛</mml:mi></mml:mrow></mml:math></alternatives></inline-formula>
-      iteratively while maintaining differentiability through the
-      implicit function theorem.</p>
+      linear systems <disp-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{A}\mathbf{x} = \mathbf{b},]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mi>𝐱</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐛</mml:mi><mml:mo>,</mml:mo></mml:mrow></mml:math></alternatives></disp-formula>
+      where <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{A}\in\mathbb{R}^{n\times n}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>n</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+      is sparse, <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{b}\in\mathbb{R}^{n\times p}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐛</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+      is dense (with <inline-formula><alternatives>
+      <tex-math><![CDATA[p=1]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>p</mml:mi><mml:mo>=</mml:mo><mml:mn>1</mml:mn></mml:mrow></mml:math></alternatives></inline-formula>
+      for a single right-hand side), and <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{x}\in\mathbb{R}^{n\times p}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐱</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+      is the dense solution. We support both direct triangular solves
+      and iterative solvers (CG, BiCGSTAB, LSMR, MINRES); the latter are
+      differentiable via the implicit function theorem.</p>
+      <p>Given upstream gradient <inline-formula><alternatives>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{x}} \in \mathbb{R}^{n\times p}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>:</p>
+      <p><bold>Gradient wrt <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{b}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐛</mml:mi></mml:math></alternatives></inline-formula></bold>
+      (dense): <disp-formula><alternatives>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{b}} = \mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{x}}.]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐛</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mi>.</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
+      <p><bold>Gradient wrt <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{A}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐀</mml:mi></mml:math></alternatives></inline-formula></bold>
+      (sparse): The dense form would be <disp-formula><alternatives>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{A}} = - \left(\mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{x}}\right) \mathbf{x}^\top.]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐀</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mi>−</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:msup><mml:mi>𝐱</mml:mi><mml:mi>⊤</mml:mi></mml:msup><mml:mi>.</mml:mi></mml:mrow></mml:math></alternatives></disp-formula>
+      For a nonzero entry <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{A}_{ij}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:msub><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>j</mml:mi></mml:mrow></mml:msub></mml:math></alternatives></inline-formula>
+      this becomes <disp-formula><alternatives>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{A}_{ij}} = - \sum_{k=1}^p \left(\mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{x}}\right)_{ik} \mathbf{x}_{jk} ]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:msub><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>j</mml:mi></mml:mrow></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mi>−</mml:mi><mml:munderover><mml:mo>∑</mml:mo><mml:mrow><mml:mi>k</mml:mi><mml:mo>=</mml:mo><mml:mn>1</mml:mn></mml:mrow><mml:mi>p</mml:mi></mml:munderover><mml:msub><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:mrow><mml:mi>i</mml:mi><mml:mi>k</mml:mi></mml:mrow></mml:msub><mml:msub><mml:mi>𝐱</mml:mi><mml:mrow><mml:mi>j</mml:mi><mml:mi>k</mml:mi></mml:mrow></mml:msub></mml:mrow></mml:math></alternatives></disp-formula></p>
     </sec>
   </sec>
   <sec id="sparse-multivariate-normal-distributions">
@@ -233,24 +245,16 @@ a Creative Commons Attribution 4.0 International License (CC BY
     <inline-formula><alternatives>
     <tex-math><![CDATA[\boldsymbol{\eta} \sim \mathcal{N}(\boldsymbol{\mu}, \boldsymbol{\Sigma}) \equiv \mathcal{N}(\boldsymbol{\mu}, \boldsymbol{\Omega}^{-1})]]></tex-math>
     <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝛈</mml:mi><mml:mo>∼</mml:mo><mml:mi>𝒩</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>,</mml:mo><mml:mi>𝚺</mml:mi><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:mo>≡</mml:mo><mml:mi>𝒩</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>,</mml:mo><mml:msup><mml:mi>𝛀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mn>1</mml:mn></mml:mrow></mml:msup><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow></mml:mrow></mml:math></alternatives></inline-formula>
-    with two parameterizations for efficient sampling from
-    <inline-formula><alternatives>
+    with two parameterisations for efficient sampling. Both methods
+    transform standard normal samples <inline-formula><alternatives>
     <tex-math><![CDATA[\boldsymbol{\epsilon} \sim \mathcal{N}(\boldsymbol{0}, \boldsymbol{I})]]></tex-math>
-    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝛜</mml:mi><mml:mo>∼</mml:mo><mml:mi>𝒩</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:mn>𝟎</mml:mn><mml:mo>,</mml:mo><mml:mi>𝐈</mml:mi><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow></mml:mrow></mml:math></alternatives></inline-formula>:</p>
-    <p><bold>LDL^T Parameterization</bold>: Using sparse unit lower
-    triangular matrices <inline-formula><alternatives>
-    <tex-math><![CDATA[\boldsymbol{L}]]></tex-math>
-    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐋</mml:mi></mml:math></alternatives></inline-formula>
-    and diagonal <inline-formula><alternatives>
-    <tex-math><![CDATA[\boldsymbol{D}]]></tex-math>
-    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐃</mml:mi></mml:math></alternatives></inline-formula>:
-    <disp-formula><alternatives>
-    <tex-math><![CDATA[
-    \boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}\boldsymbol{D}^{1/2}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_\Omega^{-T}\boldsymbol{D}_\Omega^{-1/2}\boldsymbol{\epsilon}
-    ]]></tex-math>
-    <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝚺</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:mi>𝐋</mml:mi><mml:msup><mml:mi>𝐃</mml:mi><mml:mrow><mml:mn>1</mml:mn><mml:mi>/</mml:mi><mml:mn>2</mml:mn></mml:mrow></mml:msup><mml:mi>𝛜</mml:mi><mml:mo>,</mml:mo><mml:mspace width="1.0em"></mml:mspace><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝛀</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msubsup><mml:mi>𝐋</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>T</mml:mi></mml:mrow></mml:msubsup><mml:msubsup><mml:mi>𝐃</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mn>1</mml:mn><mml:mi>/</mml:mi><mml:mn>2</mml:mn></mml:mrow></mml:msubsup><mml:mi>𝛜</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
-    <p><bold>LL^T Parameterization</bold>: Using sparse lower triangular
-    matrices <inline-formula><alternatives>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝛜</mml:mi><mml:mo>∼</mml:mo><mml:mi>𝒩</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:mn>𝟎</mml:mn><mml:mo>,</mml:mo><mml:mi>𝐈</mml:mi><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow></mml:mrow></mml:math></alternatives></inline-formula>
+    into samples from the desired multivariate normal distribution:</p>
+    <p><bold><inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{L}^{\top}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>⊤</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+    Parameterisation</bold>: Sparse lower triangular matrices
+    <inline-formula><alternatives>
     <tex-math><![CDATA[\boldsymbol{L}]]></tex-math>
     <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐋</mml:mi></mml:math></alternatives></inline-formula>
     with positive diagonals: <disp-formula><alternatives>
@@ -258,9 +262,30 @@ a Creative Commons Attribution 4.0 International License (CC BY
     \boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Sigma}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Omega}^{-T}\boldsymbol{\epsilon}
     ]]></tex-math>
     <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝚺</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msub><mml:mi>𝐋</mml:mi><mml:mi>Σ</mml:mi></mml:msub><mml:mi>𝛜</mml:mi><mml:mo>,</mml:mo><mml:mspace width="1.0em"></mml:mspace><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝛀</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msubsup><mml:mi>𝐋</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>T</mml:mi></mml:mrow></mml:msubsup><mml:mi>𝛜</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
-    <p>The LDL^T parameterization provides superior numerical stability
-    for precision matrices by avoiding strict positive definiteness
-    constraints.</p>
+    <p><bold><inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^{\top}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:mi>𝐃</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>⊤</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+    Parameterisation</bold>: Sparse unit lower triangular matrices
+    <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{L}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐋</mml:mi></mml:math></alternatives></inline-formula>
+    and diagonal <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{D}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐃</mml:mi></mml:math></alternatives></inline-formula>:
+    <disp-formula><alternatives>
+    <tex-math><![CDATA[
+    \boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}\boldsymbol{D}^{1/2}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_\Omega^{-\top}\boldsymbol{D}_\Omega^{-1/2}\boldsymbol{\epsilon}
+    ]]></tex-math>
+    <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝚺</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:mi>𝐋</mml:mi><mml:msup><mml:mi>𝐃</mml:mi><mml:mrow><mml:mn>1</mml:mn><mml:mi>/</mml:mi><mml:mn>2</mml:mn></mml:mrow></mml:msup><mml:mi>𝛜</mml:mi><mml:mo>,</mml:mo><mml:mspace width="1.0em"></mml:mspace><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝛀</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msubsup><mml:mi>𝐋</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msubsup><mml:msubsup><mml:mi>𝐃</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mn>1</mml:mn><mml:mi>/</mml:mi><mml:mn>2</mml:mn></mml:mrow></mml:msubsup><mml:mi>𝛜</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
+    <p>We store <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{L}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐋</mml:mi></mml:math></alternatives></inline-formula>
+    without its diagonal (strictly lower), and treat it as unit
+    lower-triangular at use time. The <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^{\top}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:mi>𝐃</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>⊤</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+    parameterisation provides superior numerical stability for precision
+    matrices by avoiding strict positive definiteness constraints.</p>
   </sec>
 </sec>
 <sec id="acknowledgements">
@@ -277,9 +302,14 @@ a Creative Commons Attribution 4.0 International License (CC BY
   methods from pykrylov (BICGSTAB), cornellius-gp/linear_operator (CG,
   MINRES), and pytorch-minimize (LSMR)
   (<xref alt="Saad, 2003" rid="ref-saad2003iterative" ref-type="bibr">Saad,
-  2003</xref>). This work was supported by the Wellcome/EPSRC Centre for
-  Interventional and Surgical Sciences and the School of Biomedical
-  Engineering &amp; Imaging Sciences, King’s College London.</p>
+  2003</xref>). We thank Floris Laporte for his excellent tutorial on
+  implementing sparse linear system solvers in PyTorch
+  (<xref alt="Laporte, 2020" rid="ref-flaport2020sparse" ref-type="bibr">Laporte,
+  2020</xref>), which provided valuable insights for gradient
+  computation strategies. This work was supported by the Wellcome/EPSRC
+  Centre for Interventional and Surgical Sciences and the School of
+  Biomedical Engineering &amp; Imaging Sciences, King’s College
+  London.</p>
 </sec>
 </body>
 <back>
@@ -302,7 +332,6 @@ a Creative Commons Attribution 4.0 International License (CC BY
       </person-group>
       <article-title>PyTorch: An imperative style, high-performance deep learning library</article-title>
       <source>Advances in neural information processing systems</source>
-      <publisher-name>Curran Associates, Inc.</publisher-name>
       <year iso-8601-date="2019">2019</year>
       <volume>32</volume>
       <fpage>8024</fpage>
@@ -310,7 +339,7 @@ a Creative Commons Attribution 4.0 International License (CC BY
     </element-citation>
   </ref>
   <ref id="ref-cupy">
-    <element-citation publication-type="article-journal">
+    <element-citation publication-type="paper-conference">
       <person-group person-group-type="author">
         <name><surname>Okuta</surname><given-names>Ryosuke</given-names></name>
         <name><surname>Unno</surname><given-names>Yuya</given-names></name>
@@ -319,12 +348,13 @@ a Creative Commons Attribution 4.0 International License (CC BY
         <name><surname>Loomis</surname><given-names>Crissman</given-names></name>
       </person-group>
       <article-title>CuPy: A NumPy-compatible library for NVIDIA GPU calculations</article-title>
-      <source>Proceedings of Workshop on Machine Learning Systems (LearningSys) in The Thirty-first Annual Conference on Neural Information Processing Systems (NIPS)</source>
+      <source>Proceedings of the workshop on machine learning systems (LearningSys) at NeurIPS</source>
       <year iso-8601-date="2017">2017</year>
+      <uri>https://learningsys.org/nips17/assets/papers/paper_16.pdf</uri>
     </element-citation>
   </ref>
   <ref id="ref-jax">
-    <element-citation publication-type="article-journal">
+    <element-citation publication-type="software">
       <person-group person-group-type="author">
         <name><surname>Bradbury</surname><given-names>James</given-names></name>
         <name><surname>Frostig</surname><given-names>Roy</given-names></name>
@@ -335,13 +365,12 @@ a Creative Commons Attribution 4.0 International License (CC BY
         <name><surname>Necula</surname><given-names>George</given-names></name>
         <name><surname>Paszke</surname><given-names>Adam</given-names></name>
         <name><surname>VanderPlas</surname><given-names>Jake</given-names></name>
-        <name><surname>Wanderman-Milne</surname><given-names>Skyler</given-names></name>
+        <name><surname>Wanderman-Milne</surname><given-names>Skye</given-names></name>
         <name><surname>Zhang</surname><given-names>Qiao</given-names></name>
       </person-group>
-      <article-title>JAX: Composable transformations of python+NumPy programs</article-title>
-      <source>GitHub repository</source>
-      <publisher-name>https://github.com/google/jax</publisher-name>
+      <article-title>JAX: Composable transformations of Python+NumPy programs</article-title>
       <year iso-8601-date="2018">2018</year>
+      <uri>https://github.com/jax-ml/jax</uri>
     </element-citation>
   </ref>
   <ref id="ref-scipy">
@@ -361,10 +390,10 @@ a Creative Commons Attribution 4.0 International License (CC BY
       </person-group>
       <article-title>SciPy 1.0: Fundamental algorithms for scientific computing in python</article-title>
       <source>Nature Methods</source>
-      <publisher-name>Nature Publishing Group</publisher-name>
       <year iso-8601-date="2020">2020</year>
       <volume>17</volume>
       <issue>3</issue>
+      <pub-id pub-id-type="doi">10.1038/s41592-019-0686-2</pub-id>
       <fpage>261</fpage>
       <lpage>272</lpage>
     </element-citation>
@@ -378,6 +407,17 @@ a Creative Commons Attribution 4.0 International License (CC BY
       <publisher-name>SIAM</publisher-name>
       <year iso-8601-date="2003">2003</year>
       <edition>2nd</edition>
+      <uri>https://www-users.cse.umn.edu/~saad/IterMethBook_2ndEd.pdf</uri>
+    </element-citation>
+  </ref>
+  <ref id="ref-flaport2020sparse">
+    <element-citation>
+      <person-group person-group-type="author">
+        <name><surname>Laporte</surname><given-names>Floris</given-names></name>
+      </person-group>
+      <article-title>Solving sparse linear systems in PyTorch</article-title>
+      <publisher-name>https://blog.flaport.net/solving-sparse-linear-systems-in-pytorch.html</publisher-name>
+      <year iso-8601-date="2020">2020</year>
     </element-citation>
   </ref>
 </ref-list>
