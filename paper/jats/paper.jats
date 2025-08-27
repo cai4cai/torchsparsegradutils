@@ -159,7 +159,7 @@ a Creative Commons Attribution 4.0 International License (CC BY
     <title>Sparse Matrix Operations</title>
     <sec id="sparse-matrix-multiplication">
       <title>Sparse Matrix Multiplication</title>
-      <p>The package implements sparse matrix multiplication
+      <p>The package implements sparse-dense matrix multiplication
       <inline-formula><alternatives>
       <tex-math><![CDATA[\mathbf{C} = \mathbf{A}\mathbf{B}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐂</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐀</mml:mi><mml:mi>𝐁</mml:mi></mml:mrow></mml:math></alternatives></inline-formula>
@@ -199,14 +199,14 @@ a Creative Commons Attribution 4.0 International License (CC BY
       <title>Sparse Linear System Solvers</title>
       <p>The package provides multiple approaches for solving sparse
       linear systems <disp-formula><alternatives>
-      <tex-math><![CDATA[\mathbf{A}\mathbf{x} = \mathbf{b},]]></tex-math>
-      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mi>𝐱</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐛</mml:mi><mml:mo>,</mml:mo></mml:mrow></mml:math></alternatives></disp-formula>
+      <tex-math><![CDATA[\mathbf{A}\mathbf{x} = \mathbf{B},]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mi>𝐱</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐁</mml:mi><mml:mo>,</mml:mo></mml:mrow></mml:math></alternatives></disp-formula>
       where <inline-formula><alternatives>
       <tex-math><![CDATA[\mathbf{A}\in\mathbb{R}^{n\times n}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>n</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
       is sparse, <inline-formula><alternatives>
-      <tex-math><![CDATA[\mathbf{b}\in\mathbb{R}^{n\times p}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐛</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+      <tex-math><![CDATA[\mathbf{B}\in\mathbb{R}^{n\times p}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐁</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
       is dense (with <inline-formula><alternatives>
       <tex-math><![CDATA[p=1]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>p</mml:mi><mml:mo>=</mml:mo><mml:mn>1</mml:mn></mml:mrow></mml:math></alternatives></inline-formula>
@@ -214,7 +214,7 @@ a Creative Commons Attribution 4.0 International License (CC BY
       <tex-math><![CDATA[\mathbf{x}\in\mathbb{R}^{n\times p}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐱</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
       is the dense solution. We support both direct triangular solves
-      and iterative solvers (CG, BiCGSTAB, LSMR, MINRES); the latter are
+      and iterative solvers (CG, BiCGSTAB, LSMR, MINRES). All are
       differentiable via the implicit function theorem.</p>
       <p>Given upstream gradient <inline-formula><alternatives>
       <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{x}} \in \mathbb{R}^{n\times p}]]></tex-math>
