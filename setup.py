@@ -34,6 +34,15 @@ setuptools.setup(
     test_suite="tests",
     extras_require={
         "extras": ["jax", "cupy"],
+        "docs": [
+            "sphinx>=7.0.0",
+            "sphinx-rtd-theme>=1.3.0",
+            "sphinx-copybutton>=0.5.0",
+            "myst-parser>=2.0.0",
+            "sphinx-autobuild>=2021.3.14",
+            "matplotlib>=3.5.0",
+            "sphinx-autodoc-typehints>=1.24.0",
+        ],
     },
     zip_safe=False,
     include_package_data=True,

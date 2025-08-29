@@ -1,0 +1,80 @@
+/* Custom CSS for torchsparsegradutils documentation */
+
+/* Improve math display */
+.math {
+    font-size: 1.1em;
+}
+
+/* Code block styling */
+.highlight {
+    margin: 1em 0;
+    border-radius: 4px;
+}
+
+/* API documentation styling */
+.function dt {
+    background-color: #f8f9fa;
+    border-left: 3px solid #2980b9;
+    padding: 0.5em;
+    margin-bottom: 0.5em;
+}
+
+/* Improve table readability */
+.wy-table-responsive table td,
+.wy-table-responsive table th {
+    white-space: normal;
+    padding: 8px;
+}
+
+/* Custom admonitions */
+.admonition.performance {
+    border-color: #28a745;
+}
+
+.admonition.performance .admonition-title {
+    background-color: #28a745;
+}
+
+/* Enhance navigation */
+.wy-nav-side {
+    width: 320px;
+}
+
+.wy-nav-content {
+    margin-left: 320px;
+}
+
+/* Improve code highlighting in text */
+code.docutils.literal {
+    background-color: #f8f9fa;
+    color: #e74c3c;
+    padding: 2px 4px;
+    border-radius: 3px;
+    border: 1px solid #e9ecef;
+}
+
+/* Mathematical notation improvements */
+.math-display {
+    margin: 1em 0;
+    text-align: center;
+}
+
+/* Benchmark table styling */
+.benchmark-table {
+    margin: 1em 0;
+}
+
+.benchmark-table th {
+    background-color: #34495e;
+    color: white;
+}
+
+.benchmark-table .improvement {
+    color: #27ae60;
+    font-weight: bold;
+}
+
+/* Footer styling */
+.rst-footer-buttons {
+    margin-top: 2em;
+}

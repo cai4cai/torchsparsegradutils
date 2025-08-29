@@ -16,5 +16,18 @@ parameterized==0.9.0
 pytest==8.4.1
 pytest-rerunfailures==15.1
 pyyaml==6.0.2
+
+# Documentation build requirements
+sphinx
+sphinx-rtd-theme
+sphinx-copybutton
+myst-parser
+sphinx-autobuild
+# For autodoc with type hints
+sphinx-autodoc-typehints
+# Additional extensions
+sphinxcontrib-bibtex
+sphinx-gallery
+
 # jaxtyping
 # beartype
