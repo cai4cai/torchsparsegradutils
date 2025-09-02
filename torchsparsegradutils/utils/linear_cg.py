@@ -128,7 +128,8 @@ def linear_cg(
       - max_iter - the maximum number of CG iterations
       - max_tridiag_iter - the maximum size of the tridiagonalization matrix
       - initial_guess - an initial guess at the solution `result`
-      - precondition_closure - a functions which left-preconditions a supplied vector
+      - preconditioner - a functions which left-preconditions a supplied vector
+      - settings - LinearCGSettings object containing CG configuration parameters
 
     Returns:
       result - a solution to the system (if n_tridiag is 0)

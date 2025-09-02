@@ -17,26 +17,28 @@ The core function :func:`~torchsparsegradutils.sparse_mm` performs memory-effici
    from torchsparsegradutils import sparse_mm
 
    # Create a sparse matrix in COO format
-   indices = torch.tensor([[0, 1, 1], [2, 0, 2]])
+   indices = torch.tensor([[0, 1, 1], [2, 0, 2]], dtype=torch.int64)
    values = torch.tensor([3., 4., 5.])
    A = torch.sparse_coo_tensor(indices, values, (2, 3))
+   A.requires_grad_(True)
 
    # Create a dense matrix
    B = torch.randn(3, 4, requires_grad=True)
 
-   # Perform sparse matrix multiplication
+   # Perform sparse matrix multiplication with gradient support
    result = sparse_mm(A, B)
-   print(result.shape)  # torch.Size([2, 4])
+   print(f"Result shape: {result.shape}")  # torch.Size([2, 4])
 
    # The operation preserves sparsity in gradients
    loss = result.sum()
    loss.backward()
-   print(B.grad.is_sparse)  # Gradients preserve sparsity structure
+   print(f"A gradient is sparse: {A.grad.is_sparse}")  # True
+   print(f"A gradient nnz: {A.grad._nnz()}")  # Number of non-zeros
 
 Batched Operations
 ~~~~~~~~~~~~~~~~~~
 
-torchsparsegradutils supports batched operations:
+torchsparsegradutils supports batched operations, for sparse_mm and triangular_solve:
 
 .. code-block:: python
 
@@ -70,11 +72,10 @@ For sparse triangular systems, use :func:`~torchsparsegradutils.sparse_triangula
 
    import torch
    from torchsparsegradutils import sparse_triangular_solve
+   from torchsparsegradutils.utils.random_sparse import rand_sparse_tri
 
    # Create a sparse lower triangular matrix
-   indices = torch.tensor([[0, 1, 1, 2], [0, 0, 1, 2]])
-   values = torch.tensor([1., 2., 3., 4.])
-   L = torch.sparse_coo_tensor(indices, values, (3, 3))
+   L = rand_sparse_tri((3, 3), nnz=5, upper=False, layout=torch.sparse_csr)
 
    # Right-hand side
    b = torch.randn(3, 2)
@@ -82,9 +83,10 @@ For sparse triangular systems, use :func:`~torchsparsegradutils.sparse_triangula
    # Solve Lx = b
    x = sparse_triangular_solve(L, b, upper=False)
 
-   # Verify solution
+   # Verify solution (should be close to zero)
+   from torchsparsegradutils import sparse_mm
    residual = sparse_mm(L, x) - b
-   print(torch.norm(residual))  # Should be close to zero
+   print(f"Residual norm: {torch.norm(residual):.6f}")
 
 General Linear Systems
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -94,26 +96,27 @@ For general sparse linear systems, use :func:`~torchsparsegradutils.sparse_gener
 .. code-block:: python
 
    import torch
-   from torchsparsegradutils import sparse_generic_solve
+   from torchsparsegradutils import sparse_generic_solve, sparse_mm
+   from torchsparsegradutils.utils.random_sparse import make_spd_sparse
+   from torchsparsegradutils.utils import minres
 
    # Create a sparse symmetric positive definite matrix
-   n = 100
-   # ... create your sparse matrix A and RHS b ...
+   A_sparse, A_dense = make_spd_sparse(10, torch.sparse_csr, torch.float32, torch.int64, 'cpu')
+   b = torch.randn(10)
 
-   # Solve using Conjugate Gradient
-   x_cg = sparse_generic_solve(A, b, method='cg', tol=1e-6)
+   # Solve using MINRES solver
+   x_minres = sparse_generic_solve(A_sparse, b, solve=minres, tol=1e-6)
+   print(f"MINRES solution shape: {x_minres.shape}")
 
-   # Solve using BICGSTAB
-   x_bicgstab = sparse_generic_solve(A, b, method='bicgstab', tol=1e-6)
-
-   # Solve using MINRES
-   x_minres = sparse_generic_solve(A, b, method='minres', tol=1e-6)
+   # Verify solution
+   residual = A_sparse @ x_minres - b
+   print(f"MINRES residual norm: {torch.norm(residual):.6f}")
 
 Sparse Multivariate Normal Distributions
 -----------------------------------------
 
-Basic Usage
-~~~~~~~~~~~
+Basic Usage with LDL^T Parameterization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Create and sample from sparse multivariate normal distributions:
 
@@ -121,32 +124,27 @@ Create and sample from sparse multivariate normal distributions:
 
    import torch
    from torchsparsegradutils.distributions import SparseMultivariateNormal
+   from torchsparsegradutils.utils.random_sparse import rand_sparse_tri
 
-   # Create a sparse precision matrix (inverse covariance)
+   # Create parameters
    dim = 10
-   indices = torch.tensor([[i, i] for i in range(dim)] +
-                          [[i, i+1] for i in range(dim-1)] +
-                          [[i+1, i] for i in range(dim-1)]).T
-   values = torch.tensor([2.0] * dim + [-0.5] * (dim-1) + [-0.5] * (dim-1))
-   precision = torch.sparse_coo_tensor(indices, values, (dim, dim))
+   loc = torch.zeros(dim)
 
-   # Create mean vector
-   mean = torch.zeros(dim)
+   # LDL^T parameterization (recommended for stability)
+   diagonal = torch.ones(dim) * 0.5
+   scale_tril = rand_sparse_tri((dim, dim), nnz=15, upper=False,
+                               layout=torch.sparse_coo, strict=False)
 
-   # Create distribution
+   # Create distribution with LDL^T covariance parameterization
    dist = SparseMultivariateNormal(
-       loc=mean,
-       precision_matrix=precision,
-       param='precision_LDL'
+       loc=loc,
+       diagonal=diagonal,
+       scale_tril=scale_tril
    )
 
    # Sample from the distribution
-   samples = dist.sample((1000,))
-   print(samples.shape)  # torch.Size([1000, 10])
-
-   # Compute log probability
-   log_prob = dist.log_prob(samples)
-   print(log_prob.shape)  # torch.Size([1000])
+   samples = dist.rsample((100,))
+   print(f"Samples shape: {samples.shape}")  # torch.Size([100, 10])
 
 Gradient Computation
 ~~~~~~~~~~~~~~~~~~~~
@@ -156,24 +154,35 @@ The distributions support reparameterized sampling for gradient computation:
 .. code-block:: python
 
    # Enable gradients for parameters
-   mean.requires_grad_(True)
-   precision.values().requires_grad_(True)
+   loc = torch.zeros(dim, requires_grad=True)
+   diagonal = torch.ones(dim, requires_grad=True)
+   scale_tril = rand_sparse_tri((dim, dim), nnz=15, upper=False,
+                               layout=torch.sparse_coo, strict=True)
+   scale_tril.requires_grad_(True)
+
+   # Create distribution
+   dist = SparseMultivariateNormal(
+       loc=loc,
+       diagonal=diagonal,
+       scale_tril=scale_tril
+   )
 
    # Sample using rsample for gradient flow
-   samples = dist.rsample((100,))
+   samples = dist.rsample((10,))
 
    # Compute some loss
    loss = samples.mean()
    loss.backward()
 
-   print("Mean gradient:", mean.grad)
-   print("Precision gradient:", precision.values().grad)
+   print(f"Location gradient norm: {torch.norm(loc.grad):.6f}")
+   print(f"Diagonal gradient norm: {torch.norm(diagonal.grad):.6f}")
+   print(f"Scale gradient nnz: {scale_tril.grad._nnz()}")
 
 Working with Different Backends
 -------------------------------
 
-CuPy Backend
-~~~~~~~~~~~~
+CuPy Backend (GPU Acceleration)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 For GPU acceleration with CuPy:
 
@@ -181,13 +190,19 @@ For GPU acceleration with CuPy:
 
    import torch
    from torchsparsegradutils.cupy import sparse_solve_c4t
+   from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
-   # Move tensors to GPU
-   A = A.cuda()
-   b = b.cuda()
+   # Create matrices on GPU
+   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+   A_sparse, A_dense = make_spd_sparse(50, torch.sparse_csr, torch.float32, torch.int64, device)
+   b = torch.randn(50, device=device)
 
-   # Solve using CuPy backend
-   x = sparse_solve_c4t(A, b, method='cg')
+   # Solve using CuPy backend (only works on GPU)
+   if device.type == 'cuda':
+       x = sparse_solve_c4t(A_sparse, b, solve='cg', tol=1e-6)
+       print(f"CuPy solution on GPU: {x.shape}")
+   else:
+       print("CUDA not available, skipping CuPy example")
 
 JAX Backend
 ~~~~~~~~~~~
@@ -197,28 +212,22 @@ For JAX integration:
 .. code-block:: python
 
    import torch
-   from torchsparsegradutils.jax import sparse_solve_j4t
+   from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
-   # Solve using JAX backend
-   x = sparse_solve_j4t(A, b, method='cg')
+   try:
+       from torchsparsegradutils.jax import sparse_solve_j4t
+       from jax.scipy.sparse.linalg import cg
 
-Performance Tips
-----------------
+       # Create test matrices
+       A_sparse, A_dense = make_spd_sparse(20, torch.sparse_csr, torch.float32, torch.int64, 'cpu')
+       b = torch.randn(20)
 
-1. **Use CSR format** for repeated operations on the same sparsity pattern
-2. **Batch operations** when possible to amortize overhead
-3. **Precompute factorizations** for repeated solves with the same matrix
-4. **Use appropriate tolerances** for iterative solvers
-5. **Consider mixed precision** for large problems
+       # Solve using JAX backend
+       x = sparse_solve_j4t(A_sparse, b, solve=cg, tol=1e-6)
+       print(f"JAX solution shape: {x.shape}")
 
-.. code-block:: python
-
-   # Convert to CSR for repeated operations
-   A_csr = A.to_sparse_csr()
-
-   # Batch multiple RHS vectors
-   B_batch = torch.stack([b1, b2, b3], dim=-1)
-   X_batch = sparse_generic_solve(A_csr, B_batch)
+   except ImportError:
+       print("JAX not available, skipping JAX example")
 
 Next Steps
 ----------
@@ -227,3 +236,4 @@ Next Steps
 - Explore the :doc:`api/index` for complete function references
 - Check out the :doc:`mathematical_background` for theory
 - View :doc:`benchmarks` for performance comparisons
+- See :doc:`contributing` for development setup with devcontainers

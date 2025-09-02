@@ -3,16 +3,68 @@ Contributing to torchsparsegradutils
 
 We welcome contributions to torchsparsegradutils! This guide will help you get started.
 
-Getting Started
----------------
+Development Setup
+-----------------
 
-1. Fork the repository on GitHub
-2. Clone your fork locally
-3. Set up the development environment
+#### Option 1: Development Containers (Recommended)
+
+For a consistent development environment with GPU support and all dependencies pre-installed, use VS Code Dev Containers:
+
+**Prerequisites:**
+- `Docker <https://docs.docker.com/get-docker/>`_ with NVIDIA Container Toolkit (for GPU support)
+- `VS Code <https://code.visualstudio.com/>`_ with the `Dev Containers extension <https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers>`_
+
+**Quick Start:**
+
+1. Clone the repository and open in VS Code:
 
 .. code-block:: bash
 
-   git clone https://github.com/yourusername/torchsparsegradutils.git
+   git clone https://github.com/cai4cai/torchsparsegradutils
+   cd torchsparsegradutils
+   code .
+
+2. When prompted, click **"Reopen in Container"** or use the Command Palette:
+   - Press ``Ctrl+Shift+P`` (or ``Cmd+Shift+P`` on macOS)
+   - Type "Dev Containers: Reopen in Container"
+
+**Available Configurations:**
+
+- ``.devcontainer/Dockerfile.stable`` (default): Uses stable PyTorch with CUDA 12.8 support
+- ``.devcontainer/Dockerfile.nightly``: Uses nightly PyTorch builds for latest features
+
+To switch configurations, modify the ``dockerfile`` field in ``.devcontainer/devcontainer.json``:
+
+.. code-block:: json
+
+   "build": {
+       "dockerfile": "./Dockerfile.nightly",  // or "./Dockerfile.stable"
+       "context": "."
+   }
+
+**What's Included:**
+
+- **CUDA 12.8**: Full GPU development support with NVIDIA drivers
+- **Pre-installed Dependencies**: PyTorch, CuPy, JAX, SciPy, and all development tools
+- **VS Code Extensions**: Python, Pylance, Jupyter, GitHub Copilot, and code formatting tools
+- **Development Tools**: pytest, black, flake8, pre-commit hooks
+- **Python Environment**: Python 3.10+ with all optional dependencies
+
+**Benefits:**
+
+- ✅ **Consistent Environment**: Same setup across different machines
+- ✅ **GPU Support**: Pre-configured CUDA environment
+- ✅ **Zero Setup**: All dependencies and tools pre-installed
+- ✅ **Isolated**: No conflicts with host system packages
+- ✅ **VS Code Integration**: Seamless debugging, IntelliSense, and testing
+
+#### Option 2: Local Development
+
+If you prefer local development:
+
+.. code-block:: bash
+
+   git clone https://github.com/cai4cai/torchsparsegradutils
    cd torchsparsegradutils
 
    # Create a virtual environment
@@ -20,8 +72,8 @@ Getting Started
    source venv/bin/activate  # On Windows: venv\\Scripts\\activate
 
    # Install in development mode
-   pip install -e .[extras]
-   pip install -r requirements-ci.txt
+   pip install -e ".[dev]"  # Install in development mode
+   pre-commit install       # Install pre-commit hooks
 
 Development Workflow
 --------------------
@@ -361,6 +413,5 @@ Getting Help
 - **Documentation**: Read the docs first
 - **GitHub Discussions**: For questions and design discussions
 - **GitHub Issues**: For bug reports and feature requests
-- **Email**: contact@cai4cai.uk for private matters
 
 Thank you for contributing to torchsparsegradutils!
