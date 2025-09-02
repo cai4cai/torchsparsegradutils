@@ -1,0 +1,46 @@
+{% extends "!layout.html" %}
+
+{%- block extrahead %}
+{{ super() }}
+<style>
+    .external-links {
+        margin-top: 20px;
+        padding: 10px 12px;
+        border-top: 1px solid #e1e4e5;
+    }
+
+    .external-links a {
+        display: block;
+        padding: 8px 0;
+        color: #ffffff !important;
+        text-decoration: none;
+        font-size: 14px;
+        line-height: 1.4;
+    }
+
+    .external-links a:hover {
+        color: #ffffff !important;
+        opacity: 0.8;
+    }
+
+    .external-links .logo {
+        margin-right: 8px;
+        width: 16px;
+        height: 16px;
+        vertical-align: middle;
+        display: inline-block;
+    }
+</style>
+{%- endblock %}
+
+{%- block menu %}
+{{ super() }}
+<div class="external-links">
+    <a href="https://github.com/cai4cai/torchsparsegradutils" target="_blank">
+        <img src="{{ pathto('_static/github-logo.png', 1) }}" alt="GitHub" class="logo">GitHub Repository
+    </a>
+    <a href="https://pypi.org/project/torchsparsegradutils/" target="_blank">
+        <img src="{{ pathto('_static/pypi-logo.png', 1) }}" alt="PyPI" class="logo">PyPI Package
+    </a>
+</div>
+{%- endblock %}
