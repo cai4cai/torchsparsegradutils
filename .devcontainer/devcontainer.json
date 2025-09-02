@@ -45,7 +45,8 @@
                 "waderyan.gitblame",
                 "ms-python.black-formatter",
                 "ms-python.flake8",
-                "ReprEng.csv"
+                "ReprEng.csv",
+                "peakchen90.open-html-in-browser"
             ]
         }
     },
