@@ -82,6 +82,8 @@ def sparse_triangular_solve(
     --------
     Upper-triangular::
 
+        >>> import torch
+        >>> from torchsparsegradutils import sparse_triangular_solve
         >>> A = torch.sparse_csr_tensor([0, 2, 3, 4], [0, 2, 1, 2],
         ...                             torch.tensor([2.0, 1.0, 3.0, 1.0]), (3, 3))
         >>> B = torch.tensor([[1.0], [2.0], [3.0]])
@@ -97,7 +99,9 @@ def sparse_triangular_solve(
 
     Batched::
 
-        >>> A_b = torch.stack([A, A])   # (2, 3, 3)
+        >>> # Convert to COO for batching (since torch.stack doesn't work with CSR)
+        >>> A_coo = A.to_sparse_coo()
+        >>> A_b = torch.stack([A_coo, A_coo])   # (2, 3, 3)
         >>> B_b = torch.stack([B, B])   # (2, 3, 1)
         >>> x_b = sparse_triangular_solve(A_b, B_b)
         >>> x_b.shape
@@ -350,7 +354,10 @@ def sparse_generic_solve(
     >>> x = sparse_generic_solve(A, B, solve=linear_cg, settings=settings)
 
     >>> # With gradients (A.grad is sparse)
-    >>> A.requires_grad_(True); B.requires_grad_(True)
+    >>> A.requires_grad_(True)  # doctest: +ELLIPSIS
+    tensor(...)
+    >>> B.requires_grad_(True)  # doctest: +ELLIPSIS
+    tensor(...)
     >>> x = sparse_generic_solve(A, B)
     >>> x.sum().backward()
     >>> A.grad.is_sparse
@@ -479,8 +486,9 @@ class SparseGenericSolve(torch.autograd.Function):
 
         # We start by getting the i and j indices:
         if A.layout == torch.sparse_coo:
-            A_row_idx = A.indices()[0, :]
-            A_col_idx = A.indices()[1, :]
+            A_coalesced = A.coalesce()  # Ensure tensor is coalesced before accessing indices
+            A_row_idx = A_coalesced.indices()[0, :]
+            A_col_idx = A_coalesced.indices()[1, :]
         else:
             A_col_idx = A.col_indices()
             A_crow_idx = A.crow_indices()

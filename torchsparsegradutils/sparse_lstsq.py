@@ -63,7 +63,7 @@ def sparse_generic_lstsq(
     >>> indices = torch.tensor([[0, 1, 2, 3, 4, 1, 2, 3],
     ...                         [0, 0, 0, 0, 1, 1, 1, 2]])
     >>> values = torch.tensor([1.0, 2.0, 1.0, 3.0, 1.0, 2.0, 1.0, 1.0])
-    >>> A = torch.sparse_coo_tensor(indices, values, (5, 3))
+    >>> A = torch.sparse_coo_tensor(indices, values, (5, 3)).coalesce()
     >>> B = torch.randn(5)
     >>> x = sparse_generic_lstsq(A, B)
     >>> x.shape
@@ -82,20 +82,47 @@ def sparse_generic_lstsq(
     >>> _ = sparse_generic_lstsq(A, B, lstsq=my_lstsq)
 
     Gradients:
-    >>> A.requires_grad_(True); B.requires_grad_(True)
+    >>> A.requires_grad_(True)  # doctest: +ELLIPSIS
+    tensor(...)
+    >>> B.requires_grad_(True)  # doctest: +ELLIPSIS
+    tensor(...)
     >>> x = sparse_generic_lstsq(A, B)
-    >>> loss = torch.norm(A @ x - B)**2
-    >>> loss.backward(); A.grad.is_sparse
+    >>> loss = x.sum()  # Simple loss to preserve sparsity
+    >>> loss.backward()
+    >>> A.grad.is_sparse
     True
     """
     if lstsq is None or transpose_lstsq is None:
         from .utils import lsmr
 
         if lstsq is None:
-            lstsq = lambda AA, BB: lsmr(AA, BB)[0]
+
+            def lstsq_default(AA, BB):
+                # Handle multiple RHS by solving each column separately
+                if BB.dim() == 1:
+                    return lsmr(AA, BB)[0]
+                else:
+                    solutions = []
+                    for i in range(BB.shape[1]):
+                        sol = lsmr(AA, BB[:, i])[0]
+                        solutions.append(sol)
+                    return torch.stack(solutions, dim=1)
+
+            lstsq = lstsq_default
         if transpose_lstsq is None:
-            # MINRES assumes A to be symmetric -> no need to transpose A
-            transpose_lstsq = lambda AA, BB: lsmr(torch.adjoint(AA), BB, AA)[0]
+
+            def transpose_lstsq_default(AA, BB):
+                # Handle multiple RHS by solving each column separately
+                if BB.dim() == 1:
+                    return lsmr(torch.adjoint(AA), BB, AA)[0]
+                else:
+                    solutions = []
+                    for i in range(BB.shape[1]):
+                        sol = lsmr(torch.adjoint(AA), BB[:, i], AA)[0]
+                        solutions.append(sol)
+                    return torch.stack(solutions, dim=1)
+
+            transpose_lstsq = transpose_lstsq_default
 
     # Autograd Function.apply is typed as Any; cast for type checkers.
     return cast(torch.Tensor, SparseGenericLstsq.apply(A, B, lstsq, transpose_lstsq))

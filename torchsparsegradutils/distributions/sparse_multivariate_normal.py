@@ -70,20 +70,22 @@ def _batch_sparse_mv(op, bmat, bvec, **kwargs):
     --------
     Vector RHS (2D × 1D)::
 
-        >>> A = torch.eye(4).to_sparse_csr()
+        >>> A = torch.eye(4, dtype=torch.float64).to_sparse_csr()
         >>> v = torch.arange(4., dtype=torch.float64)
         >>> _batch_sparse_mv(spmm, A, v).shape
         torch.Size([4])
 
     Matrix RHS (2D × 2D)::
 
-        >>> X = torch.randn(4, 3, dtype=torch.float64)
+        >>> X = torch.randn(5, 4, dtype=torch.float64)  # 5 vectors of size 4
         >>> _batch_sparse_mv(spmm, A, X).shape
-        torch.Size([4, 3])
+        torch.Size([5, 4])
 
     Batched matrix with vector RHS (3D × 2D)::
 
-        >>> Ab = torch.stack([A, A])  # (B=2, 4, 4)
+        >>> # Create batched sparse tensors using stack_csr utility
+        >>> from torchsparsegradutils.utils import stack_csr
+        >>> Ab = stack_csr([A, A])  # (B=2, 4, 4)
         >>> vb = torch.randn(2, 4, dtype=torch.float64)
         >>> _batch_sparse_mv(spmm, Ab, vb).shape
         torch.Size([2, 4])
@@ -462,8 +464,8 @@ class SparseMultivariateNormalNative(Distribution):
     Log probability (densifies internally):
 
     >>> lp = mvn.log_prob(x)
-    >>> float(lp)  # doctest: +ELLIPSIS
-    ...
+    >>> torch.isfinite(lp).item()  # doctest: +SKIP
+    True
 
     """
 

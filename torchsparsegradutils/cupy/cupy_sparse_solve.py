@@ -105,9 +105,7 @@ def sparse_solve_c4t(
     >>> X.shape
     torch.Size([2, 3])
 
-    CUDA backend (CuPy) picked automatically
-    >>> A_cuda, b_cuda = A.cuda(), b.cuda()
-    >>> x_cuda = sparse_solve_c4t(A_cuda, b_cuda)
+    Note: CUDA backend (CuPy) is selected automatically when tensors are on GPU.
 
     See Also
     --------

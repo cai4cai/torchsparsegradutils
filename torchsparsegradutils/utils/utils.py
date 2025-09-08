@@ -126,7 +126,7 @@ def _sort_coo_indices(
     Sort unbatched COO indices:
 
     >>> import torch
-    >>> from torchsparsegradutils.utils import _sort_coo_indices
+    >>> from torchsparsegradutils.utils.utils import _sort_coo_indices
     >>> indices = torch.tensor([[1, 0, 1], [2, 1, 0]])
     >>> sorted_indices, perm = _sort_coo_indices(indices)
     >>> sorted_indices
@@ -196,7 +196,7 @@ def _compress_row_indices(
     Basic compression:
 
     >>> import torch
-    >>> from torchsparsegradutils.utils import _compress_row_indices
+    >>> from torchsparsegradutils.utils.utils import _compress_row_indices
     >>> row_indices = torch.tensor([0, 0, 2, 2])
     >>> _compress_row_indices(row_indices, num_rows=3)
     tensor([0, 2, 2, 4])
@@ -289,10 +289,11 @@ def convert_coo_to_csr_indices_values(coo_indices, num_rows, values=None):
 
     Batched conversion:
 
-    >>> # Batched COO indices
-    >>> batch_coo = torch.tensor([[0, 0, 1], [0, 1, 2], [1, 0, 2]])
+    >>> # Batched COO indices: 2 batches, each with 2 elements
+    >>> batch_coo = torch.tensor([[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 1, 0]])
+    >>> batch_values = torch.tensor([1.0, 2.0, 3.0, 4.0])
     >>> crow, col, vals = convert_coo_to_csr_indices_values(
-    ...     batch_coo, num_rows=3, values=values)
+    ...     batch_coo, num_rows=2, values=batch_values)
 
     Without values (get permutation):
 
@@ -391,13 +392,13 @@ def convert_coo_to_csr(sparse_coo_tensor):
 
     Convert batched COO to CSR:
 
-    >>> # Batched COO tensor
-    >>> batch_indices = torch.tensor([[0, 0, 1], [0, 1, 1], [1, 0, 2]])
-    >>> batch_values = torch.tensor([1.0, 2.0, 3.0])
-    >>> batched_coo = torch.sparse_coo_tensor(batch_indices, batch_values, (2, 2, 3))
+    >>> # Batched COO tensor: 2 batches, each with 2 elements
+    >>> batch_indices = torch.tensor([[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 1, 0]])
+    >>> batch_values = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    >>> batched_coo = torch.sparse_coo_tensor(batch_indices, batch_values, (2, 2, 2))
     >>> batched_csr = convert_coo_to_csr(batched_coo)
     >>> batched_csr.shape
-    torch.Size([2, 2, 3])
+    torch.Size([2, 2, 2])
     """
     if sparse_coo_tensor.layout == torch.sparse_coo:
         if sparse_coo_tensor.is_coalesced() is False:
@@ -847,10 +848,10 @@ def sparse_eye(
 
     >>> from torchsparsegradutils.utils import sparse_eye
     >>> I = sparse_eye((3, 3), layout=torch.sparse_coo)
-    >>> I.to_dense()
+    >>> I.to_dense()  # doctest: +ELLIPSIS
     tensor([[1., 0., 0.],
             [0., 1., 0.],
-            [0., 0., 1.]])
+            [0., 0., 1.]]...)
 
     Batched identity (CSR):
 

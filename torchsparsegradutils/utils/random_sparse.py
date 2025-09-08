@@ -1308,7 +1308,7 @@ def make_spd_sparse(
     ...     layout=torch.sparse_csr,
     ...     value_dtype=torch.float64,
     ...     index_dtype=torch.int32,
-    ...     device=torch.device("cuda"),
+    ...     device=torch.device("cpu"),
     ...     nz=4,
     ... )
     """

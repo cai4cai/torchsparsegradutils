@@ -19,7 +19,7 @@ def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
     Example:
         >>> x = torch.randn(10, 5)
         >>> _pad_with_singletons(x, 2, 3).shape
-        >>> # [1, 1, 10, 5, 1, 1, 1]
+        torch.Size([1, 1, 10, 5, 1, 1, 1])
     """
     new_shape = [1] * num_singletons_before + list(obj.shape) + [1] * num_singletons_after
     return obj.view(*new_shape)

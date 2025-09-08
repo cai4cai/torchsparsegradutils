@@ -85,7 +85,10 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
 
     With gradients::
 
-        >>> A.requires_grad_(True); B.requires_grad_(True)
+        >>> A.requires_grad_(True)  # doctest: +ELLIPSIS
+        tensor(...)
+        >>> B.requires_grad_(True)  # doctest: +ELLIPSIS
+        tensor(...)
         >>> out = sparse_mm(A, B)
         >>> out.sum().backward()
         >>> A.grad.is_sparse

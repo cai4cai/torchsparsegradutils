@@ -194,9 +194,9 @@ def linear_cg(
 
     With Lanczos tridiagonalization::
 
-        >>> x, T = linear_cg(A.matmul, b, n_tridiag=5)
+        >>> x, T = linear_cg(A.matmul, b, n_tridiag=1)
         >>> T.shape  # (n_tridiag, r, r) with r <= n
-        torch.Size([5, 2, 2])
+        torch.Size([1, 2, 2])
 
     Sparse operator via closure::
 

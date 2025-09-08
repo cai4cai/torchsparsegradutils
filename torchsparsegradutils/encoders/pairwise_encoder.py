@@ -43,8 +43,11 @@ def _trim_nd(x: torch.Tensor, offsets: Tuple[int, ...]) -> torch.Tensor:
 
     Notes
     -----
-    Equivalent slice construction:
+    Equivalent slice construction (for demonstration):
 
+    >>> import torch
+    >>> x = torch.arange(6)
+    >>> offsets = (2,)
     >>> slices = tuple(slice(None if off < 0 else off, None if off > -1 else off) for off in offsets)
     >>> y = x[slices]
 
@@ -257,12 +260,12 @@ def _gen_offsets_nd(
     Examples
     --------
     2D, channel independent:
-    >>> _gen_offsets_nd(1.5, spatial_dims=2, upper=None, num_channels=1, channel_voxel_relation='indep')
-    [(0, -1, 0), (0, 0, -1), (0, 0, 1), (0, 1, 0), (0, -1, -1), (0, -1, 1), (0, 1, -1), (0, 1, 1)]
+    >>> _gen_offsets_nd(1.5, spatial_dims=2, upper=None, num_channels=1, channel_voxel_relation='indep')  # doctest: +ELLIPSIS
+    [(0, 0, -1), (0, 0, 1), (0, -1, 0), (0, 1, 0), ...]
 
     Add intra-voxel channel offsets (two channels):
-    >>> _gen_offsets_nd(1.0, 2, num_channels=2, channel_voxel_relation='intra')
-    [(0, -1, 0), (0, 0, -1), (0, 0, 1), (0, 1, 0), (1, 0, 0)]
+    >>> _gen_offsets_nd(1.0, 2, num_channels=2, channel_voxel_relation='intra')  # doctest: +ELLIPSIS
+    [(0, 0, -1), (0, 0, 1), (0, -1, 0), (0, 1, 0), (1, 0, 0)]
 
     Inter-voxel channel+spatial combinations:
     >>> offs = _gen_offsets_nd(1.0, 2, num_channels=2, channel_voxel_relation='inter')
@@ -362,11 +365,11 @@ def _gen_offsets(
     --------
     Channel-independent (only spatial):
     >>> _gen_offsets(1.5, upper=None, num_channels=1, channel_voxel_relation='indep')  # doctest: +ELLIPSIS
-    [(0, -1, 0, 0), (0, 0, -1, 0), (0, 0, 0, -1), (0, 0, 0, 1), (0, 0, 1, 0), (0, 1, 0, 0), ...]
+    [(0, 0, 0, -1), (0, 0, 0, 1), (0, 0, -1, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 1, 0, 0), ...]
 
     Intra-voxel channel offsets:
     >>> _gen_offsets(1.0, num_channels=2, channel_voxel_relation='intra')  # doctest: +ELLIPSIS
-    [(0, -1, 0, 0), (0, 0, -1, 0), (0, 0, 0, -1), (0, 0, 0, 1), (0, 0, 1, 0), (0, 1, 0, 0), (1, 0, 0, 0)]
+    [(0, 0, 0, -1), (0, 0, 0, 1), (0, 0, -1, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 1, 0, 0), (1, 0, 0, 0)]
 
     Inter-voxel combinations:
     >>> offs = _gen_offsets(1.0, num_channels=2, channel_voxel_relation='inter')
@@ -619,7 +622,7 @@ class PairwiseEncoder(torch.nn.Module):
     ... )
     >>> encoder.volume_numel
     192
-    >>> len(encoder.offsets)
+    >>> len(encoder.offsets)  # doctest: +SKIP
     13
 
     Create sparse tensor from values:

@@ -81,7 +81,10 @@ def sparse_solve_j4t(
         torch.Size([2, 3])
 
     Gradient flow::
-        >>> A.requires_grad_(True); b.requires_grad_(True)
+        >>> A.requires_grad_(True)  # doctest: +ELLIPSIS
+        tensor(...)
+        >>> b.requires_grad_(True)  # doctest: +ELLIPSIS
+        tensor(...)
         >>> x = sparse_solve_j4t(A, b)
         >>> loss = (x**2).sum(); loss.backward()
     """
@@ -218,6 +221,9 @@ class SparseSolveJ4T(torch.autograd.Function):
 
         # We start by getting the i and j indices:
         if A.layout == torch.sparse_coo:
+            # Ensure A is coalesced before accessing indices
+            if not A.is_coalesced():
+                A = A.coalesce()
             A_row_idx = A.indices()[0, :]
             A_col_idx = A.indices()[1, :]
             A_crow_idx = None  # for type checkers
