@@ -20,57 +20,72 @@ from .pairwise_encoder import (
     calc_pairwise_coo_indices_nd,
     calc_pariwise_coo_indices,
     PairwiseEncoder,
-    Shape,
 )
 
 
 class PairwiseVoxelEncoder(PairwiseEncoder):
-    """
-    A class for encoding pairwise spatial 3D neighbourhoods and channel based relations
-    into a sparse tensor of either COO or CSR format.
+    r"""3D voxel specialization of :class:`PairwiseEncoder` (deprecated).
 
-    **DEPRECATED**: Use PairwiseEncoder instead, which supports arbitrary N-dimensional spatial relationships.
+    .. deprecated:: 0.x
+       Use :class:`PairwiseEncoder` which supports arbitrary N-D spatial relationships.
 
-    This class provides the same functionality as before but is now deprecated in favor of
-    the more general PairwiseEncoder class. PairwiseVoxelEncoder is restricted to 4D tensors
-    with shape (C, H, D, W), while PairwiseEncoder supports arbitrary N-dimensional spatial relationships.
+    Encodes pairwise 3D spatial neighborhoods and channel relations into sparse
+    COO or CSR tensors for volumes ``(C, H, D, W)``. Maintained only for backward
+    compatibility; internally delegates to the generic encoder.
 
-    Args:
-        radius (float): The maximum distance from the origin within which the spatial
-                        coordinates are generated.
-        volume_shape (Tuple[int, int, int, int]): A tuple of integers representing the volume
-                                                   shape of (C, H, D, W), where C is the number of
-                                                   channels, and H, D, W are the spatial dimensions.
-        diag (bool, optional): If True, the diagonal indices (offset of (0,0,0,0)) are
-                               calculated. If False, only non-diagonal offsets are
-                               calculated. Default is False.
-        upper (Optional[bool], optional): Determines indices generation for an upper or
-                                          lower triangular matrix or a full matrix. If None,
-                                          indices relating to both upper and lower triangular
-                                          matrices are generated. If False, only indices
-                                          relating to a lower triangular matrix are
-                                          generated. If True, only indices relating to an
-                                          upper triangular matrix are generated.
-        channel_voxel_relation (str, optional): Specifies the type of channel relationship
-                                                to model, can be 'indep', 'intra', or
-                                                'inter'. Default is 'indep'.
-        layout (torch.layout, optional): Determines the layout of the output tensor.
-                                         Options are torch.sparse_coo (default) or torch.sparse_csr.
-        indices_dtype (torch.dtype, optional): The data type of the output indices.
-                                               Must be either torch.int32 or torch.int64.
-                                               Default is torch.int64.
-        device (torch.device, optional): Device assigned to store sparse tensor indices
-                                         at initialisation.
-                                         Defaults to torch.device("cpu").
+    Parameters
+    ----------
+    radius : float
+        Spatial radius (neighborhood extent).
+    volume_shape : Tuple[int, int, int, int]
+        ``(C, H, D, W)`` with all positive integers.
+    diag : bool, optional
+        Include diagonal offsets. Default ``False``.
+    upper : bool or None, optional
+        Triangular selection over offsets (see generic encoder). Default ``None``.
+    channel_voxel_relation : {"indep","intra","inter"}, optional
+        Channel relation mode. Default ``"indep"``.
+    layout : torch.layout, optional
+        Output layout (``sparse_coo`` default or ``sparse_csr``).
+    indices_dtype : torch.dtype, optional
+        Index dtype (``int32`` or ``int64``; default ``int64``).
+    device : torch.device, optional
+        Storage device (default CPU).
 
+    Attributes
+    ----------
+    volume_numel : int
+        Total sites ``C * H * D * W``.
+    offsets : list[tuple[int,int,int,int]]
+        Ordered offset tuples.
+    indices / crow_indices / col_indices / csr_permutation : torch.Tensor
+        Sparse structure (depending on layout).
 
-    Attributes:
-        volume_numel (int): Total number of elements in the volume.
-        offsets (List[Tuple[int, int, int, int]]): List of 4D offsets used to calculate indices.
-        indices (torch.Tensor): Tensor of pairwise indices in COO format.
-        crow_indices (torch.Tensor): Tensor of row indices in CSR format.
-        col_indices (torch.Tensor): Tensor of column indices in CSR format.
-        csr_permutation (torch.Tensor): Permutation used to convert COO to CSR format.
+    Warnings
+    --------
+    DeprecationWarning
+        Issued upon instantiation.
+
+    Examples
+    --------
+    Deprecated usage:
+    >>> from torchsparsegradutils.encoders import PairwiseVoxelEncoder
+    >>> import warnings
+    >>> with warnings.catch_warnings():
+    ...     warnings.simplefilter('ignore', DeprecationWarning)
+    ...     enc = PairwiseVoxelEncoder(radius=1.5, volume_shape=(2, 8, 8, 8))
+    >>> enc.indices.shape[0]
+    2
+
+    Preferred replacement:
+    >>> from torchsparsegradutils.encoders import PairwiseEncoder
+    >>> new = PairwiseEncoder(radius=1.5, volume_shape=(2, 8, 8, 8), channel_voxel_relation='indep')
+    >>> new.indices.shape[0]
+    2
+
+    See Also
+    --------
+    PairwiseEncoder : General N-D implementation.
     """
 
     def __init__(
@@ -78,7 +93,7 @@ class PairwiseVoxelEncoder(PairwiseEncoder):
         radius: float,
         volume_shape: Tuple[int, int, int, int],
         diag: bool = False,
-        upper: bool = None,
+        upper: bool | None = None,
         channel_voxel_relation: str = "indep",
         layout=torch.sparse_coo,
         indices_dtype: torch.dtype = torch.int64,

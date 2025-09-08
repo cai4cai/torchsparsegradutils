@@ -1,3 +1,5 @@
+from typing import Any, Callable, Dict, Optional, Tuple, Union
+
 import torchsparsegradutils.cupy as tsgucupy
 import torch
 import warnings
@@ -5,62 +7,115 @@ import warnings
 # from cupyx.scipy.sparse.linalg import cg, cgs, minres, gmres, spsolve
 
 
-def sparse_solve_c4t(A, B, solve=None, transpose_solve=None, **kwargs):
-    """
-    Solve the sparse linear system Ax = B using CuPy or SciPy backends.
+def sparse_solve_c4t(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    solve: Optional[Union[str, Callable[..., Any]]] = None,
+    transpose_solve: Optional[Union[str, Callable[..., Any]]] = None,
+    **kwargs: Any,
+) -> torch.Tensor:
+    r"""
+    Solve sparse linear systems using CuPy / SciPy with automatic backend selection.
 
-    This function automatically selects the appropriate backend (CuPy for CUDA tensors,
-    SciPy for CPU tensors) and supports various iterative and direct solvers.
+    Solves :math:`A X = B` using CPU (NumPy / SciPy) or GPU (CuPy / cupyx.scipy)
+    backends, chosen from the device of the input PyTorch sparse tensor ``A``.
+    Supports selected iterative solvers and a direct sparse solve with automatic
+    COO / CSR format conversion and an autograd-compatible backward pass via a
+    transpose solve.
 
-    Args:
-        A (torch.Tensor): A 2D sparse square tensor in COO or CSR format. Must have
-                         shape (n, n) where n is the number of rows/columns.
-        B (torch.Tensor): A 1D or 2D tensor with shape (n,) or (n, k) where n matches
-                         the dimension of A and k is the number of right-hand sides.
-                         For iterative solvers, B must be a vector (1D or 2D with shape[1] == 1).
-        solve (str or callable, optional): Solver method to use. Can be:
-            - None: Use default solver (spsolve for single RHS, factorized for multi-RHS)
-            - "cg": Conjugate Gradient (iterative, vector RHS only, requires symmetric positive definite A)
-            - "cgs": Conjugate Gradient Squared (iterative, vector RHS only)
-            - "minres": Minimum Residual (iterative, vector RHS only, requires symmetric A)
-            - "gmres": Generalized Minimal Residual (iterative, vector RHS only)
-            - "spsolve": Direct sparse solver (supports both vector and multi-RHS)
-            - callable: Custom solver function
-        transpose_solve (str or callable, optional): Solver for the transpose system A^T x = b
-                                                   used in backpropagation. Same options as solve.
-                                                   If None, defaults to the same as solve.
-        **kwargs: Additional keyword arguments passed to the solver functions.
-                 Common parameters:
-                 - tol (float): Tolerance for iterative solvers (default 1e-5)
-                 - maxiter (int): Maximum number of iterations
-                 - atol (float): Absolute tolerance for some solvers
+    Parameters
+    ----------
+    A : torch.Tensor
+        Sparse square matrix of shape ``(n, n)`` in ``torch.sparse_coo`` or
+        ``torch.sparse_csr`` layout.
+    B : torch.Tensor
+        Right-hand side(s). Shape ``(n,)`` (vector RHS) or ``(n, k)`` (multi-RHS).
+    solve : {"cg", "cgs", "minres", "gmres", "spsolve"} or callable, optional
+        Solver selector or a custom callable ``solve(A, b, **kwargs) -> x``.
+        Built-ins:
+            - ``"cg"``        : Conjugate Gradient (SPD; vector RHS only)
+            - ``"cgs"``       : Conjugate Gradient Squared (vector RHS only)
+            - ``"minres"``    : MINRES (symmetric; vector RHS only)
+            - ``"gmres"``     : GMRES (vector RHS only)
+            - ``"spsolve"``   : Direct sparse solve (supports multi-RHS)
+        If ``None`` (default):
+            - vector RHS → direct ``spsolve``
+            - multi-RHS → factorize then solve (SciPy/CuPy factorized)
+    transpose_solve : {"cg", "cgs", "minres", "gmres", "spsolve"} or callable, optional
+        Solver for the transpose system :math:`A^T y = g` used in backprop.
+        Defaults to using the same selection as ``solve`` (or factorized).
+    **kwargs : dict
+        Additional solver parameters passed through to the chosen backend:
 
-    Returns:
-        torch.Tensor: Solution tensor X with the same shape as B.
+        - Iterative solvers commonly accept ``tol``/``rtol``, ``atol``, ``maxiter``,
+          and optionally ``x0``, ``M``, ``callback``; unsupported kwargs are ignored.
+        - Direct ``spsolve`` ignores iteration controls.
 
-    Raises:
-        TypeError: If A is not a sparse tensor with supported layout (COO or CSR).
-        ValueError: If A is not square, if B has incompatible dimensions, or if iterative
-                   solver is used with multi-RHS (B.ndim == 2 and B.shape[1] > 1).
+    Returns
+    -------
+    torch.Tensor
+        Solution tensor ``X`` with the same shape and dtype as ``B`` (or cast to match
+        ``A.dtype`` if necessary) and on the same device as ``A``.
 
-    Note:
-        - For CPU tensors, SciPy backends are used
-        - For CUDA tensors, CuPy backends are used
-        - Iterative solvers (cg, cgs, minres, gmres) only support vector RHS:
-          * B must be 1D with shape (n,), or
-          * B must be 2D with shape (n, 1)
-        - Direct solver (spsolve) and factorized solver (None) support both vector and multi-RHS
-        - For multi-RHS problems (B.shape[1] > 1), use solve="spsolve" or solve=None
-        - Performance considerations:
-          * CSR format is generally more efficient than COO for most solvers
-          * Some solvers may automatically convert COO to CSR, which can impact performance
-          * On CPU, 'minres' solver may promote float32 inputs to float64 (warning will be issued)
-          * SciPy's spsolve prefers CSC or CSR format and may issue efficiency warnings for COO
-          * CuPy's solvers may convert to CSR format internally for better performance
+    Raises
+    ------
+    TypeError
+        If ``A`` is not ``torch.sparse_coo`` or ``torch.sparse_csr``.
+    ValueError
+        If ``A`` is not square; if ``B`` has incompatible shape; or if an iterative
+        solver is requested for a multi-RHS input.
 
-    Warnings:
-        - UserWarning: When using 'minres' on CPU with potential dtype promotion
-        - SparseEfficiencyWarning: When solvers need to convert matrix formats for efficiency
+    Notes
+    -----
+    Backend selection
+        - CPU tensors → NumPy/SciPy
+        - CUDA tensors → CuPy/cupyx.scipy
+    Solver compatibility
+        - Iterative solvers (``cg``, ``cgs``, ``minres``, ``gmres``): **vector RHS only**
+        - Direct solver (``spsolve``): supports vector **and** multi-RHS
+    Performance considerations
+        - CSR is typically more efficient than COO for these solvers.
+        - Backends may internally convert to CSC/CSR and emit efficiency warnings.
+        - SciPy ``minres`` may upcast float32 to float64 on CPU.
+    Gradients
+        The backward pass solves :math:`A^T y = \\mathrm{grad}` using the same backend
+        and forms sparse gradients for ``A`` by only computing entries at its nonzero
+        positions.
+
+    Examples
+    --------
+    Basic solve (default direct solver)
+    >>> import torch
+    >>> from torchsparsegradutils.cupy import sparse_solve_c4t
+    >>> idx = torch.tensor([[0, 1, 1], [0, 0, 1]])
+    >>> val = torch.tensor([2.0, -1.0, 2.0])
+    >>> A = torch.sparse_coo_tensor(idx, val, (2, 2))
+    >>> b = torch.tensor([1.0, 3.0])
+    >>> x = sparse_solve_c4t(A, b)
+    >>> x.shape
+    torch.Size([2])
+
+    Iterative solver
+    >>> x_cg = sparse_solve_c4t(A, b, solve="cg", tol=1e-8)
+
+    Multi-RHS with direct solve
+    >>> B = torch.randn(2, 3)
+    >>> X = sparse_solve_c4t(A, B, solve="spsolve")
+    >>> X.shape
+    torch.Size([2, 3])
+
+    CUDA backend (CuPy) picked automatically
+    >>> A_cuda, b_cuda = A.cuda(), b.cuda()
+    >>> x_cuda = sparse_solve_c4t(A_cuda, b_cuda)
+
+    See Also
+    --------
+    torchsparsegradutils.jax.sparse_solve_j4t :
+        JAX-backed sparse solver with autograd support.
+    torchsparsegradutils.cupy.t2c_coo, torchsparsegradutils.cupy.t2c_csr :
+        PyTorch→CuPy/NumPy sparse converters used internally.
+    torchsparsegradutils.cupy.c2t_coo, torchsparsegradutils.cupy.c2t_csr :
+        CuPy/NumPy→PyTorch sparse converters used internally.
     """
     # Input validation
     if not isinstance(A, torch.Tensor) or not isinstance(B, torch.Tensor):
@@ -213,8 +268,32 @@ def sparse_solve_c4t(A, B, solve=None, transpose_solve=None, **kwargs):
 
 
 class SparseSolveC4T(torch.autograd.Function):
+    r"""
+    Autograd function for CuPy / SciPy–backed sparse solves.
+
+    Forward: converts PyTorch sparse ``A`` (COO / CSR) and dense ``B`` to backend
+    sparse / dense types, then calls either an iterative solver, direct
+    ``spsolve``, or a cached factorized solve for multi-RHS.
+
+    Backward: solves :math:`A^T y = \mathrm{grad}_X` and reconstructs
+    :math:`\nabla_A` only at the nonzero positions of ``A`` via
+    :math:`\nabla_A = -(A^{-T} \, \mathrm{grad}_X) \, X^T` (sampled at existing
+    sparsity pattern) while returning :math:`\nabla_B = A^{-T} \mathrm{grad}_X`.
+
+    See Also
+    --------
+    torchsparsegradutils.jax.sparse_solve_j4t : JAX-backed sparse solver.
+    """
+
     @staticmethod
-    def forward(ctx, A, B, solve, transpose_solve, kwargs):
+    def forward(
+        ctx,
+        A: torch.Tensor,
+        B: torch.Tensor,
+        solve: Optional[Callable[..., Any]],
+        transpose_solve: Optional[Callable[..., Any]],
+        kwargs: Dict[str, Any],
+    ) -> torch.Tensor:
         xp, xsp = tsgucupy._get_array_modules(A.data)
         grad_flag = A.requires_grad or B.requires_grad
         ctx.transpose_solve = transpose_solve
@@ -263,7 +342,7 @@ class SparseSolveC4T(torch.autograd.Function):
         return x
 
     @staticmethod
-    def backward(ctx, grad):
+    def backward(ctx, grad: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, None, None, None]:
         A, x = ctx.saved_tensors
         xp, xsp = tsgucupy._get_array_modules(A.data)
 

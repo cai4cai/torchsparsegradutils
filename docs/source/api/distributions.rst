@@ -3,18 +3,25 @@ Probability Distributions
 
 This module contains sparse multivariate normal distributions.
 
-.. currentmodule:: torchsparsegradutils.distributions
-
 Sparse Multivariate Normal
 ---------------------------
 
-.. automodule:: torchsparsegradutils.distributions.sparse_multivariate_normal
+.. currentmodule:: torchsparsegradutils.distributions.sparse_multivariate_normal
+
+.. autoclass:: SparseMultivariateNormal
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: SparseMultivariateNormalNative
    :members:
    :undoc-members:
    :show-inheritance:
 
 Constraints
 -----------
+
+.. currentmodule:: torchsparsegradutils.distributions.constraints
 
 .. automodule:: torchsparsegradutils.distributions.constraints
    :members:

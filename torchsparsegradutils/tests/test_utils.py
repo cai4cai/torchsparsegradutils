@@ -161,6 +161,7 @@ def test_sparse_block_diag_forward(device, layout, size, nnz):
 
 
 # Test sparse_block_diag backward for COO
+# TODO: what about CSR?
 @pytest.mark.parametrize(
     "size, nnz",
     [
@@ -266,7 +267,7 @@ def layout(request):
 def test_sparse_eye(shapes, layout, values_dtype, indices_dtype, device):
     name, size = shapes
     if layout is torch.sparse_coo and indices_dtype == torch.int32:
-        pytest.skip("sparse COO with int32 indices not supported")
+        pytest.skip("sparse COO does not return int32 indices")
     Id = sparse_eye(
         size,
         layout=layout,

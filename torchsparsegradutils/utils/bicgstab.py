@@ -1,13 +1,10 @@
 # Code imported from https://github.com/PythonOptimizers/pykrylov/blob/master/pykrylov/bicgstab/bicgstab.py
 # Modifications to fit torchsparsegradutils
 
-import torch
-import warnings
-
-from typing import NamedTuple
-import types
-
 import logging
+from typing import Callable, NamedTuple, Optional, Union
+
+import torch
 
 # Default (null) logger.
 _null_log = logging.getLogger("bicgstab")
@@ -15,52 +12,102 @@ _null_log.disabled = True
 
 
 class BICGSTABSettings(NamedTuple):
-    matvec_max: int = None  # Max. number of matrix-vector produts (2n)
-    abstol: float = 1.0e-8  # absolute stopping tolerance
-    reltol: float = 1.0e-6  # absolute stopping tolerance
-    precon: any = None  # optional preconditioner
-    logger: any = _null_log  # a `logging.logger` instance.
+    matvec_max: Optional[int] = None  # Max number of matvecs (default 2n)
+    abstol: float = 1.0e-8  # Absolute stopping tolerance
+    reltol: float = 1.0e-6  # Relative stopping tolerance
+    precon: Optional[Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]]] = None
+    logger: logging.Logger = _null_log
 
 
 def bicgstab(
-    matmul_closure,
-    rhs,
-    initial_guess=None,
-    settings=BICGSTABSettings(),
-):
-    """
-    A pytorch implementation of the bi-conjugate gradient stabilized
-    (Bi-CGSTAB) algorithm. Bi-CGSTAB may be used to solve unsymmetric systems
-    of linear equations, i.e., systems of the form
-        A x = b
-    where the operator A is unsymmetric and nonsingular.
+    matmul_closure: Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]],
+    rhs: torch.Tensor,
+    initial_guess: Optional[torch.Tensor] = None,
+    settings: BICGSTABSettings = BICGSTABSettings(),
+) -> torch.Tensor:
+    r"""
+    Solve linear systems with the BiConjugate Gradient Stabilized (BiCGSTAB) method.
 
-    Bi-CGSTAB requires 2 operator-vector products, 6 dot products and 6 daxpys
-    per iteration.
+    Solves nonsymmetric, nonsingular systems :math:`A x = b`. Accepts either a matrix-like
+    tensor (using ``.matmul``) or a callable for the matrix–vector product, and
+    optionally a (left) preconditioner, also as tensor or callable, approximating :math:`M^{-1}`.
 
-    In addition, if a preconditioner is supplied, it needs to solve 2
-    preconditioning systems per iteration.
+    Parameters
+    ----------
+    matmul_closure : {torch.Tensor, callable(x) -> Ax}
+        Matrix–vector multiplication operator. If a tensor is provided, its
+        ``.matmul`` is used.
+    rhs : torch.Tensor, shape (n,) or (n, k)
+        Right-hand side vector(s). For multiple RHS, **each column is solved
+        independently** (no block BiCGSTAB).
+    initial_guess : torch.Tensor, optional, shape like ``rhs``
+        Initial guess. If ``None``, zero initialization is used.
+    settings : BICGSTABSettings, optional
+        Convergence tolerances, maximum matvecs, optional preconditioner and logger.
 
-    The original description appears in [VdVorst92]_. This implementation is a
-    preconditioned version of that given in [Kelley]_.
+    Returns
+    -------
+    torch.Tensor
+        Solution(s) ``x`` with the **same shape as ``rhs``**.
 
-    Reference:
-    .. [VdVorst92] H. Van der Vorst, *Bi-CGSTAB: A Fast and Smoothly Convergent
-                   Variant of Bi-CG for the Solution of Nonsymmetric Linear
-                   Systems*, SIAM Journal on Scientific and Statistical
-                   Computing **13** (2), pp. 631--644, 1992.
+    Raises
+    ------
+    RuntimeError
+        If ``matmul_closure`` is neither tensor nor callable, or if the
+        ``precon`` is neither tensor nor callable.
 
+    Notes
+    -----
+    Per iteration (unpreconditioned) BiCGSTAB uses ~2 matvecs, several dot products,
+    and vector updates. The algorithm can experience breakdown when certain inner
+    products or denominators vanish (e.g., :math:`\langle r_0, v \rangle = 0` or :math:`\langle t, t \rangle = 0`).
+    This implementation follows a standard variant and solves multiple RHS by
+    looping over columns (no shared Krylov subspace).
 
-    .. [Kelley] C. T. Kelley, *Iterative Methods for Linear and Nonlinear
-                Equations*, number 16 in *Frontiers in Applied Mathematics*,
-                SIAM, Philadelphia, 1995.
+    References
+    ----------
+    .. [1] Van der Vorst, H. A. (1992). *Bi-CGSTAB: A fast and smoothly converging
+           variant of Bi-CG for the solution of nonsymmetric linear systems*.
+           SIAM J. Sci. Stat. Comput., 13(2), 631–644.
+    .. [2] Kelley, C. T. (1995). *Iterative Methods for Linear and Nonlinear Equations*.
+           SIAM.
 
-    Solve a linear system with `rhs` as right-hand side by the Bi-CGSTAB
-    method. The vector `rhs` should be a Numpy array.
+    Examples
+    --------
+    >>> import torch
+    >>> from torchsparsegradutils.utils import bicgstab
+    >>> A = torch.tensor([[3.0, 1.0], [2.0, 4.0]])
+    >>> b = torch.tensor([1.0, 2.0])
+    >>> x = bicgstab(A.matmul, b)
+    >>> x.shape
+    torch.Size([2])
 
-    :keywords:
-        :guess:      Initial guess (Numpy array, default: 0)
-        :matvec_max: Max. number of matrix-vector produts (2n)
+    Multiple right-hand sides:
+    >>> B = torch.randn(2, 3)
+    >>> X = bicgstab(A.matmul, B)
+    >>> X.shape
+    torch.Size([2, 3])
+
+    With custom settings:
+
+    >>> from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
+    >>> settings = BICGSTABSettings(abstol=1e-10, reltol=1e-8, matvec_max=1000)
+    >>> x = bicgstab(A.matmul, b, settings=settings)
+
+    With preconditioning:
+
+    >>> # Diagonal preconditioner
+    >>> # Extract and regularize diagonal
+    >>> diagA = torch.diag(A)
+    >>> eps = 1e-12
+    >>> safe_diag = torch.where(diagA.abs() < eps, torch.full_like(diagA, eps), diagA)
+    >>> inv_diag = 1.0 / safe_diag
+
+    >>> # Supply as an operator (apply M^{-1} r = inv_diag * r elementwise)
+    >>> settings_precond = BICGSTABSettings(
+    ...     precon=lambda r: inv_diag * r  # r has same shape as b
+    ... )
+    >>> x = bicgstab(A.matmul, b, settings=settings_precond)
     """
     # support multiple right‐hand sides by solving each column separately
     if rhs.dim() > 1:
@@ -196,6 +243,5 @@ def bicgstab(
 
     # converged = residNorm <= threshold  # variable unused
     bestSolution = x
-    residNorm = residNorm
 
     return bestSolution

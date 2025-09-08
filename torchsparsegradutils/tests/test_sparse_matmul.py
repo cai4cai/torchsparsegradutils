@@ -187,21 +187,21 @@ BAD_TEST_DATA = [
         torch.rand(4, 6).to_sparse(),
         torch.rand(1, 6, 2),
         ValueError,
-        "Both A and B should have the same number of dimensions",
+        "A and B must both be 2D or both be 3D tensors",
     ),
     (
         "bad_format",
         torch.rand(4, 6).to_sparse_csc(),
         torch.rand(6, 2),
         ValueError,
-        "A should be in either COO or CSR format",
+        "A should be in either COO or CSR sparse format",
     ),
     (
         "bad_batch",
         torch.stack([torch.rand(4, 6).to_sparse(), torch.rand(4, 6).to_sparse()]),
         torch.rand(1, 6, 2),
         ValueError,
-        "If A and B have a leading batch dimension, they should have the same batch size",
+        "If batched, A and B must have the same batch size",
     ),
 ]
 

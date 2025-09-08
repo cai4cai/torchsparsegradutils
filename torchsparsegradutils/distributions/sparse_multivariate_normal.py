@@ -15,24 +15,79 @@ __all__ = ["SparseMultivariateNormal", "SparseMultivariateNormalNative"]
 
 
 def _batch_sparse_mv(op, bmat, bvec, **kwargs):
-    """Performs batched matrix-vector operation between a sparse matrix and a dense vector.
+    r"""
+    Batched sparse–dense matvec helper (no broadcasting).
 
-    bmat can have 0 or 1 batch dimension
-    bvec can have 0, 1 or 2 leading batch dimensions
+    Performs a matrix–vector (or matrix–matrix) operation where the matrix is
+    sparse (COO/CSR) and the vector/array is dense. Limited batch combinations
+    are supported and **no broadcasting** of batch dimensions is performed.
 
-    If bmat has a leading batch dimension, it must be the same as the first batch dimension of bvec
+    Supported input ranks
+    ---------------------
+    - ``bmat.ndim == 2`` with ``bvec.ndim == 1``  → returns ``(n,)``
+    - ``bmat.ndim == 2`` with ``bvec.ndim == 2``  → returns ``(n, k)``
+    - ``bmat.ndim == 3`` with ``bvec.ndim == 2``  → returns ``(B, n)``
+    - ``bmat.ndim == 3`` with ``bvec.ndim == 3``  → returns ``(B, n, k)``
 
-    NOTE: this function does not support broadcasting of batch dimensions
-          unlike torch.distributions.multivariate_normal._batch_mv
+    Parameters
+    ----------
+    op : callable
+        Sparse operator to apply. Typically :func:`torchsparsegradutils.sparse_mm`
+        (SpMM) or :func:`torchsparsegradutils.sparse_triangular_solve`.
+        Must accept ``(bmat, bvec, **kwargs)`` and return a tensor shaped
+        like a dense matmul result.
+    bmat : torch.Tensor
+        Sparse matrix of shape ``(n, n)`` or batched sparse matrix of shape
+        ``(B, n, n)`` in COO or CSR layout.
+    bvec : torch.Tensor
+        Dense vector/array. Shape may be ``(n,)``, ``(n, k)``, ``(B, n)``,
+        or ``(B, n, k)`` as listed above.
+    **kwargs
+        Extra keyword arguments forwarded to ``op`` (e.g., ``upper``,
+        ``unitriangular``, ``transpose`` for triangular solves).
 
-    Args:
-        op (callable): Function that performs matrix-vector operation, either sparse_mm or sparse_triangular_solve
-        bmat (torch.Tensor): Sparse matrix in sparse_coo or sparse_csr layout with optional leading batch dimension.
-            Can be either strictly lower triangular (unit triangular) or lower triangular with diagonal.
-        bvec (torch.Tensor): Dense vector with up to 2 optional leading batch dimensions
+    Returns
+    -------
+    torch.Tensor
+        Dense result with shape as indicated in *Supported input ranks*.
 
-    Returns:
-        torch.Tensor: Dense matrix vector product
+    Raises
+    ------
+    ValueError
+        If the pair of ranks is not one of the supported combinations.
+
+    Notes
+    -----
+    - Batch sizes must match exactly when ``bmat`` is batched.
+    - This helper exists to centralize the small reshaping/permutation logic
+      so that SpMM and triangular solves can share a common pathway.
+
+    See Also
+    --------
+    torchsparsegradutils.sparse_mm : Sparse matrix–dense matrix multiply.
+    torchsparsegradutils.sparse_triangular_solve : Sparse triangular solver.
+
+    Examples
+    --------
+    Vector RHS (2D × 1D)::
+
+        >>> A = torch.eye(4).to_sparse_csr()
+        >>> v = torch.arange(4., dtype=torch.float64)
+        >>> _batch_sparse_mv(spmm, A, v).shape
+        torch.Size([4])
+
+    Matrix RHS (2D × 2D)::
+
+        >>> X = torch.randn(4, 3, dtype=torch.float64)
+        >>> _batch_sparse_mv(spmm, A, X).shape
+        torch.Size([4, 3])
+
+    Batched matrix with vector RHS (3D × 2D)::
+
+        >>> Ab = torch.stack([A, A])  # (B=2, 4, 4)
+        >>> vb = torch.randn(2, 4, dtype=torch.float64)
+        >>> _batch_sparse_mv(spmm, Ab, vb).shape
+        torch.Size([2, 4])
     """
     if bmat.dim() == 2 and bvec.dim() == 1:
         return op(bmat, bvec.unsqueeze(-1), **kwargs).squeeze(-1)
@@ -48,43 +103,131 @@ def _batch_sparse_mv(op, bmat, bvec, **kwargs):
 
 class SparseMultivariateNormal(Distribution):
     r"""
-    Creates a sparse multivariate normal (MVN) distribution
-    parameterized by a mean vector :attr: `loc`,
-    optional diagonal covariance or precision matrix represented as a vector :attr: `diagonal`,
-    and a sparse lower triangular covariance or precision matrix
-    :attr: `scale_tril` or :attr: `precision_tril`.
+    Multivariate normal with sparse Cholesky / LDL^T parameterizations.
 
-    The distribution supports two parameterizations:
+    Supports sparse covariance **or** sparse precision factors using either
+    the standard Cholesky (:math:`L L^\top`) or the modified Cholesky (:math:`L D L^\top`)
+    parameterization. Sparse triangular factors can be given in COO or CSR
+    layout and (optionally) batched with a single leading batch dimension.
 
-    1. **LDL^T parameterization** (when :attr: `diagonal` is provided):
-       Both :attr: `scale_tril` and :attr: `precision_tril` are stored as strictly lower triangular matrices.
-       Sampling is performed assuming they are unit lower triangular matrices.
-       The parameterization takes the form of:
-           covariance = L @ D @ L.T
-           precision  = L @ D @ L.T
-       Where L is a sparse unit lower triangular matrix and D is the diagonal matrix.
+    Parameterizations
+    -----------------
+    **Cholesky (LL^T)**
+        - Covariance form: :math:`\Sigma = L L^\top` with lower-triangular :math:`L` (incl. diagonal).
+        - Precision form:  :math:`\Omega = L L^\top` with lower-triangular :math:`L` (incl. diagonal).
 
-    2. **LL^T parameterization** (when :attr: `diagonal` is None):
-       Both :attr: `scale_tril` and :attr: `precision_tril` are stored as lower triangular matrices
-       with positive diagonal elements. Sampling is performed similar to torch.distributions.MultivariateNormal.
-       The parameterization takes the form of:
-           covariance = L @ L.T
-           precision  = L @ L.T
-       Where L is a sparse lower triangular matrix with positive diagonal.
+    **Modified Cholesky (LDL^T)**
+        - Covariance form: :math:`\Sigma = L D L^\top` with *unit* lower-triangular :math:`L` and
+          diagonal :math:`D = \operatorname{diag}(\text{diagonal}) > 0`.
+        - Precision form:  :math:`\Omega = L D L^\top` with *unit* lower-triangular :math:`L` and
+          diagonal :math:`D = \operatorname{diag}(\text{diagonal})` (entries may be any real numbers if
+          you only care about sampling via :math:`\Omega^{-1/2}`).
+        - In both cases, the strictly lower part lives in the sparse ``*_tril``
+          factor and the diagonal is provided separately via ``diagonal``.
 
-    The implementation supports sparse COO or CSR layout for scale_tril or precision_tril
+    Parameters
+    ----------
+    loc : torch.Tensor
+        Mean vector, shape ``(n,)`` or ``(B, n)``.
+    diagonal : torch.Tensor, optional
+        Diagonal entries for the :math:`D` in :math:`L D L^\top`. Shape ``(n,)`` or ``(B, n)``.
+        Must be positive for covariance parameterization; free real for precision
+        parameterization. If ``None``, the :math:`L L^\top` parameterization is used.
+    scale_tril : torch.Tensor, optional
+        Sparse lower-triangular factor for covariance (:math:`L`). COO or CSR with
+        shape ``(n, n)`` or ``(B, n, n)``. Mutually exclusive with
+        ``precision_tril``.
+    precision_tril : torch.Tensor, optional
+        Sparse lower-triangular factor for precision (:math:`L`). COO or CSR with
+        shape ``(n, n)`` or ``(B, n, n)``. Mutually exclusive with
+        ``scale_tril``.
+    validate_args : bool, optional
+        If ``True``, run argument checks.
 
-    NOTE: The current implementation only supports a single leading batch dimension
-    NOTE: The current implementation only supports sampling from the distribution
+    Attributes
+    ----------
+    loc : torch.Tensor
+        Mean.
+    diagonal : torch.Tensor or None
+        Diagonal entries for :math:`D` in :math:`L D L^\top` form, if provided.
+    scale_tril : torch.Tensor or None
+        Covariance Cholesky factor (sparse lower-triangular), if provided.
+    precision_tril : torch.Tensor or None
+        Precision Cholesky factor (sparse lower-triangular), if provided.
+    has_rsample : bool
+        Reparameterized sampling is supported.
 
-    Args:
-        loc (Tensor): mean of the distribution with shape `batch_shape + event_shape`
-        diagonal (Tensor, optional): diagonal of the covariance or precision matrix with shape `batch_shape + event_shape`.
-            If None, assumes LL^T parameterization. If provided, assumes LDL^T parameterization.
-        scale_tril (Tensor): sparse lower triangular matrix with shape `batch_shape + event_shape + event_shape`
-            in either torch.sparse_coo or torch.sparse_csr layout
-        precision_tril (Tensor): sparse lower triangular matrix with shape `batch_shape + event_shape + event_shape`
-            in either torch.sparse_coo or torch.sparse_csr layout
+    Returns
+    -------
+    SparseMultivariateNormal
+        A distribution instance compatible with :mod:`torch.distributions`.
+
+    Raises
+    ------
+    ValueError
+        On invalid shapes, unsupported layouts, or incompatible batching.
+
+    Notes
+    -----
+    - Only a **single** batch dimension is supported for the sparse factors.
+    - Sampling uses reparameterization:
+
+      - Covariance :math:`L L^\top`: :math:`x = L \varepsilon`.
+      - Covariance :math:`L D L^\top`: :math:`x = L (\sqrt{D} \odot \varepsilon) + (\sqrt{D} \odot \varepsilon)` since
+        :math:`L` is unit lower-triangular (strictly lower part in sparse factor).
+      - Precision forms use sparse triangular solves with the transpose.
+
+    - ``log_prob`` is not implemented in this class.
+    - Sparse operations are delegated to
+      :func:`torchsparsegradutils.sparse_mm` and
+      :func:`torchsparsegradutils.sparse_triangular_solve`.
+
+    See Also
+    --------
+    torch.distributions.MultivariateNormal :
+        Dense baseline distribution.
+    torchsparsegradutils.sparse_mm :
+        Sparse matrix–dense matrix multiply used during sampling.
+    torchsparsegradutils.sparse_triangular_solve :
+        Sparse triangular solver used with precision factors.
+
+    Examples
+    --------
+    :math:`L L^\top` parameterization with sparse covariance::
+
+        >>> import torch
+        >>> from torchsparsegradutils.distributions import SparseMultivariateNormal
+        >>> loc = torch.zeros(4)
+        >>> indices = torch.tensor([[1, 2, 2, 3], [0, 0, 1, 2]])
+        >>> values = torch.tensor([0.5, 0.3, 0.8, 0.2])
+        >>> diag_indices = torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]])
+        >>> diag_values = torch.tensor([1.0, 1.0, 1.0, 1.0])
+        >>> all_indices = torch.cat([diag_indices, indices], dim=1)
+        >>> all_values = torch.cat([diag_values, values])
+        >>> scale_tril = torch.sparse_coo_tensor(all_indices, all_values, (4, 4))
+        >>> mvn = SparseMultivariateNormal(loc=loc, scale_tril=scale_tril)
+        >>> samples = mvn.sample((100,))
+        >>> samples.shape
+        torch.Size([100, 4])
+
+    :math:`L D L^\top` parameterization with diagonal precision::
+
+        >>> diagonal = torch.tensor([2.0, 1.5, 3.0, 1.0])  # Precision diagonal
+        >>> precision_tril = torch.sparse_coo_tensor(indices, values, (4, 4))
+        >>> mvn_ldlt = SparseMultivariateNormal(loc=loc, diagonal=diagonal,
+        ...                                     precision_tril=precision_tril)
+        >>> samples = mvn_ldlt.sample((50,))
+
+    Batched distributions::
+
+        >>> loc_batch = torch.randn(3, 4)
+        >>> diagonal_batch = torch.abs(torch.randn(3, 4)) + 0.1
+        >>> precision_batch = torch.stack([precision_tril] * 3)
+        >>> mvn_batch = SparseMultivariateNormal(loc=loc_batch, diagonal=diagonal_batch,
+        ...                                      precision_tril=precision_batch)
+        >>> samples = mvn_batch.sample()
+        >>> samples.shape
+        torch.Size([3, 4])
     """
 
     arg_constraints = {}
@@ -204,7 +347,7 @@ class SparseMultivariateNormal(Distribution):
 
     @property
     def is_ldlt_parameterization(self):
-        """Returns True if using LDL^T parameterization (diagonal is provided), False if using LL^T."""
+        r"""Return ``True`` if using :math:`L D L^\top` parameterization (``diagonal`` provided), else ``False`` (:math:`L L^\top`)."""
         return self._diagonal is not None
 
     def rsample(self, sample_shape=torch.Size()):
@@ -247,27 +390,82 @@ class SparseMultivariateNormal(Distribution):
 
 class SparseMultivariateNormalNative(Distribution):
     r"""
-    Creates a sparse multivariate normal (MVN) distribution using native torch.sparse.mm
-    parameterized by a mean vector :attr: `loc` and a sparse lower triangular matrix
-    :attr: `scale_tril` for covariance parameterization.
+    Sparse multivariate normal (native ``torch.sparse.mm`` backend).
 
-    This distribution only supports LL^T parameterization where:
-        covariance = L @ L.T
-    Where L is a sparse lower triangular matrix with positive diagonal stored as CSR.
+    This distribution models :math:`x \sim \mathcal N(\mu, \Sigma)` where the
+    covariance is parameterized via a sparse Cholesky factor
+    :math:`\Sigma = L L^\top`. Sampling uses ``torch.sparse.mm`` directly so
+    gradients propagate to the CSR values of ``L``.
 
-    This implementation is restricted to:
-    - CSR layout only (torch.sparse.mm requirement)
-    - Unbatched matrices only (torch.sparse.mm limitation)
-    - Scale (covariance) parameterization only (no precision support)
-    - LL^T parameterization only (no LDL^T support)
+    **Scope & limitations**
 
-    The advantage is that this uses torch.sparse.mm which supports both forward and
-    backward passes with gradients through the sparse CSR matrix values.
+    - Layout: **CSR only** (requirement of ``torch.sparse.mm``)
+    - Batching: **unbatched only** (2D factor)
+    - Parameterization: **LLᵀ (covariance) only**
+    - No precision/LDLᵀ support in this native variant (see :class:`SparseMultivariateNormal`)
 
-    Args:
-        loc (Tensor): mean of the distribution with shape `event_shape`
-        scale_tril (Tensor): sparse lower triangular matrix with shape `event_shape x event_shape`
-            in torch.sparse_csr layout with positive diagonal elements
+    Parameters
+    ----------
+    loc : torch.Tensor
+        Mean vector of shape ``(n,)``.
+    scale_tril : torch.Tensor
+        Sparse lower-triangular Cholesky factor ``L`` of shape ``(n, n)`` in
+        ``torch.sparse_csr`` layout with positive diagonal.
+    validate_args : bool, optional
+        If ``True``, validate input shapes/dtypes where feasible.
+
+    Attributes
+    ----------
+    loc : torch.Tensor
+        Mean vector.
+    scale_tril : torch.Tensor
+        CSR Cholesky factor ``L`` such that ``Σ = L @ L.T``.
+
+    Notes
+    -----
+    Sampling uses
+    :math:`x = \mu + L \varepsilon, \quad \varepsilon \sim \mathcal N(0, I)`,
+    implemented as dense–sparse matmul via ``torch.sparse.mm``. Although PyTorch
+    docs historically understate gradient support for some sparse ops, in
+    practice autograd computes gradients w.r.t. the CSR **values** here.
+
+    ``covariance_matrix`` and ``variance`` are computed by densifying the factor,
+    which can be memory-expensive for large problems.
+
+    See Also
+    --------
+    SparseMultivariateNormal
+        Full-featured sparse MVN with COO/CSR, batched inputs, and precision/LDLᵀ forms.
+
+    Examples
+    --------
+    Basic usage (LLᵀ parameterization):
+
+    >>> import torch
+    >>> n = 4
+    >>> # Build a small lower-triangular with positive diagonal in CSR
+    >>> crow = torch.tensor([0, 1, 3, 4, 4], dtype=torch.int64)
+    >>> col  = torch.tensor([0, 0, 1, 2], dtype=torch.int64)
+    >>> vals = torch.tensor([1.0, 0.2, 1.1, 0.3], dtype=torch.float64)
+    >>> L = torch.sparse_csr_tensor(crow, col, vals, size=(n, n))
+    >>> loc = torch.zeros(n, dtype=torch.float64)
+    >>> mvn = SparseMultivariateNormalNative(loc, L)
+    >>> x = mvn.rsample()   # (n,)
+    >>> x.shape
+    torch.Size([4])
+
+    Multiple samples:
+
+    >>> xs = mvn.rsample((100,))  # (100, n)
+    >>> xs.shape
+    torch.Size([100, 4])
+
+    Log probability (densifies internally):
+
+    >>> lp = mvn.log_prob(x)
+    >>> float(lp)  # doctest: +ELLIPSIS
+    ...
+
     """
 
     arg_constraints = {
@@ -320,7 +518,7 @@ class SparseMultivariateNormalNative(Distribution):
 
     @property
     def covariance_matrix(self):
-        """Compute covariance matrix as L @ L.T using sparse operations."""
+        r"""Compute covariance matrix :math:`\Sigma = L L^\top` as ``L @ L.T`` using sparse operations."""
         # Convert to dense for covariance computation - this is expensive but needed
         warnings.warn(
             "Computing covariance_matrix requires converting sparse matrix to dense format. "
@@ -334,7 +532,7 @@ class SparseMultivariateNormalNative(Distribution):
 
     @property
     def variance(self):
-        """Compute diagonal of covariance matrix."""
+        r"""Compute diagonal (variance) of the covariance matrix :math:`\operatorname{diag}(L L^\top)`."""
         # For LL^T parameterization, variance is sum of squares of each row
         warnings.warn(
             "Computing variance requires converting sparse matrix to dense format. "
@@ -346,7 +544,7 @@ class SparseMultivariateNormalNative(Distribution):
         return (L_dense**2).sum(dim=-1)
 
     def rsample(self, sample_shape=torch.Size()):
-        """Sample from the distribution using torch.sparse.mm."""
+        r"""Sample from the distribution using :func:`torch.sparse.mm` (reparameterized)."""
         shape = self._extended_shape(sample_shape)
         eps = _standard_normal(shape, dtype=self.loc.dtype, device=self.loc.device)
 
@@ -362,7 +560,7 @@ class SparseMultivariateNormalNative(Distribution):
         return self.loc + x
 
     def log_prob(self, value):
-        """Compute log probability density."""
+        r"""Compute log probability density (densifies internally, may be memory intensive)."""
         if self._validate_args:
             self._validate_sample(value)
 

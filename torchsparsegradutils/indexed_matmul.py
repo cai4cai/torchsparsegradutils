@@ -8,27 +8,73 @@ except ImportError:
     dgl_installed = False
 
 
-def segment_mm(a, b, seglen_a):
-    """
-    Performs matrix multiplication according to segments.
-    See https://www.dgl.ai/dgl_docs/generated/dgl.ops.segment_mm.html
+def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torch.Tensor:
+    r"""
+    Segmented matrix multiplication with variable-length segments.
 
-    Suppose ``seglen_a == [10, 5, 0, 3]``, the operator will perform
-    four matrix multiplications::
+    Performs matrix multiplication between contiguous segments of ``a`` and the
+    corresponding matrices in ``b``. If ``seglen_a == [10, 5, 0, 3]``, the
+    operator computes::
 
         a[0:10] @ b[0], a[10:15] @ b[1],
         a[15:15] @ b[2], a[15:18] @ b[3]
 
-    Args:
-        a (torch.Tensor): The left operand, 2-D tensor of shape ``(N, D1)``
-        b (torch.Tensor): The right operand, 3-D tensor of shape ``(R, D1, D2)``
-        seglen_a (torch.Tensor): An integer tensor of shape ``(R,)``. Each element is the length of segments of input ``a``. The summation of all elements must be equal to ``N``.
+    Parameters
+    ----------
+    a : torch.Tensor, shape ``(N, D1)``
+        Left operand containing the concatenation of all segments.
+    b : torch.Tensor, shape ``(R, D1, D2)``
+        Right operand containing one ``(D1, D2)`` matrix per segment.
+    seglen_a : torch.Tensor, shape ``(R,)``, integer dtype
+        Length of each segment in ``a``. ``seglen_a.sum()`` must equal ``N``.
 
-    Returns:
-        torch.Tensor: The output dense matrix of shape ``(N, D2)``
+    Returns
+    -------
+    torch.Tensor, shape ``(N, D2)``
+        Concatenation of all segment results in original order.
+
+    Raises
+    ------
+    NotImplementedError
+        If the fallback path is used on a PyTorch version lacking nested
+        tensor matmul support (requires PyTorch >= 2.4).
+    ValueError
+        If input ranks or sizes are incompatible.
+
+    Notes
+    -----
+    If DGL is available, this uses :func:`dgl.ops.segment_mm` (typically faster).
+    Otherwise it falls back to a PyTorch nested-tensor implementation.
+
+    See Also
+    --------
+    gather_mm : Per-row indexed matrix multiplication.
+
+    References
+    ----------
+    .. [1] DGL ``segment_mm`` documentation:
+           https://www.dgl.ai/dgl_docs/generated/dgl.ops.segment_mm.html
+
+    Examples
+    --------
+    >>> import torch
+    >>> # N = 18, D1 = 4, D2 = 2
+    >>> a = torch.randn(18, 4)
+    >>> b = torch.randn(3, 4, 2)
+    >>> seglen_a = torch.tensor([10, 5, 3])
+    >>> out = segment_mm(a, b, seglen_a)
+    >>> out.shape
+    torch.Size([18, 2])
+
+    Zero-length segment::
+
+        >>> seglen_a = torch.tensor([10, 5, 0, 3])
+        >>> b = torch.randn(4, 4, 2)
+        >>> segment_mm(a, b, seglen_a).shape
+        torch.Size([18, 2])
     """
     if torch.__version__ < (2, 4):
-        raise NotImplementedError("PyTorch version is too old for nested tesors")
+        raise NotImplementedError("PyTorch version is too old for nested tensors")
 
     if dgl_installed:
         # DGL is probably more computationally efficient
@@ -59,26 +105,80 @@ def segment_mm(a, b, seglen_a):
     return ab
 
 
-def gather_mm(a, b, idx_b):
-    """
-    Gather data according to the given indices and perform matrix multiplication.
-    See https://docs.dgl.ai/generated/dgl.ops.gather_mm.html
+def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Tensor:
+    r"""
+    Per-row indexed matrix multiplication.
 
-    Let the result tensor be ``c``, the operator conducts the following computation:
+    For each row ``i`` in ``a`` this computes ``a[i] @ b[idx_b[i]]`` and stacks
+    the results into the output.
 
-      c[i] = a[i] @ b[idx_b[i]]
-      , where len(c) == len(idx_b)
+    Parameters
+    ----------
+    a : torch.Tensor, shape ``(N, D1)``
+        Left operand with one row per output.
+    b : torch.Tensor, shape ``(R, D1, D2)``
+        Bank of transformation matrices.
+    idx_b : torch.Tensor, shape ``(N,)``, integer dtype
+        Indices selecting which matrix in ``b`` to use for each row. Values
+        must satisfy ``0 <= idx_b[i] < R``.
 
-    Args:
-        a (torch.Tensor): A 2-D tensor of shape ``(N, D1)``
-        b (torch.Tensor): A 3-D tensor of shape ``(R, D1, D2)``
-        idx_b (torch.Tensor): An 1-D integer tensor of shape ``(N,)``.
+    Returns
+    -------
+    torch.Tensor, shape ``(N, D2)``
+        Row-wise results where ``out[i] = a[i] @ b[idx_b[i]]``.
 
-    Returns:
-        torch.Tensor: The output dense matrix of shape ``(N, D2)``
+    Raises
+    ------
+    NotImplementedError
+        If the fallback path is used on a PyTorch version lacking nested
+        tensor matmul support (requires PyTorch >= 2.4).
+    ValueError
+        If inputs are not tensors, ranks are incorrect, or sizes are incompatible.
+
+    Notes
+    -----
+    If DGL is available, this uses :func:`dgl.ops.gather_mm`. Otherwise it uses
+    a dependency-free PyTorch nested-tensor fallback.
+
+    See Also
+    --------
+    segment_mm : Segmented matrix multiplication over contiguous chunks.
+
+    References
+    ----------
+    .. [1] DGL ``gather_mm`` documentation:
+           https://www.dgl.ai/dgl_docs/generated/dgl.ops.gather_mm.html
+
+    Examples
+    --------
+    >>> import torch
+    >>> # N = 5, D1 = 3, D2 = 2, R = 3
+    >>> a = torch.randn(5, 3)
+    >>> b = torch.randn(3, 3, 2)
+    >>> idx_b = torch.tensor([0, 1, 0, 2, 1])
+    >>> out = gather_mm(a, b, idx_b)
+    >>> out.shape
+    torch.Size([5, 2])
+
+    All rows using the same matrix::
+
+        >>> torch.allclose(gather_mm(a, b, torch.zeros(5, dtype=torch.long)), a @ b[0])
+        True
+
+    Mixed indexing example::
+
+        >>> # Different transformation for each row
+        >>> a = torch.tensor([[1.0, 2.0], [3.0, 4.0]])  # (2, 2)
+        >>> b = torch.tensor([[[1.0, 0.0], [0.0, 1.0]],  # Identity
+        ...                   [[2.0, 0.0], [0.0, 2.0]]])  # 2x scale
+        >>> idx_b = torch.tensor([0, 1])  # Use identity, then 2x scale
+        >>> result = gather_mm(a, b, idx_b)
+        >>> result
+        tensor([[1., 2.],
+                [6., 8.]])
     """
     if torch.__version__ < (2, 4):
-        raise NotImplementedError("PyTorch version is too old for nested tesors")
+        raise NotImplementedError("PyTorch version is too old for nested tensors")
 
     if dgl_installed:
         # DGL is more computationally efficient

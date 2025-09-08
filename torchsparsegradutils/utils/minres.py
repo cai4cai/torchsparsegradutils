@@ -1,9 +1,8 @@
 # MIT-licensed code imported from https://github.com/cornellius-gp/linear_operator
 # Minor modifications for torchsparsegradutils to remove dependencies
 
+from typing import NamedTuple, Optional, Union, Callable
 import torch
-
-from typing import NamedTuple
 
 
 class MINRESSettings(NamedTuple):
@@ -18,7 +17,7 @@ def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
     Pad obj with singleton dimensions on the left and right
     Example:
         >>> x = torch.randn(10, 5)
-        >>> _pad_width_singletons(x, 2, 3).shape
+        >>> _pad_with_singletons(x, 2, 3).shape
         >>> # [1, 1, 10, 5, 1, 1, 1]
     """
     new_shape = [1] * num_singletons_before + list(obj.shape) + [1] * num_singletons_after
@@ -26,29 +25,124 @@ def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
 
 
 def minres(
-    matmul_closure,
-    rhs,
-    eps=1e-25,
-    shifts=None,
-    value=None,
-    max_iter=None,
-    preconditioner=None,
-    settings=MINRESSettings(),
-):
-    r"""
-    Perform MINRES to find solutions to :math:`(\mathbf K + \alpha \sigma \mathbf I) \mathbf x = \mathbf b`.
-    Will find solutions for multiple shifts :math:`\sigma` at the same time.
+    matmul_closure: Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]],
+    rhs: torch.Tensor,
+    eps: float = 1e-25,
+    shifts: Optional[torch.Tensor] = None,
+    value: Optional[float] = None,
+    max_iter: Optional[int] = None,
+    preconditioner: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+    settings: MINRESSettings = MINRESSettings(),
+) -> torch.Tensor:
+    """
+    Minimum Residual (MINRES) solver for symmetric (Hermitian) linear systems.
 
-    :param callable matmul_closure: Function to perform matmul with.
-    :param torch.Tensor rhs: The vector :math:`\mathbf b` to solve against.
-    :param torch.Tensor shifts: (default None) The shift :math:`\sigma` values. If set to None,
-        then :math:`\sigma=0`.
-    :param float value: (default None) The multiplicative constant :math:`\alpha`. If set to None,
-        then :math:`\alpha=0`.
-    :param int max_iter: (default None) The maximum number of minres iterations. If set to None, then
-        uses the constant stored in :obj:`linear_operator.settings.max_cg_iterations`.
-    :rtype: torch.Tensor
-    :return: The solves :math:`\mathbf x`. The shape will correspond to the size of `rhs` and `shifts`.
+    Solves linear systems ``A x = b`` where ``A`` is symmetric (Hermitian) and may
+    be indefinite. Supports single/multiple right-hand sides and (optionally)
+    multiple shift values to solve ``(A + \\sigma I) x = b`` in one run. Gradually
+    minimizes the residual norm ``||A x - b||_2`` via the Lanczos process.
+
+    Parameters
+    ----------
+    matmul_closure : {torch.Tensor, callable(x) -> A @ x}
+        Matrix–vector multiplication operator. If a tensor is provided, its
+        ``.matmul`` is used. The operator should represent a symmetric/Hermitian
+        matrix for MINRES to behave as intended.
+    rhs : torch.Tensor, shape (..., n) or (..., n, k)
+        Right-hand side vector(s). Leading batch dimensions are supported; for
+        multi-RHS, the last two dims are ``(n, k)``.
+    eps : float, optional
+        Small constant to prevent division by zero/numerical issues. Default: 1e-25.
+    shifts : torch.Tensor or scalar, optional
+        Shift(s) ``\\sigma`` for solving ``(A + \\sigma I) x = b``. If ``None`` or a
+        scalar, a single system is solved. If a tensor with ``s`` elements, the
+        solver computes ``s`` shifted systems and stacks their solutions along a
+        new leading dimension.
+    value : float, optional
+        Scalar multiplier ``\\alpha`` applied to the operator (solves ``(\\alpha A) x = b``)
+        when provided. Default: ``None`` (no scaling).
+    max_iter : int, optional
+        Maximum iterations. If ``None``, uses ``settings.max_cg_iterations``.
+        Internally capped at ``n + 1`` where ``n`` is the problem size.
+    preconditioner : callable, optional
+        Left preconditioner with signature ``preconditioner(x) -> M^{-1} x``.
+        If ``None``, no preconditioning is used.
+    settings : MINRESSettings, optional
+        Configuration object controlling iteration caps and tolerances
+        (e.g., ``minres_tolerance`` for the relative update criterion).
+
+    Returns
+    -------
+    torch.Tensor
+        If ``shifts`` is ``None`` or a scalar: solution with the **same shape as**
+        ``rhs`` (i.e., ``(..., n)`` or ``(..., n, k)``).
+        If ``shifts`` has length ``s``: a stacked tensor of shape
+        ``(s, *rhs.shape)`` containing solutions for each shift.
+
+    Raises
+    ------
+    RuntimeError
+        If ``matmul_closure`` is neither a tensor nor a callable.
+
+    Notes
+    -----
+    - MINRES is appropriate for symmetric/Hermitian **indefinite** systems; it
+      minimizes the Euclidean residual norm rather than the A-norm (as in CG).
+    - For symmetric positive definite systems, Conjugate Gradient (CG) typically
+      converges faster; prefer CG unless indefiniteness/robustness suggests MINRES.
+    - When multiple shifts are provided, the solver reuses Lanczos information and
+      returns one solution per shift value.
+    - All inputs should share device and dtype; the implementation normalizes
+      ``rhs`` internally and rescales the final solution(s).
+
+    See Also
+    --------
+    linear_cg : Conjugate Gradient for SPD systems.
+    bicgstab : BiCGSTAB for general non-symmetric systems.
+
+    References
+    ----------
+    .. [1] Paige, C. C., & Saunders, M. A. (1975). Solution of sparse indefinite
+           systems of linear equations. *SIAM Journal on Numerical Analysis*, 12(4), 617–629.
+
+    Examples
+    --------
+    Basic solve (indefinite, symmetric):
+
+    >>> A = torch.tensor([[2.0, 1.0], [1.0, -1.0]])
+    >>> b = torch.tensor([1.0, 2.0])
+    >>> x = minres(A.matmul, b)
+    >>> x.shape
+    torch.Size([2])
+
+    Multiple right-hand sides:
+
+    >>> B = torch.randn(2, 3)
+    >>> X = minres(A.matmul, B)
+    >>> X.shape
+    torch.Size([2, 3])
+
+    Shifted system (regularization):
+
+    >>> x_shifted = minres(A.matmul, b, shifts=torch.tensor(0.1))
+
+    Sparse operator via closure:
+
+    >>> idx = torch.tensor([[0, 0, 1, 1], [0, 1, 0, 1]])
+    >>> val = torch.tensor([2.0, 1.0, 1.0, -1.0])
+    >>> A_sp = torch.sparse_coo_tensor(idx, val, (2, 2))
+    >>> x = minres(lambda v: A_sp @ v, b)
+
+    With a simple diagonal preconditioner:
+
+    >>> M_diag = torch.abs(torch.diag(A)) + 0.1
+    >>> precond = lambda x: x / M_diag.unsqueeze(-1)
+    >>> x = minres(A.matmul, b, preconditioner=precond)
+
+    Custom iteration cap/tolerance:
+
+    >>> settings = MINRESSettings(max_cg_iterations=200, minres_tolerance=1e-5)
+    >>> x = minres(A.matmul, b, settings=settings)
     """
     # Default values
     if torch.is_tensor(matmul_closure):
@@ -138,7 +232,7 @@ def minres(
     if settings.verbose_linalg:
         # settings.verbose_linalg.logger.debug(
         print(
-            f"Running MINRES on a {rhs.shape} RHS for {max_iter} iterations (tol={settings.minres_tolerance.value()}). "
+            f"Running MINRES on a {rhs.shape} RHS for {max_iter} iterations (tol={settings.minres_tolerance}). "
             f"Output: {solution.shape}."
         )
 

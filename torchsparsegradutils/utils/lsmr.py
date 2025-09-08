@@ -6,6 +6,7 @@ Copyright (C) 2010 David Fong and Michael Saunders
 """
 
 import torch
+from typing import Callable, Optional, Tuple, Union
 
 
 def _sym_ortho(a, b, out):
@@ -17,73 +18,133 @@ def _sym_ortho(a, b, out):
 
 @torch.no_grad()
 def lsmr(
-    A, b, Armat=None, n=None, damp=0.0, atol=1e-6, btol=1e-6, conlim=1e8, maxiter=None, x0=None, check_nonzero=True
-):
-    """Iterative solver for least-squares problems.
+    A: Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]],
+    b: torch.Tensor,
+    Armat: Optional[Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]]] = None,
+    n: Optional[int] = None,
+    damp: float = 0.0,
+    atol: float = 1e-6,
+    btol: float = 1e-6,
+    conlim: float = 1e8,
+    maxiter: Optional[int] = None,
+    x0: Optional[torch.Tensor] = None,
+    check_nonzero: bool = True,
+) -> Tuple[torch.Tensor, int]:
+    r"""
+    Least Squares Minimal Residual (LSMR) solver.
 
-    lsmr solves the system of linear equations ``Ax = b``. If the system
-    is inconsistent, it solves the least-squares problem ``min ||b - Ax||_2``.
-    ``A`` is a rectangular matrix of dimension m-by-n, where all cases are
-    allowed: m = n, m > n, or m < n. ``b`` is a vector of length m.
-    The matrix A may be dense or sparse (usually sparse).
+    Iterative solver for :math:`A x = b` and least-squares problems
+    :math:`\min_x \|A x - b\|_2`. Works with large, sparse, or rectangular :math:`A` and
+    is often more stable than LSQR on ill-conditioned problems.
 
     Parameters
     ----------
-    A : {matrix, sparse matrix, ndarray, LinearOperator}
-        Matrix A in the linear system.
-        Alternatively, ``A`` can be a linear operator which can
-        produce ``Ax`` and ``A^H x`` using, e.g.,
-        ``scipy.sparse.linalg.LinearOperator``.
-    b : array_like, shape (m,)
-        Vector ``b`` in the linear system.
-    damp : float
-        Damping factor for regularized least-squares. `lsmr` solves
-        the regularized least-squares problem::
-         min ||(b) - (  A   )x||
-             ||(0)   (damp*I) ||_2
-        where damp is a scalar.  If damp is None or 0, the system
-        is solved without regularization.
-    atol, btol : float, optional
-        Stopping tolerances. `lsmr` continues iterations until a
-        certain backward error estimate is smaller than some quantity
-        depending on atol and btol.  Let ``r = b - Ax`` be the
-        residual vector for the current approximate solution ``x``.
-        If ``Ax = b`` seems to be consistent, ``lsmr`` terminates
-        when ``norm(r) <= atol * norm(A) * norm(x) + btol * norm(b)``.
-        Otherwise, lsmr terminates when ``norm(A^H r) <=
-        atol * norm(A) * norm(r)``.  If both tolerances are 1.0e-6 (say),
-        the final ``norm(r)`` should be accurate to about 6
-        digits. (The final ``x`` will usually have fewer correct digits,
-        depending on ``cond(A)`` and the size of LAMBDA.)  If `atol`
-        or `btol` is None, a default value of 1.0e-6 will be used.
-        Ideally, they should be estimates of the relative error in the
-        entries of ``A`` and ``b`` respectively.  For example, if the entries
-        of ``A`` have 7 correct digits, set ``atol = 1e-7``. This prevents
-        the algorithm from doing unnecessary work beyond the
-        uncertainty of the input data.
+    A : {torch.Tensor, callable(x) -> A @ x}
+        System matrix or matvec closure. If a tensor is given, it may be
+        dense or sparse and ``.matmul`` is used.
+    b : torch.Tensor, shape (m,)
+        Right-hand side vector. Must be on the same device/dtype as ``A``.
+    Armat : {torch.Tensor, callable(x) -> A^T @ x}, optional
+        Transpose matvec or matrix. If ``A`` is a tensor and ``Armat`` is
+        ``None``, uses ``A.adjoint().matmul``. If ``A`` is callable,
+        ``Armat`` is **required**.
+    n : int, optional
+        Number of columns of ``A``. Required if ``A`` is callable; inferred
+        from ``A.shape[1]`` if ``A`` is a tensor.
+    damp : float, optional
+        Tikhonov damping parameter (ridge). Solves
+        :math:`\min_x \|(A; \text{damp} I) x - (b; 0)\|_2`. Default: 0.0.
+    atol : float, optional
+        Absolute convergence tolerance. Default: 1e-6.
+    btol : float, optional
+        Relative residual tolerance. Default: 1e-6.
     conlim : float, optional
-        `lsmr` terminates if an estimate of ``cond(A)`` exceeds
-        `conlim`.  For compatible systems ``Ax = b``, conlim could be
-        as large as 1.0e+12 (say).  For least-squares problems,
-        `conlim` should be less than 1.0e+8. If `conlim` is None, the
-        default value is 1e+8.  Maximum precision can be obtained by
-        setting ``atol = btol = conlim = 0``, but the number of
-        iterations may then be excessive.
+        Condition estimate limit; stops if estimate exceeds this value.
+        Default: 1e8.
     maxiter : int, optional
-        `lsmr` terminates if the number of iterations reaches
-        `maxiter`.  The default is ``maxiter = min(m, n)``.  For
-        ill-conditioned systems, a larger value of `maxiter` may be
-        needed.
-    x0 : array_like, shape (n,), optional
-        Initial guess of ``x``, if None zeros are used.
+        Maximum iterations. If ``None``, uses ``min(m, n)``.
+    x0 : torch.Tensor, optional, shape (n,)
+        Initial guess. If ``None``, zeros are used.
+    check_nonzero : bool, optional
+        Skip the rare ``beta == 0`` synchronization check for performance when
+        set to ``False`` (use with caution). Default: True.
 
     Returns
     -------
-    x : ndarray of float
-        Least-square solution returned.
-    itn : int
-        Number of iterations used.
+    x : torch.Tensor, shape (n,)
+        Approximate solution that minimizes :math:`\|A x - b\|_2` (with damped
+        variant when ``damp > 0``).
+    iterations : int
+        Number of iterations executed.
 
+    Raises
+    ------
+    RuntimeError
+        If ``A`` is neither a tensor nor a callable.
+    RuntimeError
+        If ``A`` is callable and ``n`` is not provided.
+    RuntimeError
+        If ``Armat`` is missing or is neither a tensor nor a callable.
+
+    Notes
+    -----
+    Uses Golub–Kahan bidiagonalization with specialized QR steps. For
+    overdetermined systems (``m > n``), returns the least-squares solution.
+    For underdetermined systems (``m < n``) with ``damp = 0``, returns the
+    minimum-norm least-squares solution.
+
+    Convergence checks (roughly):
+
+      - Consistent: :math:`\|r\|_2 \le \text{atol} \, \|A\| \, \|x\| + \text{btol} \, \|b\|`
+      - Inconsistent: :math:`\|A^\top r\|_2 \le \text{atol} \, \|A\| \, \|r\|`
+
+    References
+    ----------
+    .. [1] Fong, D. C., & Saunders, M. (2011). LSMR: An iterative algorithm for
+           sparse least-squares problems. SIAM Journal on Scientific Computing,
+           33(5), 2950-2971.
+
+    Examples
+    --------
+    Basic least squares problem:
+
+    >>> import torch
+    >>> from torchsparsegradutils.utils import lsmr
+    >>> # Over-determined system (3x2)
+    >>> A = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    >>> b = torch.tensor([1.0, 2.0, 3.0])
+    >>> x, iterations = lsmr(A, b)
+    >>> x.shape
+    torch.Size([2])
+
+    Sparse matrix least squares:
+
+    >>> # Create sparse matrix
+    >>> indices = torch.tensor([[0, 1, 2, 1, 2], [0, 0, 0, 1, 1]])
+    >>> values = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0])
+    >>> A_sparse = torch.sparse_coo_tensor(indices, values, (3, 2))
+    >>> x, it = lsmr(A_sparse, b)
+
+    With damping for regularization (Tikhonov / ridge):
+
+    >>> # Regularized least squares
+    >>> x_reg, it = lsmr(A, b, damp=0.1)
+
+    Callable matrix interface:
+
+    >>> x, it = lsmr(lambda v: A @ v, b, Armat=lambda v: A.T @ v, n=2)
+
+    Under-determined system (minimum norm solution):
+
+    >>> A_under = torch.randn(2, 4)  # 2x4 system
+    >>> b_under = torch.randn(2)
+    >>> x_min_norm, it = lsmr(A_under, b_under)
+    >>> x_min_norm.shape
+    torch.Size([4])
+
+    Custom tolerances and limits:
+
+    >>> x, it = lsmr(A, b, atol=1e-10, btol=1e-10, conlim=1e12, maxiter=1000)
     """
     if torch.is_tensor(A):
         if n is None:
@@ -95,7 +156,7 @@ def lsmr(
         raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
 
     if n is None:
-        raise RuntimeError("n needs to be provided of computed from A given as a tensor")
+        raise RuntimeError("n needs to be provided or computed from A given as a tensor")
 
     if torch.is_tensor(Armat):
         Armat = Armat.matmul

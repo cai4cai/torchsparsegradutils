@@ -11,47 +11,67 @@ from typing import Iterable, List, Tuple, Union, Any, Optional, Set, Dict
 from torchsparsegradutils.utils.utils import _sort_coo_indices
 from torchsparsegradutils.utils import convert_coo_to_csr_indices_values
 
-Shape = Union[List[int], Tuple[int, ...], torch.Size]
-
 
 def _trim_nd(x: torch.Tensor, offsets: Tuple[int, ...]) -> torch.Tensor:
-    """
-    Trim the tensor along each axis based on the provided offsets.
+    r"""Trim a tensor along each axis according to per-dimension offsets.
 
-    Positive offsets trim from the beginning of the tensor, negative offsets trim
-    from the end, and zero leaves the tensor unchanged along that axis. A ValueError
-    is raised if the dimensionality of the tensor does not match the number of offsets.
+    Positive offsets drop elements from the **start** of a dimension
+    (keep ``offset:``); negative offsets drop elements from the **end**
+    (keep ``:offset``). A zero offset leaves that dimension unchanged.
+    The number of offsets must match ``x.ndim``.
 
-    Args:
-        x (torch.Tensor): The input tensor to be trimmed.
-        offsets (Tuple[int, ...]): A tuple of integers specifying the extent of the
-        trim in each axis.
+    Parameters
+    ----------
+    x : torch.Tensor
+        Input tensor of arbitrary shape.
+    offsets : Tuple[int, ...]
+        Tuple of integer offsets (one per dimension of ``x``). For an entry ``k``:
+        * ``k > 0``  → keep ``x[k:]`` along that axis
+        * ``k == 0`` → keep the whole axis (``x[:]``)
+        * ``k < 0``  → keep ``x[:k]`` (drop ``|k|`` elements from the end)
 
-    Returns:
-        torch.Tensor: The trimmed tensor.
+    Returns
+    -------
+    torch.Tensor
+        A **view** of ``x`` trimmed according to ``offsets`` (device, dtype and
+        strides are preserved, subject to standard PyTorch slicing semantics).
 
-    Examples:
-        For a 3D tensor x:
-        >>> _trim_nd(x, (0, 0, 1))    # returns x[0: ,0:, 1: ]
-        >>> _trim_nd(x, (0, 0, -1))   # returns x[0:, 0:, :-1]
-        >>> _trim_nd(x, (5, -6, 3))   # returns x[5:, :-6, 3:]
+    Raises
+    ------
+    ValueError
+        If ``len(offsets) != x.ndim``.
 
-        For a 2D tensor x:
-        >>> _trim_nd(x, (0, -1))      # returns x[0:, :-1]
+    Notes
+    -----
+    Equivalent slice construction:
 
-        For a 4D tensor x:
-        >>> _trim_nd(x, (0, 0, -1, 5)) # returns x[0:, 0:, :-1, 5:]
+    >>> slices = tuple(slice(None if off < 0 else off, None if off > -1 else off) for off in offsets)
+    >>> y = x[slices]
 
-    Notes:
-        This function is equivalent to:
+    Slicing returns a view when possible—no data copy is performed.
 
-        slices = tuple()
-        for off in offsets:
-            start = None if off<0 else off
-            end = None if off>-1 else off
-            slices += (slice(start, end))
+    Examples
+    --------
+    1D:
+    >>> x = torch.arange(6)          # tensor([0, 1, 2, 3, 4, 5])
+    >>> _trim_nd(x, (2,))            # keep from index 2 onward
+    tensor([2, 3, 4, 5])
+    >>> _trim_nd(x, (-2,))           # drop last 2
+    tensor([0, 1, 2, 3])
 
-        return x[slices]
+    2D:
+    >>> x = torch.arange(12).view(3, 4)
+    >>> x
+    tensor([[ 0,  1,  2,  3],
+            [ 4,  5,  6,  7],
+            [ 8,  9, 10, 11]])
+    >>> _trim_nd(x, (1, 0))          # drop first row
+    tensor([[ 4,  5,  6,  7],
+            [ 8,  9, 10, 11]])
+    >>> _trim_nd(x, (0, -1))         # drop last column
+    tensor([[ 0,  1,  2],
+            [ 4,  5,  6],
+            [ 8,  9, 10]])
     """
     if x.ndim != len(offsets):
         raise ValueError(f"Number of dimensions in tensor ({x.ndim}) does not match number of offsets ({len(offsets)})")
@@ -60,21 +80,54 @@ def _trim_nd(x: torch.Tensor, offsets: Tuple[int, ...]) -> torch.Tensor:
 
 
 def _gen_coords_nd(radius: float, spatial_dims: int) -> Set[Tuple[int, ...]]:
-    """
-    Generate a set of tuples representing N-dimensional coordinates within a hypersphere.
+    r"""Generate integer lattice coordinates inside an :math:`N`-D :math:`\ell_2` ball.
 
-    The generated coordinates are all points where each coordinate is a non-zero integer,
-    and the point lies within a hypersphere of the given radius around the origin.
-    The range for each coordinate is from floor(-radius) to ceil(radius) inclusive.
+    Returns all integer points :math:`x \in \mathbb{Z}^d` such that
+    :math:`\|x\|_2 \le r` (``r = radius``), excluding the origin
+    :math:`(0,\dots,0)`. Points are enumerated from the hypercube
+    :math:`[\lfloor-r\rfloor,\lceil r\rceil]^d` and filtered by the
+    Euclidean norm test.
 
-    Args:
-        radius (float): The radius of the hypersphere within which the coordinates are
-        generated. Can be either an integer or a floating point value.
-        spatial_dims (int): The number of spatial dimensions (1, 2, 3, 4, etc.).
+    Parameters
+    ----------
+    radius : float
+        Radius of the hypersphere (may be non-integer). If ``radius < 0`` the
+        result is the empty set.
+    spatial_dims : int
+        Number of spatial dimensions ``d``.
 
-    Returns:
-        Set[Tuple[int, ...]]: A set of tuples. Each tuple represents a point
-        within the defined hyperspherical volume.
+    Returns
+    -------
+    Set[Tuple[int, ...]]
+        Integer coordinate tuples inside the closed ball of radius ``radius``
+        (origin excluded). Order is unspecified.
+
+    Raises
+    ------
+    ValueError
+        If ``spatial_dims <= 0``.
+
+    Notes
+    -----
+    * Only the all-zero vector is excluded; individual components may be zero.
+    * Runtime / output size scale like :math:`O((2\lceil r\rceil+1)^d)`.
+    * For large ``radius`` or ``spatial_dims`` consider streaming instead of
+      materializing the full set.
+
+    Examples
+    --------
+    1D (interval on integers):
+    >>> _gen_coords_nd(2.0, 1) == {(-2,), (-1,), (1,), (2,)}
+    True
+
+    2D (disk of radius 1.5):
+    >>> pts = _gen_coords_nd(1.5, 2)
+    >>> sorted(pts)  # doctest: +ELLIPSIS
+    [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+
+    3D (ball of radius 1):
+    >>> sorted(_gen_coords_nd(1.0, 3))  # doctest: +ELLIPSIS
+    [(-1, 0, 0), (0, -1, 0), (0, 0, -1), (0, 0, 1), (0, 1, 0), (1, 0, 0)]
     """
     if spatial_dims <= 0:
         raise ValueError("spatial_dims must be a positive integer")
@@ -89,64 +142,136 @@ def _gen_coords_nd(radius: float, spatial_dims: int) -> Set[Tuple[int, ...]]:
 
 
 def _gen_coords(radius: float) -> Set[Tuple[int, int, int]]:
+    r"""Integer lattice points inside a 3D :math:`\ell_2` ball (deprecated wrapper).
+
+    .. deprecated:: 0.x
+       Use :func:`_gen_coords_nd` with ``spatial_dims=3`` instead:
+       ``_gen_coords_nd(radius, 3)``. This function remains for backward
+       compatibility and forwards directly.
+
+    Returns all integer points :math:`(x,y,z) \in \mathbb{Z}^3` with
+    :math:`\sqrt{x^2 + y^2 + z^2} \le r`, excluding the origin
+    :math:`(0,0,0)`.
+
+    Parameters
+    ----------
+    radius : float
+        Sphere radius (if ``radius < 0`` the result is empty).
+
+    Returns
+    -------
+    Set[Tuple[int, int, int]]
+        Integer triples inside the closed 3D ball (origin excluded).
+
+    Notes
+    -----
+    Enumeration over :math:`[\lfloor-r\rfloor, \lceil r\rceil]^3` filtered by the
+    norm test. Complexity :math:`O((2\lceil r\rceil+1)^3)`.
+
+    Cardinality (reference):
+
+    * ``r < 1`` → 0 points
+    * ``1 \le r < \sqrt{2}`` → 6 (axis neighbors)
+    * ``\sqrt{2} \le r < \sqrt{3}`` → 18 (adds edge neighbors)
+    * ``\sqrt{3} \le r < 2`` → 26 (adds corner neighbors)
+    * ``2 \le r < \sqrt{5}`` → 32 (adds distance-2 axis neighbors)
+
+    See Also
+    --------
+    _gen_coords_nd : Preferred N-D implementation.
+
+    Examples
+    --------
+    >>> pts = _gen_coords(1.0)
+    >>> sorted(pts)  # doctest: +ELLIPSIS
+    [(-1, 0, 0), (0, -1, 0), (0, 0, -1), (0, 0, 1), (0, 1, 0), (1, 0, 0)]
+    >>> _gen_coords(1.0) == _gen_coords_nd(1.0, 3)
+    True
     """
-    Generate a set of tuples representing 3D coordinates within a sphere.
-
-    **DEPRECATED**: Use _gen_coords_nd(radius, 3) instead.
-
-    The generated coordinates are all points (x, y, z) where each of x, y, z is a
-    non-zero integer, and the point lies within a sphere of the given radius
-    around the origin (0, 0, 0). The range for each of x, y, z is from
-    floor(-radius) to ceil(radius) inclusive.
-
-    The size of the resulting set depends on the radius:
-    - radius < 1 will result in an empty set.
-    - 1 <= radius < sqrt(2) will result in a set of 6 points.
-    - sqrt(2) <= radius < sqrt(3) will result in a set of 18 points.
-    - sqrt(3) < radius < 2 will result in a set of 26 points.
-    - 2 <= radius < sqrt(5) will result in a set of 32 points.
-
-    Args:
-        radius (float): The radius of the sphere within which the coordinates are
-        generated. Defines the range of the x, y, z coordinates. Can be either
-        an integer or a floating point value.
-
-    Returns:
-        Set[Tuple[int, int, int]]: A set of tuples. Each tuple represents a point
-        (x, y, z) within the defined spherical volume.
-    """
-    return _gen_coords_nd(radius, 3)
+    # Cast for type checker: underlying returns Set[Tuple[int, ...]] but here we constrain to 3D.
+    return set(tuple(c) for c in _gen_coords_nd(radius, 3))  # type: ignore[return-value]
 
 
 def _gen_offsets_nd(
-    radius: float, spatial_dims: int, upper: bool = None, num_channels: int = 1, channel_voxel_relation: str = "indep"
-) -> List[Tuple[int, ...]]:
-    """
-    Generate a list of tuples representing offsets in (1+N)-dimensional space, where the first element
-    of the tuple represents the channel offset, and the remaining N elements represent
-    the spatial offset.
+    radius: float,
+    spatial_dims: int,
+    upper: bool | None = None,
+    num_channels: int = 1,
+    channel_voxel_relation: str = "indep",
+) -> list[tuple[int, ...]]:
+    r"""Generate :math:`(1+N)`-D channel+voxel offset tuples inside an :math:`N`-D ball.
 
-    The spatial coordinates lie within a hypersphere of the given radius around the
-    origin, and the range of each spatial coordinate is from -radius to radius (inclusive).
+    Returns a **sorted** list of tuples ``(c, s1, ..., sN)`` where ``c`` is the channel
+    offset and ``(s1..sN)`` a spatial offset with :math:`\sum_i s_i^2 \le r^2` (``r = radius``),
+    excluding the all-zero tuple. Depending on ``channel_voxel_relation`` the set is
+    augmented with pure channel offsets and/or combined channel+spatial offsets.
 
-    The channel offset coordinate c is determined by the channel_voxel_relation argument:
-        If 'indep', no offset is applied to the channel coordinate (c=0).
-        If 'intra', the offset corresponds to the intra-voxel offset between channels.
-        If 'inter', includes both intra-voxel and inter-voxel offsets between channels.
+    Sign filtering (argument ``upper``) keeps offsets based on the *first non-zero* entry
+    in the full tuple ``(c, s1, ..., sN)``:
 
-    Args:
-        radius (float): Defines the range of spatial coordinates.
-        spatial_dims (int): The number of spatial dimensions.
-        upper (bool): If False, only tuples whose first non-zero value is positive are kept.
-                      If True, only tuples whose first non-zero value is negative are kept.
-                      If None, all tuples are kept except for the zero tuple.
-        num_channels (int): Number of channels of the volume. This affects the range of
-                            channel offset when 'channel_voxel_relation' is not 'indep'.
-        channel_voxel_relation (str, optional): Specifies the type of channel relationship.
-                                                 Can be 'indep', 'intra', or 'inter'. Default is 'indep'.
+    * ``upper is False`` → keep those whose first non-zero is positive
+    * ``upper is True``  → keep those whose first non-zero is negative
+    * ``upper is None``  → keep all (except the all-zero)
 
-    Returns:
-        List[Tuple[int, ...]]: A list of (1+N)-dimensional offset tuples (c, *spatial_coords).
+    Ordering key (stable, deterministic):
+
+    1. Squared radius in augmented space where the channel component is scaled by 10
+    2. Lexicographic order of absolute values ``(|c|, |s1|, ..., |sN|)``
+    3. Sign preference (non-negative entries ordered after negative ones on ties)
+
+    Parameters
+    ----------
+    radius : float
+        Spatial neighborhood radius (may be non-integer).
+    spatial_dims : int
+        Number of spatial dims ``N``.
+    upper : bool or None, optional
+        Sign-selection filter (see above). Default ``None``.
+    num_channels : int, optional
+        Number of channels (affects channel offsets). Default ``1``.
+    channel_voxel_relation : {'indep', 'intra', 'inter'}, optional
+        * ``'indep'`` – only spatial offsets ``(0, s1..sN)``
+        * ``'intra'`` – plus intra-voxel channel offsets ``(c, 0, ..., 0)``
+        * ``'inter'`` – plus intra offsets and inter-voxel ``(c, s1..sN)``
+
+    Returns
+    -------
+    list[tuple[int, ...]]
+        List of offset tuples of length ``1 + spatial_dims`` (no all-zero tuple).
+
+    Raises
+    ------
+    ValueError
+        If ``spatial_dims <= 0`` (from :func:`_gen_coords_nd`).
+
+    Notes
+    -----
+    * Spatial offsets from :func:`_gen_coords_nd` never include the zero vector.
+    * Channel component is scaled by 10 in the radius used for ordering to keep
+      channel steps ranked above small spatial ties.
+
+    See Also
+    --------
+    _gen_coords_nd : Enumerate spatial coordinates within radius.
+
+    Examples
+    --------
+    2D, channel independent:
+    >>> _gen_offsets_nd(1.5, spatial_dims=2, upper=None, num_channels=1, channel_voxel_relation='indep')
+    [(0, -1, 0), (0, 0, -1), (0, 0, 1), (0, 1, 0), (0, -1, -1), (0, -1, 1), (0, 1, -1), (0, 1, 1)]
+
+    Add intra-voxel channel offsets (two channels):
+    >>> _gen_offsets_nd(1.0, 2, num_channels=2, channel_voxel_relation='intra')
+    [(0, -1, 0), (0, 0, -1), (0, 0, 1), (0, 1, 0), (1, 0, 0)]
+
+    Inter-voxel channel+spatial combinations:
+    >>> offs = _gen_offsets_nd(1.0, 2, num_channels=2, channel_voxel_relation='inter')
+    >>> any(o[0] == 1 and o[1:] != (0, 0) for o in offs)
+    True
+
+    Restrict to ``upper=False``:
+    >>> _gen_offsets_nd(1.0, 1, upper=False, num_channels=1, channel_voxel_relation='indep')
+    [(0, 1)]
     """
 
     def first_non_zero_positive(coord):
@@ -194,92 +319,147 @@ def _gen_offsets_nd(
 
 
 def _gen_offsets(
-    radius: float, upper: bool = None, num_channels: int = 1, channel_voxel_relation: str = "indep"
-) -> List[Tuple[int, int, int, int]]:
+    radius: float,
+    upper: bool | None = None,
+    num_channels: int = 1,
+    channel_voxel_relation: str = "indep",
+) -> list[tuple[int, int, int, int]]:
+    r"""Generate 4D channel+spatial offsets in a 3D spherical neighborhood (deprecated).
+
+    .. deprecated:: 0.x
+       Use :func:`_gen_offsets_nd(radius, 3, upper, num_channels, channel_voxel_relation)`.
+
+    Produces sorted tuples ``(c, z, y, x)`` where ``(z,y,x)`` satisfy
+    :math:`z^2 + y^2 + x^2 \le r^2` and channel offsets are added according to
+    ``channel_voxel_relation``.
+
+    Parameters
+    ----------
+    radius : float
+        Spatial radius ``r``.
+    upper : bool or None, optional
+        Sign-selection filter (first non-zero criterion). Default ``None``.
+    num_channels : int, optional
+        Number of channels. Default ``1``.
+    channel_voxel_relation : {'indep', 'intra', 'inter'}, optional
+        Channel/spatial relation mode.
+
+    Returns
+    -------
+    list[tuple[int, int, int, int]]
+        4D offset tuples (without the all-zero tuple).
+
+    Notes
+    -----
+    Equivalent to calling :func:`_gen_offsets_nd` with ``spatial_dims=3``.
+
+    See Also
+    --------
+    _gen_offsets_nd : N-D generalization.
+    _gen_coords_nd : Underlying spatial coordinate generator.
+
+    Examples
+    --------
+    Channel-independent (only spatial):
+    >>> _gen_offsets(1.5, upper=None, num_channels=1, channel_voxel_relation='indep')  # doctest: +ELLIPSIS
+    [(0, -1, 0, 0), (0, 0, -1, 0), (0, 0, 0, -1), (0, 0, 0, 1), (0, 0, 1, 0), (0, 1, 0, 0), ...]
+
+    Intra-voxel channel offsets:
+    >>> _gen_offsets(1.0, num_channels=2, channel_voxel_relation='intra')  # doctest: +ELLIPSIS
+    [(0, -1, 0, 0), (0, 0, -1, 0), (0, 0, 0, -1), (0, 0, 0, 1), (0, 0, 1, 0), (0, 1, 0, 0), (1, 0, 0, 0)]
+
+    Inter-voxel combinations:
+    >>> offs = _gen_offsets(1.0, num_channels=2, channel_voxel_relation='inter')
+    >>> any(o[0] == 1 and o[1:] != (0, 0, 0) for o in offs)
+    True
     """
-    Generate a list of tuples representing offsets in 4D space, where the first element
-    of the tuple represents the channel offset, and the remaining three elements represent
-    the spatial offset.
-
-    **DEPRECATED**: Use _gen_offsets_nd(radius, 3, upper, num_channels, channel_voxel_relation) instead.
-
-    The spatial coordinate (z, y, x) lies within a sphere of the given radius around the
-    origin (0, 0, 0), and the range of z, y, x is from -radius to radius (inclusive).
-
-    The channel offset coordinate c is determined by the channel_voxel_relation argument:
-        If 'indep', no offset is applied to the channel coordinate (c=0).
-        If 'intra', the offset corresponds to the intra-voxel offset between channels.
-        If 'inter', includes both intra-voxel and inter-voxel offsets between channels.
-
-    Args:
-        radius (float): Defines the range of z, y, x coordinates.
-        upper (bool): If False, only tuples whose first non-zero value is positive are kept.
-                      If True, only tuples whose first non-zero value is negative are kept.
-                      If None, all tuples are kept except for (0, 0, 0, 0).
-        num_channels (int): Number of channels of the 3D volume. This affects the range of
-                            channel offset when 'channel_voxel_relation' is not 'indep'.
-        channel_voxel_relation (str, optional): Specifies the type of channel relationship.
-                                                 Can be 'indep', 'intra', or 'inter'. Default is 'indep'.
-
-    Returns:
-        List[Tuple[int, int, int, int]]: A list of 4D offset tuples (c, z, y, x).
-    """
-    return _gen_offsets_nd(radius, 3, upper, num_channels, channel_voxel_relation)
+    offs = _gen_offsets_nd(radius, 3, upper, num_channels, channel_voxel_relation)
+    return [tuple(o) for o in offs]  # type: ignore[return-value]
 
 
 def calc_pairwise_coo_indices_nd(
     radius: float,
     volume_shape: Tuple[int, ...],
     diag: bool = False,
-    upper: bool = None,
+    upper: bool | None = None,
     channel_voxel_relation: str = "indep",
     dtype: torch.dtype = torch.int64,
-    device: torch.device = torch.device("cpu"),
+    device: torch.device | None = torch.device("cpu"),
 ) -> Dict[Tuple[int, ...], torch.Tensor]:
-    """
-    Calculate pairwise coordinate indices (in COO format) of spatial offsets in an N-D
-    neighbourhood specified by a radius around each voxel in a volume. The volume's
-    shape describes a (1+N)-dimensional tensor of shape (C, *spatial_dims), where C is the number of channels,
-    and spatial_dims are the spatial dimensions.
+    r"""Compute per-offset COO linear index pairs for an :math:`(C,*S)` volume.
 
-    The offsets used to generate these pairwise indices are returned as the keys of the
-    returned dictionary. These offsets relate to coordinates (c, *spatial_coords) around each voxel
-    where each coordinate is a non-zero integer.
+    For a volume ``(C, *spatial_dims)`` and spatial radius ``r``, return a dictionary
+    mapping each offset tuple ``(c, *spatial_offset)`` to a ``(2, M)`` tensor of linear
+    index pairs ``[[i...],[j...]]`` such that the second row is the first row shifted
+    by the offset (within bounds). Linearization follows row-major order
+    (``torch.arange(prod(volume_shape)).reshape(volume_shape).flatten()``).
 
-    Args:
-        radius (float): The maximum distance from the origin of each voxel within which the
-                        spatial coordinates are generated.
-                        Must be a positive number not less than 1.
-        volume_shape (Tuple[int, ...]): The shape of the volume. The first
-                                        element represents the number of channels,
-                                        and the remaining elements represent the
-                                        spatial shape.
-        diag (bool, optional): If True, the diagonal indices (offset of all zeros) are
-                               calculated. If False, only non-diagonal offsets are
-                               calculated. Default is False.
-        upper (Optional[bool], optional): Determines indices generation for an upper or
-                                          lower triangular matrix or a full matrix. If None,
-                                          indices relating to both upper and lower triangular
-                                          matrices are generated. If False, only indices
-                                          relating to a lower triangular matrix are
-                                          generated. If True, only indices relating to an
-                                          upper triangular matrix are generated.
-        channel_voxel_relation (str, optional): Specifies the type of channel relationship
-                                                to model, can be 'indep', 'intra', or
-                                                'inter'. Default is 'indep'.
-        dtype (torch.dtype, optional): The data type of the output indices.
-                                       Must be a valid torch.dtype. Default is torch.int64.
-        device (torch.device, optional): Device assigned to generated indices tensor.
-                                         Defaults to torch.device("cpu").
+    Offsets come from :func:`_gen_offsets_nd` (sorted), which enumerates spatial offsets
+    with :math:`\|o_{spatial}\|_2 \le r` and augments them with channel offsets
+    according to ``channel_voxel_relation``.
 
-    Returns:
-        Dict[Tuple[int, ...], torch.Tensor]: A dictionary where each key is a (1+N)-dimensional
-                                             offset, and the corresponding value is
-                                             a tensor of pairwise indices of the
-                                             coordinates with this offset.
+    Parameters
+    ----------
+    radius : float
+        Neighborhood radius (``>= 1``).
+    volume_shape : tuple[int, ...]
+        Shape ``(C, *spatial_dims)`` with at least one spatial dimension.
+    diag : bool, optional
+        Include diagonal key ``(0,...,0)`` mapping to ``(i,i)`` pairs. Default ``False``.
+    upper : bool or None, optional
+        Forwarded sign filter (see :func:`_gen_offsets_nd`). Default ``None``.
+    channel_voxel_relation : {'indep','intra','inter'}, optional
+        Channel relation mode. Default ``'indep'``.
+    dtype : torch.dtype, optional
+        Integer dtype of output index tensors (default ``torch.int64``).
+    device : torch.device, optional
+        Target device (default CPU).
 
-    Raises:
-        ValueError: If input arguments are out of specification.
+    Returns
+    -------
+    dict[tuple[int, ...], torch.Tensor]
+        Mapping from offset tuple to a ``(2, M_o)`` tensor of linear index pairs.
+
+    Raises
+    ------
+    ValueError
+        If arguments are inconsistent (e.g. ``radius < 1``).
+
+    Notes
+    -----
+    Each non-zero offset ``o`` yields pairs by trimming the index lattice twice with
+    :func:`_trim_nd`: once by ``o`` and once by ``-o``. Only valid in-bounds pairs
+    are produced (no padding). Sorting matches :func:`_gen_offsets_nd`.
+
+    See Also
+    --------
+    _gen_offsets_nd : Generate (sorted) offsets.
+    _trim_nd : Bounds-aware slicing used for forming pairs.
+
+    Examples
+    --------
+    2D single channel:
+    >>> idxs = calc_pairwise_coo_indices_nd(
+    ...     radius=1.0,
+    ...     volume_shape=(1, 3, 3), # (C,H,W)
+    ...     diag=True,
+    ...     upper=None,
+    ...     channel_voxel_relation='indep',
+    ... )
+    >>> sorted(list(idxs.keys()))[:3]  # doctest: +ELLIPSIS
+    [(0, -1, 0), (0, 0, -1), (0, 0, 0)]
+    >>> z = (0, 0, 0)
+    >>> idxs[z].shape
+    torch.Size([2, 9])
+
+    3D, inter-channel:
+    >>> idxs3d = calc_pairwise_coo_indices_nd(
+    ...     radius=1.0,
+    ...     volume_shape=(2, 3, 3, 3),
+    ...     channel_voxel_relation='inter',
+    ... )
+    >>> any(o[0] == 1 and o[1:] != (0, 0, 0) for o in idxs3d.keys())
+    True
     """
 
     if radius < 1:
@@ -326,134 +506,153 @@ def calc_pariwise_coo_indices(
     radius: float,
     volume_shape: Tuple[int, int, int, int],
     diag: bool = False,
-    upper: bool = None,
+    upper: bool | None = None,
     channel_voxel_relation: str = "indep",
     dtype: torch.dtype = torch.int64,
     device: torch.device = torch.device("cpu"),
 ) -> Dict[Tuple[int, int, int, int], torch.Tensor]:
-    """
-    Calculate pairwise coordinate indices (in COO format) of spatial offsets in a 3D
-    neighbourhood specified by a radius around each voxel in a volume. The volume's
-    shape describes a 4D tensor of shape (C, H, D, W), where C is the number of channels,
-    and H, D, W are the spatial dimensions.
+    r"""3D wrapper for :func:`calc_pairwise_coo_indices_nd` (deprecated).
 
-    **DEPRECATED**: Use calc_pairwise_coo_indices_nd instead.
+    .. deprecated:: 0.x
+       Use :func:`calc_pairwise_coo_indices_nd`.
 
-    The offsets used to generate these pairwise indices are returned as the keys of the
-    returned dictionary. These offsets relate to coordinates (c, z, y, x) around each voxel
-    where each of c, z, y, x is a non-zero integer, where z, y, x corresponds to H, D, W:
+    Parameters
+    ----------
+    radius : float
+        Spatial radius (``>=1``).
+    volume_shape : tuple[int,int,int,int]
+        ``(C,H,D,W)``.
+    diag : bool, optional
+        Include diagonal. Default ``False``.
+    upper : bool or None, optional
+        Sign-selection (see N-D version). Default ``None``.
+    channel_voxel_relation : {'indep','intra','inter'}, optional
+        Channel relation mode. Default ``'indep'``.
+    dtype : torch.dtype, optional
+        Index dtype (default ``torch.int64``).
+    device : torch.device, optional
+        Target device (default CPU).
 
+    Returns
+    -------
+    dict[tuple[int,int,int,int], torch.Tensor]
+        Per-offset COO index pairs.
 
-    Args:
-        radius (float): The maximum distance from the origin of each voxel within which the
-                        spatial coordinates are generated.
-                        Must be a positive number not less than 1.
-        volume_shape (Tuple[int, int, int, int]): The shape of the volume. The first
-                                                   element represents the number of channels,
-                                                   and the remaining elements represent the
-                                                   spatial shape in z, y, x order.
-        diag (bool, optional): If True, the diagonal indices (offset of (0,0,0,0)) are
-                               calculated. If False, only non-diagonal offsets are
-                               calculated. Default is False.
-        upper (Optional[bool], optional): Determines indices generation for an upper or
-                                          lower triangular matrix or a full matrix. If None,
-                                          indices relating to both upper and lower triangular
-                                          matrices are generated. If False, only indices
-                                          relating to a lower triangular matrix are
-                                          generated. If True, only indices relating to an
-                                          upper triangular matrix are generated.
-        channel_voxel_relation (str, optional): Specifies the type of channel relationship
-                                                to model, can be 'indep', 'intra', or
-                                                'inter'. Default is 'indep'.
-        dtype (torch.dtype, optional): The data type of the output indices.
-                                       Must be a valid torch.dtype. Default is torch.int64.
-        device (torch.device, optional): Device assigned to generated indices tensor.
-                                         Defaults to torch.device("cpu").
-
-    Returns:
-        Dict[Tuple[int, int, int, int], torch.Tensor]: A dictionary where each key is a 4D
-                                                       offset, and the corresponding value is
-                                                       a tensor of pairwise indices of the
-                                                       coordinates with this offset.
-
-    Raises:
-        ValueError: If input arguments are out of specification.
+    Raises
+    ------
+    ValueError
+        If inputs are invalid.
     """
     # Validate 4D shape for backward compatibility
     if not (len(volume_shape) == 4 and all(isinstance(dim, int) and dim > 0 for dim in volume_shape)):
         raise ValueError("volume_shape must be a 4D tuple of positive integers for backward compatibility")
 
-    return calc_pairwise_coo_indices_nd(radius, volume_shape, diag, upper, channel_voxel_relation, dtype, device)
+    out = calc_pairwise_coo_indices_nd(radius, volume_shape, diag, upper, channel_voxel_relation, dtype, device)
+    # Narrow key type for static checker (all offsets have length 4 here)
+    return {tuple(k): v for k, v in out.items()}  # type: ignore[return-value]
 
 
 class PairwiseEncoder(torch.nn.Module):
-    """
-    A class for encoding pairwise spatial local neighbourhoods and channel based relations
-    into a sparse tensor of either COO or CSR format.
+    r"""Encode pairwise spatial–channel neighborhoods as sparse tensors.
 
-    The indices of pairwise relationships are determined and cached during initialization for a
-    single batch element and are based on the radius, volume shape, and channel-to-voxel relationship.
-    The bigger the neighbourhood radius, and the higher the order of the channel-to-voxel
-    relationship, the more offsets that are considered and more nnz elements in the resultant
-    sparse tensor.
-    Additionally, diagonal entries can be included with the diag flag.
-    The output matrix can be restricted to upper or lower triangular with the upper flag, if
-    symmetric relationships are assumed, such as distance or correlation.
-    The indices are stored on the device specified by the device argument,
-    these indices can be sent to another device using the to() method.
+    Precomputes a mapping from local neighborhoods (within spatial radius ``r``)
+    and optional channel interactions to global sparse matrix indices over the
+    linearized volume. Useful for graph-like layers, covariance assembly, sparse
+    attention and any operator exploiting local geometric structure.
 
-    The sparse tensor is returned in the `__call__` method, which takes a tensor of values
-    with shape [(B), N, C, *spatial_dims] and returns a sparse tensor of shape [(B), S, S]
-    where B is an optional batch dimension, and S is C*prod(spatial_dims).
-    N is the number of spatial offsets being considered, governed by radius and
-    channel_voxel_relation, and can be deduced from the offsets attribute, which contains
-    an ordered list of (1+spatial_dims) offsets relating to (c, *spatial_coords) around each element.
-    The order of these offsets is fixed, and should match the same order of the values
-    that are passed to the `__call__` method, along the N dimension.
-    Only the indices for a single batch element are stored, and the indices are repeated
-    for each batch element required as specified by the input tensor to the `__call__` method.
-    Some of the values will be trimmed from the volume edges, as values are not allowed
-    to wrap around the edges of the spatial volume.
+    Parameters
+    ----------
+    radius : float
+        Spatial neighborhood radius ``r``.
+    volume_shape : tuple[int, ...]
+        ``(C,*spatial_dims)`` (at least one spatial dimension).
+    diag : bool, optional
+        Include diagonal (self-edges). Default ``False``.
+    upper : bool or None, optional
+        Triangular selection on offset set (first non-zero criterion). ``None`` keeps all.
+    channel_voxel_relation : {'indep','intra','inter'}, optional
+        Channel interaction model. Default ``'indep'``.
+    layout : torch.layout, optional
+        ``torch.sparse_coo`` (default) or ``torch.sparse_csr``.
+    indices_dtype : torch.dtype, optional
+        Integer dtype for indices (``int32`` or ``int64``). Default ``int64``.
+    device : torch.device, optional
+        Device to store cached indices (default CPU).
 
-    The sparse tensor is returned on the same device as the input values to the `__call__` method.
+    Attributes
+    ----------
+    volume_numel : int
+        ``C * prod(spatial_dims)``.
+    spatial_dims : int
+        ``len(volume_shape) - 1``.
+    offsets : list[tuple[int,...]]
+        Ordered offsets (optionally with diagonal key first if ``diag``).
+    indices : torch.Tensor
+        (COO) ``(2, nnz_total)`` tensor of linear index pairs.
+    crow_indices, col_indices, csr_permutation : torch.Tensor
+        (CSR) components & permutation to reorder values into CSR order.
 
-    Args:
-        radius (float): The maximum distance from the origin within which the spatial
-                        coordinates are generated.
-        volume_shape (Tuple[int, ...]): A tuple of integers representing the volume
-                                        shape of (C, *spatial_dims), where C is the number of
-                                        channels and spatial_dims are the spatial dimension sizes.
-        diag (bool, optional): If True, the diagonal indices (offset of all zeros) are
-                               calculated. If False, only non-diagonal offsets are
-                               calculated. Default is False.
-        upper (Optional[bool], optional): Determines indices generation for an upper or
-                                          lower triangular matrix or a full matrix. If None,
-                                          indices relating to both upper and lower triangular
-                                          matrices are generated. If False, only indices
-                                          relating to a lower triangular matrix are
-                                          generated. If True, only indices relating to an
-                                          upper triangular matrix are generated.
-        channel_voxel_relation (str, optional): Specifies the type of channel relationship
-                                                to model, can be 'indep', 'intra', or
-                                                'inter'. Default is 'indep'.
-        layout (torch.layout, optional): Determines the layout of the output tensor.
-                                         Options are torch.sparse_coo (default) or torch.sparse_csr.
-        indices_dtype (torch.dtype, optional): The data type of the output indices.
-                                               Must be either torch.int32 or torch.int64.
-                                               Default is torch.int64.
-        device (torch.device, optional): Device assigned to store sparse tensor indices
-                                         at initialisation.
-                                         Defaults to torch.device("cpu").
+    Notes
+    -----
+    * Input to :meth:`__call__` must have shape ``[(B), N, C, *S]`` where
+      ``N == len(self.offsets)``. Batch dimension optional.
+    * Edge handling uses trimming (no wrap, no padding).
+    * CSR values are internally reordered via ``self.csr_permutation``.
+    * Complexity scales with number of offsets times valid pairs (≈ :math:`O(r^2)` in 2D, :math:`O(r^3)` in 3D).
 
+    See Also
+    --------
+    calc_pairwise_coo_indices_nd : Build per-offset COO indices.
+    convert_coo_to_csr_indices_values : COO→CSR conversion + permutation.
+    _gen_offsets_nd : Construct ordered offset set.
+    _trim_nd : Bounds-aware slicing for forming value blocks.
 
-    Attributes:
-        volume_numel (int): Total number of elements in the volume.
-        spatial_dims (int): Number of spatial dimensions.
-        offsets (List[Tuple[int, ...]]): List of (1+spatial_dims) offsets used to calculate indices.
-        indices (torch.Tensor): Tensor of pairwise indices in COO format.
-        crow_indices (torch.Tensor): Tensor of row indices in CSR format.
-        col_indices (torch.Tensor): Tensor of column indices in CSR format.
-        csr_permutation (torch.Tensor): Permutation used to convert COO to CSR format.
+    Examples
+    --------
+    Basic 2D:
+    >>> from torchsparsegradutils.encoders import PairwiseEncoder
+    >>> encoder = PairwiseEncoder(
+    ...     radius=1.5,
+    ...     volume_shape=(3, 8, 8),
+    ...     diag=True,
+    ...     channel_voxel_relation='indep'
+    ... )
+    >>> encoder.volume_numel
+    192
+    >>> len(encoder.offsets)
+    13
+
+    Create sparse tensor from values:
+    >>> values = torch.randn(len(encoder.offsets), 3, 8, 8)
+    >>> sp = encoder(values)
+    >>> sp.shape
+    torch.Size([192, 192])
+    >>> sp.is_sparse
+    True
+
+    Batched:
+    >>> values_b = torch.randn(4, len(encoder.offsets), 3, 8, 8)
+    >>> sp_b = encoder(values_b)
+    >>> sp_b.shape
+    torch.Size([4, 192, 192])
+
+    3D with inter-channel relations:
+    >>> encoder3d = PairwiseEncoder(
+    ...     radius=2.0,
+    ...     volume_shape=(5, 16, 16, 16),
+    ...     channel_voxel_relation='inter',
+    ...     layout=torch.sparse_csr,
+    ... )
+
+    Upper-triangular (symmetric use-case):
+    >>> sym = PairwiseEncoder(
+    ...     radius=1.0,
+    ...     volume_shape=(1, 10, 10),
+    ...     upper=True,
+    ...     diag=True,
+    ... )
+    >>> v = torch.randn(len(sym.offsets), 1, 10, 10)
+    >>> _ = sym(v)
     """
 
     def __init__(
@@ -461,7 +660,7 @@ class PairwiseEncoder(torch.nn.Module):
         radius: float,
         volume_shape: Tuple[int, ...],
         diag: bool = False,
-        upper: bool = None,
+        upper: bool | None = None,
         channel_voxel_relation: str = "indep",
         layout=torch.sparse_coo,
         indices_dtype: torch.dtype = torch.int64,
@@ -505,7 +704,7 @@ class PairwiseEncoder(torch.nn.Module):
         else:
             raise ValueError("layout must be either torch.sparse_coo or torch.sparse_csr")
 
-    def _apply(self, fn):
+    def _apply(self, fn, recurse=True):
         # Applying the function to the desired attributes
         # This has been implemented to allow using the .to() method
         for attr in ["indices", "csr_permutation", "crow_indices", "col_indices"]:
@@ -523,14 +722,17 @@ class PairwiseEncoder(torch.nn.Module):
             return self.crow_indices.device
 
     def _calc_values(self, values: torch.Tensor) -> torch.Tensor:
-        """
-        Calculate the values for the sparse tensor based on the input values and offsets.
+        r"""Assemble flattened value vector for one (unbatched) call.
 
-        Args:
-            values (torch.Tensor): Input tensor of values with shape (N, C, *spatial_dims).
+        Parameters
+        ----------
+        values : torch.Tensor
+            Tensor of shape ``(N, C, *spatial_dims)`` where ``N == len(self.offsets)``.
 
-        Returns:
-            torch.Tensor: Flattened tensor of values for sparse tensor.
+        Returns
+        -------
+        torch.Tensor
+            Flattened concatenation of trimmed per-offset blocks (order matches ``self.indices`` or CSR permutation input order).
         """
         values_out = []
         for offset, val in zip(self.offsets, values):
@@ -540,19 +742,23 @@ class PairwiseEncoder(torch.nn.Module):
         return torch.cat(values_out)
 
     def __call__(self, values: torch.Tensor) -> torch.Tensor:
-        """
-        Create a sparse tensor based on input values.
+        r"""Construct sparse tensor (COO or CSR) from per-offset value blocks.
 
-        Args:
-            values (torch.Tensor): Input tensor with shape [(B), N, C, *spatial_dims] where
-                                  B is an optional batch dimension, N is the number of offsets,
-                                  C is the number of channels, and spatial_dims are the spatial dimensions.
+        Parameters
+        ----------
+        values : torch.Tensor
+            Shape ``[(B), N, C, *spatial_dims]`` with optional batch ``B`` and
+            ``N == len(self.offsets)``.
 
-        Returns:
-            torch.Tensor: Sparse tensor with shape [(B), S, S] where S = C * prod(spatial_dims).
+        Returns
+        -------
+        torch.Tensor
+            Sparse tensor of shape ``[(B), S, S]`` where ``S = C * prod(spatial_dims)``.
 
-        Raises:
-            ValueError: If input shapes or types are invalid.
+        Raises
+        ------
+        ValueError
+            If shape, dtype or offset count are inconsistent.
         """
         expected_spatial_dims = len(self.volume_shape) - 1
         expected_full_dims = expected_spatial_dims + 2  # C + spatial_dims
@@ -584,25 +790,26 @@ class PairwiseEncoder(torch.nn.Module):
             raise ValueError("values must be either torch.float32 or torch.float64 for sparse tensors")
 
         batched = len(values.shape) == expected_full_dims + 1
+        batch_size: int | None = None
 
-        # Calculate values:
-        if not batched:
-            size = (self.volume_numel, self.volume_numel)
+        if batched:
+            batch_size = values.shape[0]
+
+        # Calculate values
+        if batched:
+            assert batch_size is not None  # for type checker
+            size_batched: tuple[int, int, int] = (batch_size, self.volume_numel, self.volume_numel)
+            size_any = size_batched  # unified name
+            processed = [self._calc_values(batch) for batch in values]  # type: ignore[assignment]
+            values = torch.stack(processed)
+        else:
+            size_unbatched: tuple[int, int] = (self.volume_numel, self.volume_numel)
+            size_any = size_unbatched
             values = self._calc_values(values)
 
-        else:
-            batch_size = values.shape[0]
-            size = (batch_size, self.volume_numel, self.volume_numel)
-            batched_values = []
-            for batch in values:
-                batched_values.append(self._calc_values(batch))
-            values = torch.stack(batched_values)
-
-        # Create sparse COO tensor:
         if self.layout == torch.sparse_coo:
-            if not batched:
-                indices = self.indices
-            else:
+            if batched:
+                assert batch_size is not None
                 sparse_dim_indices = self.indices.repeat(1, batch_size)
                 batch_dim_indices = (
                     torch.arange(batch_size, dtype=self.indices.dtype, device=self.indices.device)
@@ -611,30 +818,25 @@ class PairwiseEncoder(torch.nn.Module):
                 )
                 indices = torch.cat([batch_dim_indices, sparse_dim_indices])
                 values = values.flatten()
-
+            else:
+                indices = self.indices
             return torch.sparse_coo_tensor(
-                indices,
-                values,
-                size=size,
-                dtype=values.dtype,
-                device=values.device,
+                indices, values, size=size_any, dtype=values.dtype, device=values.device
             ).coalesce()
 
-        # Create sparse CSR tensor:
-        elif self.layout == torch.sparse_csr:
+        if self.layout == torch.sparse_csr:
+            if self.csr_permutation is None:
+                raise RuntimeError("csr_permutation is None; expected a permutation tensor when layout is sparse_csr.")
             values = values.index_select(dim=-1, index=self.csr_permutation)
-            if not batched:
-                crow_indices = self.crow_indices
-                col_indices = self.col_indices
-            else:
+            if batched:
+                assert batch_size is not None
                 crow_indices = self.crow_indices.repeat(batch_size, 1)
                 col_indices = self.col_indices.repeat(batch_size, 1)
-
+            else:
+                crow_indices = self.crow_indices
+                col_indices = self.col_indices
             return torch.sparse_csr_tensor(
-                crow_indices,
-                col_indices,
-                values,
-                size=size,
-                dtype=values.dtype,
-                device=values.device,
+                crow_indices, col_indices, values, size=size_any, dtype=values.dtype, device=values.device
             )
+
+        raise RuntimeError("Unsupported sparse layout")

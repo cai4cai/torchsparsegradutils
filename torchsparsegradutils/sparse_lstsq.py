@@ -1,7 +1,92 @@
+from typing import Callable, Optional, cast
 import torch
 
 
-def sparse_generic_lstsq(A, B, lstsq=None, transpose_lstsq=None):
+def sparse_generic_lstsq(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    lstsq: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+    transpose_lstsq: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+) -> torch.Tensor:
+    r"""Sparse linear least squares with sparse-aware gradients.
+
+    Solves the overdetermined problem :math:`\min_x \|A x - B\|_2^2` where ``A`` is
+    a sparse tall matrix and ``B`` is dense. Backprop preserves the sparsity
+    pattern by returning sparse gradients for ``A`` (only non-zero locations).
+
+    Parameters
+    ----------
+    A : torch.Tensor
+        Sparse COO/CSR tensor of shape ``(m, n)`` (ideally ``m > n`` and full rank).
+    B : torch.Tensor
+        Dense RHS of shape ``(m,)`` or ``(m, k)`` with ``B.shape[0] == A.shape[0]``.
+    lstsq : callable, optional
+        Solver ``lstsq(A,B)->X`` (``(n,)`` or ``(n,k)``). Default: LSMR
+        (:func:`torchsparsegradutils.utils.lsmr`).
+    transpose_lstsq : callable, optional
+        Solver for transpose system in backward (``(A^T) Y = G``). Default: LSMR on ``A^T``.
+
+    Returns
+    -------
+    torch.Tensor
+        Solution ``X`` minimizing :math:`\|A X - B\|_2^2` with shape ``(n,)`` or ``(n,k)``.
+
+    Raises
+    ------
+    TypeError
+        If ``A`` is not sparse COO/CSR.
+    ValueError
+        If dimension mismatch or if backward encounters non-tall ``A``.
+    RuntimeError
+        If a provided solver fails or returns unexpected shape.
+
+    Notes
+    -----
+    Assumes tall, full rank ``A`` so :math:`A^{+} A = I` (``A^{+}`` pseudoinverse).
+    Backward follows differentiation of the pseudoinverse (Golub & Pereyra, 1973)
+    and keeps gradients sparse.
+
+    See Also
+    --------
+    SparseGenericLstsq : Autograd implementation.
+
+    References
+    ----------
+    .. [1] Golub & Pereyra (1973), *SIAM J. Numer. Anal.* 10(2):413–432.
+
+    Examples
+    --------
+    Basic sparse least squares:
+    >>> import torch
+    >>> from torchsparsegradutils import sparse_generic_lstsq
+    >>> indices = torch.tensor([[0, 1, 2, 3, 4, 1, 2, 3],
+    ...                         [0, 0, 0, 0, 1, 1, 1, 2]])
+    >>> values = torch.tensor([1.0, 2.0, 1.0, 3.0, 1.0, 2.0, 1.0, 1.0])
+    >>> A = torch.sparse_coo_tensor(indices, values, (5, 3))
+    >>> B = torch.randn(5)
+    >>> x = sparse_generic_lstsq(A, B)
+    >>> x.shape
+    torch.Size([3])
+
+    Multiple RHS:
+    >>> Bm = torch.randn(5, 4)
+    >>> Xm = sparse_generic_lstsq(A, Bm)
+    >>> Xm.shape
+    torch.Size([3, 4])
+
+    Custom solver:
+    >>> from torchsparsegradutils.utils import lsmr
+    >>> def my_lstsq(A_, B_):
+    ...     return lsmr(A_, B_, atol=1e-10, btol=1e-10)[0]
+    >>> _ = sparse_generic_lstsq(A, B, lstsq=my_lstsq)
+
+    Gradients:
+    >>> A.requires_grad_(True); B.requires_grad_(True)
+    >>> x = sparse_generic_lstsq(A, B)
+    >>> loss = torch.norm(A @ x - B)**2
+    >>> loss.backward(); A.grad.is_sparse
+    True
+    """
     if lstsq is None or transpose_lstsq is None:
         from .utils import lsmr
 
@@ -11,25 +96,33 @@ def sparse_generic_lstsq(A, B, lstsq=None, transpose_lstsq=None):
             # MINRES assumes A to be symmetric -> no need to transpose A
             transpose_lstsq = lambda AA, BB: lsmr(torch.adjoint(AA), BB, AA)[0]
 
-    return SparseGenericLstsq.apply(A, B, lstsq, transpose_lstsq)
+    # Autograd Function.apply is typed as Any; cast for type checkers.
+    return cast(torch.Tensor, SparseGenericLstsq.apply(A, B, lstsq, transpose_lstsq))
 
 
 class SparseGenericLstsq(torch.autograd.Function):
-    """
-    Solves a linear least squares problem with a full-rank, tall
-    sparse matrix A and dense right-hand side matrix B,
-    with backpropagation support
+    r"""Autograd kernel for sparse least squares with sparse-aware gradients.
 
-    Solves: min_x || Ax - B ||^2
+    Forward: solve :math:`\min_x \|A x - B\|_2^2` with sparse ``A``.
+    Backward: sparse gradient for ``A`` (COO/CSR) + dense gradient for ``B``.
 
-    A can be in either COO or CSR format.
-    lstsq: higher level function that solves for the linear least squares problem. This function need not be differentiable.
-    transpose_lstsq: higher level function for solving the transpose linear least squares problem. This function need not be differentiable.
+    Notes
+    -----
+    Assumes tall, full-rank ``A`` so :math:`A^{+} A = I`. Using Golub & Pereyra (1973),
+    an informal dense gradient (not formed explicitly) is:
 
-    This implementation preserves the sparsity of the gradient. We make use of the derivation in
-    Golub GH, Pereyra V. The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate.
-    SIAM Journal on numerical analysis. 1973 Apr;10(2):413-32.
-    We also assume that A is tall and full-rank so that A^+ A = Id where A^+ is the pseudo-inverse of A
+    .. math::
+       \nabla_A = - (A^T)^{+} G \; x^T - (A x - B) \; (A^{+} (A^T)^{+} G)^T
+
+    Only values at existing non-zeros of ``A`` are computed.
+
+    See Also
+    --------
+    sparse_generic_lstsq : User wrapper.
+
+    References
+    ----------
+    .. [1] Golub & Pereyra (1973), *SIAM J. Numer. Anal.* 10(2):413–432.
     """
 
     @staticmethod
@@ -53,7 +146,7 @@ class SparseGenericLstsq(torch.autograd.Function):
         return x
 
     @staticmethod
-    def backward(ctx, grad):
+    def backward(ctx, grad):  # type: ignore[override]
         A, B, x = ctx.saved_tensors
         if B.ndim == 1:
             B = B.unsqueeze(1)
@@ -127,7 +220,6 @@ class SparseGenericLstsq(torch.autograd.Function):
         gradA_u2 = torch.sum(mresApgb, dim=1)
 
         gradA = gradA_u1 + gradA_u2
-
         if A.layout == torch.sparse_coo:
             gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
