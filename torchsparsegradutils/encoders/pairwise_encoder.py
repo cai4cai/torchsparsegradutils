@@ -1,15 +1,15 @@
-from functools import reduce
-from operator import mul
-import torch
 import warnings
+from functools import reduce
+from itertools import chain, product
+from math import ceil, floor
+from operator import mul
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+
 import numpy
-from itertools import product, chain
-from math import floor, ceil
+import torch
 
-from typing import Iterable, List, Tuple, Union, Any, Optional, Set, Dict
-
-from torchsparsegradutils.utils.utils import _sort_coo_indices
 from torchsparsegradutils.utils import convert_coo_to_csr_indices_values
+from torchsparsegradutils.utils.utils import _sort_coo_indices
 
 
 def _trim_nd(x: torch.Tensor, offsets: Tuple[int, ...]) -> torch.Tensor:

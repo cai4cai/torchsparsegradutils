@@ -13,31 +13,30 @@ Key Features:
 - Compares multiple iterative and direct solvers
 """
 
-import sys
 import os
+import sys
 
 # Add the parent directory to sys.path to allow importing torchsparsegradutils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import torch
-import pandas as pd
 import numpy as np
+import pandas as pd
+import torch
+from jax.scipy.sparse.linalg import bicgstab as bicgstab_jax, cg as cg_jax
 from tqdm import tqdm
 
-from torchsparsegradutils.sparse_solve import sparse_generic_solve
-from torchsparsegradutils.utils import convert_coo_to_csr, linear_cg, bicgstab, minres
-from torchsparsegradutils.utils.random_sparse import make_spd_sparse
-from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
-from jax.scipy.sparse.linalg import cg as cg_jax, bicgstab as bicgstab_jax
 import torchsparsegradutils.jax as tsgujax
-
 from torchsparsegradutils.benchmarks.benchmark_utils import (
     measure_op,
     print_benchmark_header,
-    print_results_table_header,
     print_result_row,
+    print_results_table_header,
     save_benchmark_results,
 )
+from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
+from torchsparsegradutils.sparse_solve import sparse_generic_solve
+from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, linear_cg, minres
+from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
 REPEATS = 50
 WARMUP_RUNS = 5

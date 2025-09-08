@@ -6,35 +6,33 @@ This benchmark tests sparse triangular solve operations using randomly
 generated sparse triangular matrices of various sizes.
 """
 
-import sys
 import os
+import sys
 
 # Add the parent directory to sys.path to allow importing torchsparsegradutils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import torch
-import pandas as pd
 import numpy as np
+import pandas as pd
+import torch
+from benchmark_utils import (
+    format_time,
+    measure_op,
+    print_benchmark_header,
+    print_result_row,
+    print_results_table_header,
+    save_benchmark_results,
+)
+from cupyx.scipy.sparse.linalg._solve import spsolve_triangular
 from tqdm import tqdm
 
 from torchsparsegradutils import sparse_triangular_solve
-from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
-
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
-from cupyx.scipy.sparse.linalg._solve import spsolve_triangular
-
+from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
 
 # from jax.lax.linalg import triangular_solve  # NOTE: jax doesn't have a sparse triangular solve
 # import torchsparsegradutils.jax as tsgujax
 
-from benchmark_utils import (
-    measure_op,
-    print_benchmark_header,
-    print_results_table_header,
-    print_result_row,
-    format_time,
-    save_benchmark_results,
-)
 
 REPEATS = 10
 WARMUP_RUNS = 1

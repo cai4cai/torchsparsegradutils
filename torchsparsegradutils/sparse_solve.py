@@ -2,6 +2,7 @@ import warnings
 from typing import Callable, Optional, cast
 
 import torch
+
 from torchsparsegradutils.utils import convert_coo_to_csr, sparse_block_diag, sparse_block_diag_split, stack_csr
 
 

@@ -1,6 +1,7 @@
 import warnings
-import torch
 from typing import Tuple
+
+import torch
 
 # Deprecation warning for the entire module
 warnings.warn(
@@ -12,14 +13,14 @@ warnings.warn(
 
 # Import everything from the new module for backward compatibility
 from .pairwise_encoder import (
-    _trim_nd,
-    _gen_coords_nd,
+    PairwiseEncoder,
     _gen_coords,
-    _gen_offsets_nd,
+    _gen_coords_nd,
     _gen_offsets,
+    _gen_offsets_nd,
+    _trim_nd,
     calc_pairwise_coo_indices_nd,
     calc_pariwise_coo_indices,
-    PairwiseEncoder,
 )
 
 

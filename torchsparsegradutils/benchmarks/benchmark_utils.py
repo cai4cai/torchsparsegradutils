@@ -8,12 +8,13 @@ including matrix loading, performance measurement, and data storage functions.
 import os
 import re
 import sys
-import time
 import tarfile
+import time
 import urllib.request
+
+import numpy as np
 import scipy.io
 import torch
-import numpy as np
 from tqdm import trange
 
 # Default configuration

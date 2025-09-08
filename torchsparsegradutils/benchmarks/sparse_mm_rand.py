@@ -6,28 +6,27 @@ This benchmark tests sparse matrix multiplication operations using randomly
 generated sparse matrices of various sizes and sparsity patterns.
 """
 
-import sys
 import os
+import sys
 
 # Add the parent directory to sys.path to allow importing torchsparsegradutils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import torch
-import pandas as pd
 import numpy as np
+import pandas as pd
+import torch
+from benchmark_utils import (
+    format_time,
+    measure_op,
+    print_benchmark_header,
+    print_result_row,
+    print_results_table_header,
+    save_benchmark_results,
+)
 from tqdm import tqdm
 
 from torchsparsegradutils import sparse_mm
 from torchsparsegradutils.utils import rand_sparse
-
-from benchmark_utils import (
-    measure_op,
-    print_benchmark_header,
-    print_results_table_header,
-    print_result_row,
-    format_time,
-    save_benchmark_results,
-)
 
 REPEATS = 100
 WARMUP_RUNS = 10

@@ -1,7 +1,9 @@
 import os
 import random
-import torch
+
 import pytest
+import torch
+
 from torchsparsegradutils.utils.linear_cg import linear_cg
 
 

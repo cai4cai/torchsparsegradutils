@@ -17,15 +17,16 @@ SparseMultivariateNormal distribution, focusing on:
     - LLt prec  - gradients calculated with LLt precision parameterization are too large, maybe avoid this
 """
 
-import torch
-import pytest
 import gc
-import warnings
 import math
-from typing import Tuple, Dict, Any
+import warnings
+from typing import Any, Dict, Tuple
 
-from torchsparsegradutils.encoders.pairwise_voxel_encoder import PairwiseEncoder, PairwiseVoxelEncoder
+import pytest
+import torch
+
 from torchsparsegradutils.distributions import SparseMultivariateNormal
+from torchsparsegradutils.encoders.pairwise_voxel_encoder import PairwiseEncoder, PairwiseVoxelEncoder
 
 # Skip entire test module if CUDA is not available
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="Integration tests require CUDA")

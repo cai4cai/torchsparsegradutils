@@ -5,8 +5,9 @@ Code modified from scipy.sparse.linalg.lsmr
 Copyright (C) 2010 David Fong and Michael Saunders
 """
 
-import torch
 from typing import Callable, Optional, Tuple, Union
+
+import torch
 
 
 def _sym_ortho(a, b, out):

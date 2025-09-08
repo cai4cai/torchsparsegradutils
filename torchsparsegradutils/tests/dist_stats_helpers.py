@@ -1,6 +1,5 @@
 import torch
-from scipy.stats import f as _scipy_f
-from scipy.stats import chi2
+from scipy.stats import chi2, f as _scipy_f
 
 __all__ = [
     "mean_hotelling_t2_test",

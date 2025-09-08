@@ -5,9 +5,10 @@ This module tests all code examples from the quickstart documentation to ensure 
 It is integrated with pytest and runs as part of the CI pipeline.
 """
 
+import warnings
+
 import pytest
 import torch
-import warnings
 
 # Suppress warnings for cleaner test output
 warnings.filterwarnings("ignore")
@@ -60,9 +61,8 @@ def test_batched_operations():
 
 def test_triangular_solve():
     """Test sparse triangular solve example from quickstart guide."""
-    from torchsparsegradutils import sparse_triangular_solve
+    from torchsparsegradutils import sparse_mm, sparse_triangular_solve
     from torchsparsegradutils.utils.random_sparse import rand_sparse_tri
-    from torchsparsegradutils import sparse_mm
 
     # Create a sparse lower triangular matrix
     L = rand_sparse_tri((3, 3), nnz=5, upper=False, layout=torch.sparse_csr)
@@ -84,8 +84,8 @@ def test_triangular_solve():
 def test_generic_solve():
     """Test generic sparse solve example from quickstart guide."""
     from torchsparsegradutils import sparse_generic_solve
-    from torchsparsegradutils.utils.random_sparse import make_spd_sparse
     from torchsparsegradutils.utils import minres
+    from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
     # Create a sparse symmetric positive definite matrix
     A_sparse, A_dense = make_spd_sparse(10, torch.sparse_coo, torch.float32, torch.int64, "cuda")
@@ -175,9 +175,10 @@ def test_jax_backend():
     """Test JAX backend example from quickstart guide."""
     pytest.importorskip("jax")
 
+    from jax.scipy.sparse.linalg import cg
+
     from torchsparsegradutils.jax import sparse_solve_j4t
     from torchsparsegradutils.utils.random_sparse import make_spd_sparse
-    from jax.scipy.sparse.linalg import cg
 
     # Create test matrices
     A_sparse, A_dense = make_spd_sparse(20, torch.sparse_csr, torch.float32, torch.int64, "cpu")

@@ -1,6 +1,7 @@
-import torch
-import pytest
 from unittest.mock import Mock
+
+import pytest
+import torch
 
 from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_coo_matrix,
@@ -13,8 +14,8 @@ from torchsparsegradutils.utils.utils import (
     convert_coo_to_csr,
     sparse_block_diag,
     sparse_block_diag_split,
-    stack_csr,
     sparse_eye,
+    stack_csr,
 )
 
 # Device fixture

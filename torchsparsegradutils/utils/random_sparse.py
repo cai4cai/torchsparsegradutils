@@ -11,10 +11,12 @@ Notes
     this constraint enables efficient storage of batched CSR indices.
 """
 
-from typing import Optional, Tuple, Union
-import torch
 import random
-from torchsparsegradutils.utils.utils import convert_coo_to_csr_indices_values, convert_coo_to_csr
+from typing import Optional, Tuple, Union
+
+import torch
+
+from torchsparsegradutils.utils.utils import convert_coo_to_csr, convert_coo_to_csr_indices_values
 
 __all__ = [
     "rand_sparse",

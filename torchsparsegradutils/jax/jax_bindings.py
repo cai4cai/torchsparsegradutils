@@ -28,15 +28,14 @@ References
              https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
 """
 
-from typing import Callable, Any
-from jax import Array as JAXArray
-import jax
-from jax import dlpack as jax_dlpack
-import jax.experimental.sparse  # COO / CSR
-
-import torch
-from torch.utils import dlpack as torch_dlpack  # kept for completeness
 import warnings
+from typing import Any, Callable
+
+import jax
+import jax.experimental.sparse  # COO / CSR
+import torch
+from jax import Array as JAXArray, dlpack as jax_dlpack
+from torch.utils import dlpack as torch_dlpack  # kept for completeness
 
 
 def j2t(x_jax: JAXArray) -> torch.Tensor:

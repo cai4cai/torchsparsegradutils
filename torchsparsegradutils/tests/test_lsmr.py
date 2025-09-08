@@ -19,8 +19,10 @@ Dept of MS&E, Stanford University.
 """
 
 import random
-import torch
+
 import pytest
+import torch
+
 from torchsparsegradutils.utils import lsmr
 
 # Device fixture

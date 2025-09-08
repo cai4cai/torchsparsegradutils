@@ -1,13 +1,14 @@
-import torch
+import itertools
+
 import pytest
+import torch
 
 from torchsparsegradutils import sparse_mm
+from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
 
 # NOTE: tests pass using torch.sparse.mm for unbatched sparse COO and CSR matrices
 # from torch.sparse import mm as sparse_mm
 
-from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
-import itertools
 
 # Identify Testing Parameters
 DEVICES = [torch.device("cpu")]

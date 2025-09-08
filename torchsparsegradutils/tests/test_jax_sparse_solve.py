@@ -1,5 +1,6 @@
 import pytest
 import torch
+
 import torchsparsegradutils.jax as tsgujax
 from torchsparsegradutils.utils import convert_coo_to_csr
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
@@ -8,7 +9,7 @@ pytest.importorskip("jax")
 if not tsgujax.have_jax:
     pytest.skip("JAX bindings unavailable, skipping jax tests", allow_module_level=True)
 else:
-    from jax.scipy.sparse.linalg import cg, bicgstab
+    from jax.scipy.sparse.linalg import bicgstab, cg
 
 # NOTE: JAX seems to use GPU memory preallocation, which causes:
 # 90% of GPU:0 to be preallocated by default even for CPU tests

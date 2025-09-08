@@ -1,14 +1,11 @@
-from typing import Callable, Optional, Any, Tuple
+from typing import Any, Callable, Optional, Tuple
 
-import torch
 import jax
 import jax.numpy as jnp
 import jax.scipy.sparse.linalg
+import torch
 
-from .jax_bindings import j2t as _j2t
-from .jax_bindings import t2j as _t2j
-from .jax_bindings import t2j_coo as _t2j_coo
-from .jax_bindings import t2j_csr as _t2j_csr
+from .jax_bindings import j2t as _j2t, t2j as _t2j, t2j_coo as _t2j_coo, t2j_csr as _t2j_csr
 
 
 def sparse_solve_j4t(

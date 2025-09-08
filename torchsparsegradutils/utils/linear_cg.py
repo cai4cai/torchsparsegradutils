@@ -1,9 +1,10 @@
 # MIT-licensed code imported from https://github.com/cornellius-gp/linear_operator
 # Minor modifications for torchsparsegradutils to remove dependencies
 
-from typing import Callable, NamedTuple, Optional, Union
-import torch
 import warnings
+from typing import Callable, NamedTuple, Optional, Union
+
+import torch
 
 
 class LinearCGSettings(NamedTuple):

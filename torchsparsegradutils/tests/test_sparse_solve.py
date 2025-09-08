@@ -1,10 +1,10 @@
 # for sparse generic solve
 
-import torch
 import pytest
+import torch
+
 from torchsparsegradutils.sparse_solve import sparse_generic_solve
-from torchsparsegradutils.utils import convert_coo_to_csr
-from torchsparsegradutils.utils import linear_cg, bicgstab, minres
+from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, linear_cg, minres
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
 DEVICES = [torch.device("cpu")]
@@ -234,8 +234,8 @@ def test_multiple_kwargs(device, value_dtype):
 @pytest.mark.flaky(reruns=5)
 def test_kwargs_with_different_solvers_same_matrix():
     """Test that different solvers with their respective kwargs produce similar results."""
-    from torchsparsegradutils.utils.linear_cg import LinearCGSettings
     from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
+    from torchsparsegradutils.utils.linear_cg import LinearCGSettings
     from torchsparsegradutils.utils.minres import MINRESSettings
 
     device = torch.device("cpu")

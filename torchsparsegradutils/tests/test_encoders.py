@@ -1,31 +1,29 @@
-import pytest
-import torch
 import json
-import yaml
 import os
 import warnings
-from pathlib import Path
 from ast import literal_eval
-
 from functools import reduce
 from operator import mul
+from pathlib import Path
+
+import pytest
+import torch
+import yaml
 
 # Import from the new pairwise_encoder module (recommended)
 from torchsparsegradutils.encoders.pairwise_encoder import (
-    _trim_nd,
+    PairwiseEncoder,
     _gen_coords,
     _gen_coords_nd,
     _gen_offsets,
     _gen_offsets_nd,
-    calc_pariwise_coo_indices,
+    _trim_nd,
     calc_pairwise_coo_indices_nd,
-    PairwiseEncoder,
+    calc_pariwise_coo_indices,
 )
 
 # Import from deprecated module for backward compatibility tests
-from torchsparsegradutils.encoders.pairwise_voxel_encoder import (
-    PairwiseVoxelEncoder,
-)
+from torchsparsegradutils.encoders.pairwise_voxel_encoder import PairwiseVoxelEncoder
 from torchsparsegradutils.utils.utils import _sort_coo_indices
 
 if torch.__version__ >= (2,):
@@ -587,10 +585,10 @@ def test_PVE_row_consistency(radius, volume_shape, upper, layout, batch_size, ch
 
 @pytest.mark.skip(reason="Unmark to create plots of the pairwise relationships")
 def test_pariwise_coo_indices_visually():
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Patch
     import matplotlib.colors as mcolors
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from matplotlib.patches import Patch
 
     volume_shape = (3, 3, 3, 3)
     diag = False
@@ -862,8 +860,12 @@ def test_PairwiseEncoder_supports_nd():
 
 def test_imports_from_init():
     # Test that we can import from the main module
-    from torchsparsegradutils.encoders import PairwiseEncoder, PairwiseVoxelEncoder
-    from torchsparsegradutils.encoders import calc_pairwise_coo_indices_nd, calc_pariwise_coo_indices
+    from torchsparsegradutils.encoders import (
+        PairwiseEncoder,
+        PairwiseVoxelEncoder,
+        calc_pairwise_coo_indices_nd,
+        calc_pariwise_coo_indices,
+    )
 
     # Test that these are the right classes
     assert PairwiseEncoder.__name__ == "PairwiseEncoder"

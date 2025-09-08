@@ -1,8 +1,9 @@
-import torch
 import pytest
+import torch
+
 import torchsparsegradutils.cupy as tsgucupy
-from torchsparsegradutils.utils import convert_coo_to_csr
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
+from torchsparsegradutils.utils import convert_coo_to_csr
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
 # devices

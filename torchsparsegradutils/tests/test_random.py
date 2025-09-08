@@ -1,13 +1,14 @@
-import torch
 import pytest
+import torch
+
 from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_coo_matrix,
     generate_random_sparse_csr_matrix,
     generate_random_sparse_strictly_triangular_coo_matrix,
     generate_random_sparse_strictly_triangular_csr_matrix,
-    rand_sparse_tri,
-    rand_sparse,
     make_spd_sparse,
+    rand_sparse,
+    rand_sparse_tri,
 )
 
 # enable sparse invariants checks if available

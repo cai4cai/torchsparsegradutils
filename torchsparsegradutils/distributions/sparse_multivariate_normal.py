@@ -6,8 +6,7 @@ from torch.distributions import constraints
 from torch.distributions.distribution import Distribution
 from torch.distributions.utils import _standard_normal
 
-from torchsparsegradutils import sparse_mm as spmm
-from torchsparsegradutils import sparse_triangular_solve as spts
+from torchsparsegradutils import sparse_mm as spmm, sparse_triangular_solve as spts
 
 # from .contraints import sparse_strictly_lower_triangular
 

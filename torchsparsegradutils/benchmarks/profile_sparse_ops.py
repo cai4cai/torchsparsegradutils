@@ -1,5 +1,6 @@
 import torch
-from torch.profiler import profile, record_function, ProfilerActivity
+from torch.profiler import ProfilerActivity, profile, record_function
+
 from torchsparsegradutils import sparse_mm
 from torchsparsegradutils.utils import rand_sparse
 

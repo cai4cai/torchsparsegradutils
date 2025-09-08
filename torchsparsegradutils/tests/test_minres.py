@@ -2,11 +2,13 @@
 # Minor modifications for torchsparsegradutils to remove dependencies
 
 import random
-import torch
+
 import pytest
+import torch
+
 import torchsparsegradutils
-from torchsparsegradutils.utils.minres import minres
 from torchsparsegradutils.utils import MINRESSettings
+from torchsparsegradutils.utils.minres import minres
 
 
 @pytest.fixture(autouse=True)

@@ -22,6 +22,7 @@ See Also
 """
 
 from typing import Any, Tuple
+
 import torchsparsegradutils.cupy as tsgucupy
 
 if tsgucupy.have_cupy:
@@ -29,13 +30,12 @@ if tsgucupy.have_cupy:
     import cupyx.scipy.sparse as csp
     import cupyx.scipy.sparse.linalg
 
+import warnings
+
 import numpy as np
 import scipy.sparse as nsp
 import scipy.sparse.linalg
-
 import torch
-
-import warnings
 
 
 def _get_array_modules(x: Any) -> Tuple[Any, Any]:

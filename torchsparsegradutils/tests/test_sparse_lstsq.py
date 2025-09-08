@@ -1,5 +1,5 @@
-import torch
 import pytest
+import torch
 
 from torchsparsegradutils import sparse_generic_lstsq
 

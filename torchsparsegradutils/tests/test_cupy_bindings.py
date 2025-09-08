@@ -1,11 +1,12 @@
-import torch
-import pytest
 import warnings
+
 import numpy as np
+import pytest
 import scipy.sparse as nsp
+import torch
+
 import torchsparsegradutils.cupy as tsgucupy
 from torchsparsegradutils.utils import rand_sparse
-
 
 # Device fixture
 DEVICES = [torch.device("cpu")]

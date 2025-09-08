@@ -1,5 +1,6 @@
-import torch
 import pytest
+import torch
+
 from torchsparsegradutils.utils import bicgstab
 
 # Device fixture

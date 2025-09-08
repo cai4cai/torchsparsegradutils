@@ -1,9 +1,10 @@
-import torch
-import pytest
 import sys
+
+import pytest
+import torch
+
 from torchsparsegradutils import sparse_triangular_solve
 from torchsparsegradutils.utils import rand_sparse_tri
-
 
 # Identify Testing Parameters
 DEVICES = [torch.device("cpu")]

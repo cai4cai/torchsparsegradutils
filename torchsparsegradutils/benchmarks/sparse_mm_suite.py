@@ -6,28 +6,27 @@ This benchmark tests sparse matrix multiplication operations using matrices from
 the SuiteSparse Matrix Collection.
 """
 
-import sys
 import os
+import sys
 
 # Add the parent directory to sys.path to allow importing torchsparsegradutils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import torch
-import pandas as pd
 import numpy as np
-from tqdm import tqdm
-
-from torchsparsegradutils import sparse_mm
-
+import pandas as pd
+import torch
 from benchmark_utils import (
+    format_time,
     load_mat_from_suitesparse_collection,
     measure_op,
     print_benchmark_header,
-    print_results_table_header,
     print_result_row,
-    format_time,
+    print_results_table_header,
     save_benchmark_results,
 )
+from tqdm import tqdm
+
+from torchsparsegradutils import sparse_mm
 
 REPEATS = 100
 WARMUP_RUNS = 10

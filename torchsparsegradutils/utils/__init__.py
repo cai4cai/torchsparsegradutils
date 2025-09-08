@@ -1,18 +1,15 @@
-from .linear_cg import linear_cg, LinearCGSettings
-from .minres import minres, MINRESSettings
-from .bicgstab import bicgstab, BICGSTABSettings
+from .bicgstab import BICGSTABSettings, bicgstab
+from .linear_cg import LinearCGSettings, linear_cg
 from .lsmr import lsmr
+from .minres import MINRESSettings, minres
+from .random_sparse import rand_sparse, rand_sparse_tri
 from .utils import (
-    convert_coo_to_csr_indices_values,
     convert_coo_to_csr,
+    convert_coo_to_csr_indices_values,
     sparse_block_diag,
     sparse_block_diag_split,
-    stack_csr,
     sparse_eye,
-)
-from .random_sparse import (
-    rand_sparse,
-    rand_sparse_tri,
+    stack_csr,
 )
 
 __all__ = [
