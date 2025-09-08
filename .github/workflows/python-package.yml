@@ -40,6 +40,9 @@ jobs:
       run: |
         # stop the build if there are Python syntax errors or undefined names
         flake8 . --count --show-source --statistics
+    - name: Check import sorting with isort
+      run: |
+        isort --check-only --diff .
     - name: Check code formatting with black
       run: |
         black --check .
