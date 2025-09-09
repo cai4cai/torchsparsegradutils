@@ -232,7 +232,6 @@ For JAX integration:
 Next Steps
 ----------
 
-- Read the :doc:`tutorials/index` for more detailed examples
 - Explore the :doc:`api/index` for complete function references
 - Check out the :doc:`mathematical_background` for theory
 - View :doc:`benchmarks` for performance comparisons

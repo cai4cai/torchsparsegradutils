@@ -59,7 +59,6 @@ Sparse Multivariate Normal Distributions
 
    installation
    quickstart
-   tutorials/index
    api/index
    mathematical_background
    benchmarks
