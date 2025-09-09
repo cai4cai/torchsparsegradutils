@@ -43,7 +43,7 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torc
 
     Notes
     -----
-    If DGL is available, this uses :func:`dgl.ops.segment_mm` (typically faster).
+    If DGL is available, this uses :func:`dgl.ops.segment_mm` [1c]_ (typically faster).
     Otherwise it falls back to a PyTorch nested-tensor implementation.
 
     See Also
@@ -52,7 +52,7 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torc
 
     References
     ----------
-    .. [1] DGL ``segment_mm`` documentation:
+    .. [1c] DGL ``segment_mm`` documentation:
            https://www.dgl.ai/dgl_docs/generated/dgl.ops.segment_mm.html
 
     Examples
@@ -137,7 +137,7 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Te
 
     Notes
     -----
-    If DGL is available, this uses :func:`dgl.ops.gather_mm`. Otherwise it uses
+    If DGL is available, this uses :func:`dgl.ops.gather_mm` [1b]_. Otherwise it uses
     a dependency-free PyTorch nested-tensor fallback.
 
     See Also
@@ -146,7 +146,7 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Te
 
     References
     ----------
-    .. [1] DGL ``gather_mm`` documentation:
+    .. [1b] DGL ``gather_mm`` documentation:
            https://www.dgl.ai/dgl_docs/generated/dgl.ops.gather_mm.html
 
     Examples

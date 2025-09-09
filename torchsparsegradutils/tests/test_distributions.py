@@ -6,8 +6,7 @@ from torchsparsegradutils import sparse_mm
 from torchsparsegradutils.distributions import SparseMultivariateNormal, SparseMultivariateNormalNative
 from torchsparsegradutils.distributions.sparse_multivariate_normal import _batch_sparse_mv
 from torchsparsegradutils.utils import rand_sparse_tri
-
-from .dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
+from torchsparsegradutils.utils.dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
 
 # Identify Testing Parameters
 DEVICES = [torch.device("cpu")]

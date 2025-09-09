@@ -11,14 +11,46 @@ def sparse_generic_lstsq(
 ) -> torch.Tensor:
     r"""Sparse linear least squares with sparse-aware gradients.
 
-    Solves the overdetermined problem :math:`\min_x \|A x - B\|_2^2` where ``A`` is
-    a sparse tall matrix and ``B`` is dense. Backprop preserves the sparsity
-    pattern by returning sparse gradients for ``A`` (only non-zero locations).
+     Solves the overdetermined problem :math:`\min_x \|\mathbf{A}x - \mathbf{B}\|_2^2` where
+     :math:`\mathbf{A} \in \mathbb{R}^{m\times n}` is sparse and tall (:math:`m>n`) and
+     :math:`\mathbf{B} \in \mathbb{R}^{m\times p}` is dense. Backprop preserves the
+     sparsity pattern by returning sparse gradients for :math:`\mathbf{A}` at its nonzero
+     entries only.
+
+     We assume :math:`\mathbf{A}` has full column rank so that :math:`\mathbf{A}^{+}\mathbf{A}=\mathbf{I}`
+     (with :math:`\,\cdot^{+}` the Moore–Penrose pseudoinverse). Let
+     :math:`\mathbf{x} \in \mathbb{R}^{n\times p}` denote the solution and let the upstream
+     gradient be :math:`\frac{\partial \mathcal{L}}{\partial \mathbf{x}} \in \mathbb{R}^{n\times p}` for some
+     scalar objective :math:`\mathcal{L}`.
+     Using Golub & Pereyra (1973) [1f]_, the gradients are:
+
+    Gradient with respect to B (dense):
+
+     .. math::
+         \frac{\partial \mathcal{L}}{\partial \mathbf{B}} \;=\; (\mathbf{A}^{\top})^{+} \, \frac{\partial \mathcal{L}}{\partial \mathbf{x}} \;\equiv\; \mathbf{G}_B.
+
+    Gradient with respect to A (sparse): The dense form is
+
+     .. math::
+         \frac{\partial \mathcal{L}}{\partial \mathbf{A}} \;=\; -\, \mathbf{G}_B\, \mathbf{x}^{\top}
+         \; -\; (\mathbf{A}\,\mathbf{x} - \mathbf{B})\; \big(\mathbf{A}^{+}\, \mathbf{G}_B\big)^{\top},
+
+     and we evaluate only the entries corresponding to nonzeros of :math:`\mathbf{A}` to keep
+     the gradient sparse. Equivalently, for a nonzero entry :math:`\mathbf{A}_{ij}` with residuals
+     :math:`\mathbf{r}=\mathbf{A}\,\mathbf{x}-\mathbf{B}` and :math:`\mathbf{H}=\mathbf{A}^{+}\,\mathbf{G}_B`,
+     the contribution is
+
+     .. math::
+         \bigg[\frac{\partial \mathcal{L}}{\partial \mathbf{A}}\bigg]_{ij}
+         \;=\; -\, (\mathbf{G}_B)_{i,:}\,\cdot\, \mathbf{x}_{j,:}
+         \; -\; \mathbf{r}_{i,:}\,\cdot\, \mathbf{H}_{j,:},
+
+     where dots denote row-wise inner products over the :math:`p` right-hand sides.
 
     Parameters
     ----------
     A : torch.Tensor
-        Sparse COO/CSR tensor of shape ``(m, n)`` (ideally ``m > n`` and full rank).
+        Sparse COO/CSR tensor of shape ``(m, n)`` with ``m>n`` and full column rank.
     B : torch.Tensor
         Dense RHS of shape ``(m,)`` or ``(m, k)`` with ``B.shape[0] == A.shape[0]``.
     lstsq : callable, optional
@@ -30,7 +62,7 @@ def sparse_generic_lstsq(
     Returns
     -------
     torch.Tensor
-        Solution ``X`` minimizing :math:`\|A X - B\|_2^2` with shape ``(n,)`` or ``(n,k)``.
+        Solution ``X`` minimizing :math:`\|AX - B\|_2^2` with shape ``(n,)`` or ``(n,k)``.
 
     Raises
     ------
@@ -41,23 +73,19 @@ def sparse_generic_lstsq(
     RuntimeError
         If a provided solver fails or returns unexpected shape.
 
-    Notes
-    -----
-    Assumes tall, full rank ``A`` so :math:`A^{+} A = I` (``A^{+}`` pseudoinverse).
-    Backward follows differentiation of the pseudoinverse (Golub & Pereyra, 1973)
-    and keeps gradients sparse.
-
     See Also
     --------
     SparseGenericLstsq : Autograd implementation.
 
     References
     ----------
-    .. [1] Golub & Pereyra (1973), *SIAM J. Numer. Anal.* 10(2):413–432.
+    .. [1f] Gene H. Golub and Victor Pereyra. The Differentiation of
+        Pseudo-Inverses and Nonlinear Least Squares Problems Whose Variables Separate.
+        SIAM Journal on Numerical Analysis, 10(2):413-432, 1973.
 
     Examples
     --------
-    Basic sparse least squares:
+    >>> # Simple sparse least squares example:
     >>> import torch
     >>> from torchsparsegradutils import sparse_generic_lstsq
     >>> indices = torch.tensor([[0, 1, 2, 3, 4, 1, 2, 3],
@@ -69,19 +97,19 @@ def sparse_generic_lstsq(
     >>> x.shape
     torch.Size([3])
 
-    Multiple RHS:
+    >>> # Multiple RHS:
     >>> Bm = torch.randn(5, 4)
     >>> Xm = sparse_generic_lstsq(A, Bm)
     >>> Xm.shape
     torch.Size([3, 4])
 
-    Custom solver:
+    >>> # Custom solver:
     >>> from torchsparsegradutils.utils import lsmr
     >>> def my_lstsq(A_, B_):
     ...     return lsmr(A_, B_, atol=1e-10, btol=1e-10)[0]
     >>> _ = sparse_generic_lstsq(A, B, lstsq=my_lstsq)
 
-    Gradients:
+    >>> # Gradients:
     >>> A.requires_grad_(True)  # doctest: +ELLIPSIS
     tensor(...)
     >>> B.requires_grad_(True)  # doctest: +ELLIPSIS
@@ -131,26 +159,10 @@ def sparse_generic_lstsq(
 class SparseGenericLstsq(torch.autograd.Function):
     r"""Autograd kernel for sparse least squares with sparse-aware gradients.
 
-    Forward: solve :math:`\min_x \|A x - B\|_2^2` with sparse ``A``.
-    Backward: sparse gradient for ``A`` (COO/CSR) + dense gradient for ``B``.
-
-    Notes
-    -----
-    Assumes tall, full-rank ``A`` so :math:`A^{+} A = I`. Using Golub & Pereyra (1973),
-    an informal dense gradient (not formed explicitly) is:
-
-    .. math::
-       \nabla_A = - (A^T)^{+} G \; x^T - (A x - B) \; (A^{+} (A^T)^{+} G)^T
-
-    Only values at existing non-zeros of ``A`` are computed.
-
     See Also
     --------
     sparse_generic_lstsq : User wrapper.
 
-    References
-    ----------
-    .. [1] Golub & Pereyra (1973), *SIAM J. Numer. Anal.* 10(2):413–432.
     """
 
     @staticmethod
@@ -251,7 +263,7 @@ class SparseGenericLstsq(torch.autograd.Function):
         if A.layout == torch.sparse_coo:
             gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
-            gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
+            gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
 
         if grad.ndim == 1:
             gradB = gradB.squeeze()

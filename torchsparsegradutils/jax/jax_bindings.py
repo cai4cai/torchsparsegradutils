@@ -16,9 +16,11 @@ Notes
 -----
 * Memory may be shared across frameworks; avoid unsafe in-place mutation
     visible to both.
-* Enable 64-bit support in JAX for ``torch.float64`` tensors:
+* Enable 64-bit support in JAX for ``torch.float64`` tensors [3]_:
     ``jax.config.update("jax_enable_x64", True)``.
 * COO tensors must be coalesced before conversion to JAX.
+* Conversions rely on DLPack [1]_ for interoperability.
+* For JAX sparse implementation details, see [2]_.
 
 References
 ----------

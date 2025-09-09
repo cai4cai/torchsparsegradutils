@@ -12,11 +12,13 @@ Sparse Multivariate Normal
    :members:
    :undoc-members:
    :show-inheritance:
+   :exclude-members: has_rsample, diagonal, scale_tril, precision_tril, loc
 
 .. autoclass:: SparseMultivariateNormalNative
    :members:
    :undoc-members:
    :show-inheritance:
+   :exclude-members: scale_tril, loc
 
 Constraints
 -----------

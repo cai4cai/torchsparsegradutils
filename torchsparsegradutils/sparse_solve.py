@@ -15,26 +15,45 @@ def sparse_triangular_solve(
 ) -> torch.Tensor:
     r"""Sparse triangular solve with memory-efficient sparse gradients.
 
-     Solves :math:`A x = B` (or :math:`A^\top x = B` if ``transpose=True``) for triangular
-     sparse :math:`A` (COO/CSR) and dense :math:`B`, preserving sparsity in the gradient
-     w.r.t. :math:`A`. Supports unbatched 2D and batched 3D inputs; COO inputs are
-     converted to CSR internally for the factor solve.
+     Solves the triangular system :math:`\mathbf{A}\,\mathbf{x} = \mathbf{B}` (or
+     :math:`\mathbf{A}^{\top}\,\mathbf{x} = \mathbf{B}` if ``transpose=True``), where
+     :math:`\mathbf{A} \in \mathbb{R}^{m\times m}` is sparse triangular (COO/CSR) and
+     :math:`\mathbf{B} \in \mathbb{R}^{m\times p}` is dense. Gradients preserve the sparsity
+     pattern of :math:`\mathbf{A}` by evaluating only at its nonzero entries. Supports
+     unbatched 2D and batched 3D inputs; COO inputs are converted to CSR internally for the
+     factor solve.
 
-     Given an upstream gradient :math:`G = \partial \mathcal{L} / \partial x`, the dense
-     gradients would be
+     Let the upstream gradient be :math:`\mathbf{G} = \frac{\partial \mathcal{L}}{\partial \mathbf{x}}`
+     for a scalar objective :math:`\mathcal{L}` and solution :math:`\mathbf{x}`. The dense-form
+     gradients are
+
+     Gradient with respect to B (dense):
 
      .. math::
-         \frac{\partial \mathcal{L}}{\partial B} = A^{-\top} G, \qquad
-         \frac{\partial \mathcal{L}}{\partial A} = -\left(A^{-\top} G\right) x^\top.
+         \frac{\partial \mathcal{L}}{\partial \mathbf{B}} \;=\; \mathbf{A}^{-\top} \, \mathbf{G},
 
-     Only entries corresponding to nonzeros of :math:`A` are evaluated for
-     :math:`\partial \mathcal{L}/\partial A`, keeping the gradient sparse.
+     and for ``transpose=True`` replace :math:`\mathbf{A}` by :math:`\mathbf{A}^{\top}` so that
+     :math:`\frac{\partial \mathcal{L}}{\partial \mathbf{B}} = \left(\mathbf{A}^{\top}\right)^{-\top} \mathbf{G} = \mathbf{A}^{-1} \mathbf{G}`.
+
+     Gradient with respect to A (sparse):
+
+     .. math::
+         \frac{\partial \mathcal{L}}{\partial \mathbf{A}} \;=\; -\big(\mathbf{A}^{-\top} \, \mathbf{G}\big)\, \mathbf{x}^{\top},
+
+     and only entries at the nonzeros of :math:`\mathbf{A}` are evaluated. Equivalently,
+     for a nonzero :math:`\mathbf{A}_{ij}` the contribution is
+
+     .. math::
+         \bigg[\frac{\partial \mathcal{L}}{\partial \mathbf{A}}\bigg]_{ij}
+         \;=\; -\, \big(\mathbf{A}^{-\top} \, \mathbf{G}\big)_{i,:} \,\cdot\, \mathbf{x}_{j,:},
+
+     where the dot denotes a row-wise inner product across the :math:`p` right-hand sides.
 
     Parameters
     ----------
     A : torch.Tensor, sparse COO or CSR, shape ``(m, m)`` or ``(b, m, m)``
-        Sparse triangular coefficient matrix. Must be square per batch.
-        All tensors must be on the same device.
+        Sparse triangular coefficient matrix. Must be square per batch. All tensors must
+        be on the same device.
     B : torch.Tensor, dense (strided), shape ``(m, p)`` or ``(b, m, p)``
         Right-hand side. ``B.shape[-2]`` must equal ``A.shape[-2]`` (``m``).
     upper : bool, optional
@@ -62,9 +81,9 @@ def sparse_triangular_solve(
 
     Notes
     -----
-    Backprop computes gradients only at nonzero entries of :math:`A`, keeping the
-    gradient sparse and reducing memory. COO inputs are converted to CSR since
-    PyTorch's triangular solver requires CSR.
+    Backprop computes gradients only at nonzero entries of :math:`\mathbf{A}`, keeping the
+    gradient sparse and reducing memory. COO inputs are converted to CSR since PyTorch's
+    triangular solver requires CSR [1e]_. For autograd implementation details, see [2e]_.
 
     See Also
     --------
@@ -73,9 +92,9 @@ def sparse_triangular_solve(
 
     References
     ----------
-    .. [1] PyTorch issue on sparse triangular solve:
+    .. [1e] PyTorch issue on sparse triangular solve:
            https://github.com/pytorch/pytorch/issues/87358
-    .. [2] PyTorch issue on autograd/triangular solve:
+    .. [2e] PyTorch issue on autograd/triangular solve:
            https://github.com/pytorch/pytorch/issues/88890
 
     Examples
@@ -131,20 +150,6 @@ def sparse_triangular_solve(
 class SparseTriangularSolve(torch.autograd.Function):
     r"""
     Autograd function for memory-efficient sparse triangular system solving.
-
-    This :class:`torch.autograd.Function` implements forward and backward passes for sparse
-    triangular linear system solving while preserving sparsity patterns in gradient
-    computation. It handles both upper and lower triangular matrices in COO/CSR formats
-    and supports batched operations.
-
-    Notes
-    -----
-    The implementation preserves sparsity during backpropagation by computing gradients
-    only for non-zero entries of the sparse matrix :math:`A`, rather than densifying the entire
-    gradient matrix. This significantly reduces memory usage for large sparse systems.
-
-    The forward pass uses PyTorch's native :func:`torch.triangular_solve` after converting COO
-    matrices to CSR format (required for triangular solve operations).
 
     See Also
     --------
@@ -258,18 +263,33 @@ def sparse_generic_solve(
 ) -> torch.Tensor:
     r"""Sparse linear solve with iterative methods and sparse-aware gradients.
 
-     Solves :math:`A x = B` (COO/CSR :math:`A`, dense :math:`B`) while preserving sparsity in
-     :math:`\partial \mathcal{L}/\partial A`. Supports single (vector) and multiple (matrix)
-     RHS. Works with non-differentiable iterative solvers via the implicit function theorem.
+     Solves :math:`\mathbf{A}\,\mathbf{x} = \mathbf{B}` with sparse :math:`\mathbf{A} \in \mathbb{R}^{n\times n}`
+     (COO/CSR) and dense :math:`\mathbf{B} \in \mathbb{R}^{n\times p}` using iterative methods, while
+     preserving sparsity in :math:`\frac{\partial \mathcal{L}}{\partial \mathbf{A}}`. Supports single
+     (vector) and multiple (matrix) right-hand sides and works with non-differentiable solvers via
+     the implicit function theorem.
 
-     For upstream gradient :math:`G = \partial \mathcal{L} / \partial x` the dense forms are
+     Let :math:`\mathbf{G} = \frac{\partial \mathcal{L}}{\partial \mathbf{x}}` be the upstream gradient and
+     :math:`\mathbf{x}` the solution. The dense-form gradients are
+
+     Gradient with respect to B (dense):
 
      .. math::
-         \frac{\partial \mathcal{L}}{\partial B} = A^{-\top} G, \qquad
-         \frac{\partial \mathcal{L}}{\partial A} = -\left(A^{-\top} G\right) x^\top.
+         \frac{\partial \mathcal{L}}{\partial \mathbf{B}} \;=\; \mathbf{A}^{-\top} \, \mathbf{G}
+         \;\equiv\; \mathbf{G}_B.
 
-     Only nonzero coordinates of :math:`A` are evaluated for the latter expression, yielding
-     a sparse gradient tensor with memory proportional to ``nnz(A)``.
+     Gradient with respect to A (sparse):
+
+     .. math::
+         \frac{\partial \mathcal{L}}{\partial \mathbf{A}} \;=\; -\, \mathbf{G}_B\, \mathbf{x}^{\top}.
+
+     We evaluate only the entries corresponding to nonzeros of :math:`\mathbf{A}`, yielding a
+     sparse gradient tensor with memory proportional to ``nnz(A)``. Equivalently, for a nonzero
+     :math:`\mathbf{A}_{ij}` the contribution is
+
+     .. math::
+         \bigg[\frac{\partial \mathcal{L}}{\partial \mathbf{A}}\bigg]_{ij}
+         \;=\; -\, (\mathbf{G}_B)_{i,:} \,\cdot\, \mathbf{x}_{j,:}.
 
     Parameters
     ----------
@@ -310,14 +330,7 @@ def sparse_generic_solve(
 
     Notes
     -----
-    Gradients follow the implicit function theorem. In simplified form,
-    for a perturbation of :math:`A` and :math:`B` one obtains
-
-    .. math::
-        \frac{\partial L}{\partial A}
-        \;\propto\; -\left(A^{-\top}\,\frac{\partial L}{\partial x}\right) x^\top,
-
-    and only entries at the nonzeros of :math:`A` are computed, keeping the gradient
+    Only entries at the nonzeros of :math:`\mathbf{A}` are computed, keeping the gradient
     sparse and memory-efficient.
 
     See Also
@@ -417,25 +430,6 @@ class SparseGenericSolve(torch.autograd.Function):
     r"""
     Autograd function for sparse linear system solving with iterative methods.
 
-    This :class:`torch.autograd.Function` implements forward and backward passes for sparse
-    linear system solving using custom iterative solvers. It preserves sparsity
-    patterns during gradient computation by using the implicit function theorem,
-    enabling efficient backpropagation through non-differentiable iterative solvers.
-
-    The backward pass computes gradients using
-
-    .. math::
-        \mathrm{gradA} = -\left(A^{-\top} \; \mathrm{grad\_output}\right) x^\top,
-
-    where only non-zero entries of :math:`A` receive gradient updates.
-
-    Notes
-    -----
-    The implementation supports both COO and CSR sparse formats and handles
-    vector and multi-RHS systems efficiently. Gradients are computed using
-    the implicit function theorem, which allows backpropagation through
-    iterative solvers without requiring differentiability of the solver itself.
-
     See Also
     --------
     sparse_generic_solve : User-facing function that calls this autograd function.
@@ -511,7 +505,7 @@ class SparseGenericSolve(torch.autograd.Function):
         if A.layout == torch.sparse_coo:
             gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
-            gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
+            gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
 
         # Squeeze gradB back to original shape if it was a vector
         if is_vector:

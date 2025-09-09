@@ -34,14 +34,17 @@ def sparse_solve_c4t(
     solve : {"cg", "cgs", "minres", "gmres", "spsolve"} or callable, optional
         Solver selector or a custom callable ``solve(A, b, **kwargs) -> x``.
         Built-ins:
-            - ``"cg"``        : Conjugate Gradient (SPD; vector RHS only)
-            - ``"cgs"``       : Conjugate Gradient Squared (vector RHS only)
-            - ``"minres"``    : MINRES (symmetric; vector RHS only)
-            - ``"gmres"``     : GMRES (vector RHS only)
-            - ``"spsolve"``   : Direct sparse solve (supports multi-RHS)
+
+        - ``"cg"`` : Conjugate Gradient (SPD; vector RHS only)
+        - ``"cgs"`` : Conjugate Gradient Squared (vector RHS only)
+        - ``"minres"`` : MINRES (symmetric; vector RHS only)
+        - ``"gmres"`` : GMRES (vector RHS only)
+        - ``"spsolve"`` : Direct sparse solve (supports multi-RHS)
+
         If ``None`` (default):
-            - vector RHS → direct ``spsolve``
-            - multi-RHS → factorize then solve (SciPy/CuPy factorized)
+
+        - vector RHS → direct ``spsolve``
+        - multi-RHS → factorize then solve (SciPy/CuPy factorized)
     transpose_solve : {"cg", "cgs", "minres", "gmres", "spsolve"} or callable, optional
         Solver for the transpose system :math:`A^T y = g` used in backprop.
         Defaults to using the same selection as ``solve`` (or factorized).

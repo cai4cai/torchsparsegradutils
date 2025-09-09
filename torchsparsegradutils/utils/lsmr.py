@@ -89,7 +89,7 @@ def lsmr(
 
     Notes
     -----
-    Uses Golub–Kahan bidiagonalization with specialized QR steps. For
+    Uses Golub–Kahan bidiagonalization [1f]_ with specialized QR steps. For
     overdetermined systems (``m > n``), returns the least-squares solution.
     For underdetermined systems (``m < n``) with ``damp = 0``, returns the
     minimum-norm least-squares solution.
@@ -101,7 +101,7 @@ def lsmr(
 
     References
     ----------
-    .. [1] Fong, D. C., & Saunders, M. (2011). LSMR: An iterative algorithm for
+    .. [1f] Fong, D. C., & Saunders, M. (2011). LSMR: An iterative algorithm for
            sparse least-squares problems. SIAM Journal on Scientific Computing,
            33(5), 2950-2971.
 

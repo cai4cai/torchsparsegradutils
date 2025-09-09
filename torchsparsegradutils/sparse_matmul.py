@@ -1,3 +1,5 @@
+from typing import cast
+
 import torch
 
 from torchsparsegradutils.utils import sparse_block_diag, sparse_block_diag_split, stack_csr
@@ -6,28 +8,42 @@ from torchsparsegradutils.utils import sparse_block_diag, sparse_block_diag_spli
 def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     r"""Sparse–dense matrix multiplication with memory-efficient gradients.
 
-     Computes :math:`C = A B` where :math:`A \in \mathbb{R}^{m\times n}` is sparse (COO/CSR)
-     and :math:`B \in \mathbb{R}^{n\times p}` is dense, preserving sparsity in the
-     gradient w.r.t. :math:`A`. Supports unbatched 2D ``(m,n) @ (n,p)`` and batched 3D
-     inputs by block–diagonalising the batch of sparse matrices and concatenating
-     dense matrices along the batch dimension.
+     Computes :math:`\mathbf{C} = \mathbf{A}\,\mathbf{B}` where
+     :math:`\mathbf{A} \in \mathbb{R}^{n\times m}` is sparse (COO/CSR),
+     :math:`\mathbf{B} \in \mathbb{R}^{m\times p}` is dense, and
+     :math:`\mathbf{C} \in \mathbb{R}^{n\times p}`. Gradients preserve the sparsity pattern
+     of :math:`\mathbf{A}`. Supports unbatched 2D ``(n,m) @ (m,p)`` and batched 3D inputs by
+     block–diagonalising the batch of sparse matrices and concatenating dense matrices along
+     the batch dimension.
 
-     Let an upstream gradient :math:`G = \partial \mathcal{L} / \partial C \in \mathbb{R}^{m\times p}`.
-     The dense gradients are:
+     Let the upstream gradient be :math:`\mathbf{G} = \frac{\partial \mathcal{L}}{\partial \mathbf{C}} \in \mathbb{R}^{n\times p}`.
+     The gradients are:
+
+     Gradient with respect to B (dense):
 
      .. math::
-         \frac{\partial \mathcal{L}}{\partial B} = A^{\top} G, \qquad
-         \left(\frac{\partial \mathcal{L}}{\partial A}\right)_{ij} = \sum_{k=1}^p G_{ik} B_{jk}.
+         \frac{\partial \mathcal{L}}{\partial \mathbf{B}} \;=\; \mathbf{A}^{\top} \, \mathbf{G}.
 
-     Instead of forming the full dense matrix :math:`\partial \mathcal{L} / \partial A`,
-     only entries corresponding to the nonzeros of :math:`A` are computed, yielding a
-     sparse gradient tensor and avoiding :math:`\mathcal{O}(mn)` memory.
+     Gradient with respect to A (sparse): For a dense view one has
+
+     .. math::
+         \frac{\partial \mathcal{L}}{\partial \mathbf{A}} \;=\; \mathbf{G}\, \mathbf{B}^{\top},
+
+     but we evaluate only the entries at the nonzeros of :math:`\mathbf{A}`. Equivalently,
+     for a nonzero entry :math:`\mathbf{A}_{ij}` the contribution is
+
+     .. math::
+         \bigg[\frac{\partial \mathcal{L}}{\partial \mathbf{A}}\bigg]_{ij}
+         \;=\; \sum_{k=1}^{p} \mathbf{G}_{ik} \, \mathbf{B}_{jk}
+         \;=\; \mathbf{G}_{i,:} \,\cdot\, \mathbf{B}_{j,:},
+
+     where the dot denotes a row-wise inner product across the :math:`p` right-hand sides.
 
     Parameters
     ----------
     A : torch.Tensor, sparse COO or CSR, shape ``(n, m)`` or ``(b, n, m)``
-        Left operand. For batched input, all batch items must share ``(n, m)``.
-        All tensors must be on the same device.
+        Left operand. For batched input, all batch items must share ``(n, m)``. All tensors
+        must be on the same device.
     B : torch.Tensor, dense (strided), shape ``(m, p)`` or ``(b, m, p)``
         Right operand. Must have the same number of dimensions as ``A`` and
         matching batch size / inner dimension ``m``.
@@ -48,7 +64,7 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
 
     Notes
     -----
-    This avoids dense gradients for sparse matrices (a known issue with
+    This avoids dense gradients for sparse matrices [1a]_ (a known issue with
     :func:`torch.sparse.mm` backprop), computing only gradients at the nonzero
     entries of :math:`A` to reduce memory use.
 
@@ -59,7 +75,7 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
 
     References
     ----------
-    .. [1] PyTorch issue on dense gradients for sparse ops:
+    .. [1a] PyTorch issue on dense gradients for sparse ops:
            https://github.com/pytorch/pytorch/issues/41128
 
     Examples
@@ -110,34 +126,11 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     if A.size(-1) != B.size(-2):
         raise ValueError(f"Incompatible inner dimensions: A[..., {A.size(-1)}] vs B[..., {B.size(-2)}]")
 
-    return SparseMatMul.apply(A, B)
+    return cast(torch.Tensor, SparseMatMul.apply(A, B))
 
 
 class SparseMatMul(torch.autograd.Function):
     r"""Autograd kernel for memory-efficient sparse matrix multiplication.
-
-     Forward computes :math:`C = A B`. Backward receives an upstream
-     :math:`G = \partial \mathcal{L} / \partial C` and produces
-
-     .. math::
-         \frac{\partial \mathcal{L}}{\partial B} = A^{\top} G, \qquad
-         \left(\frac{\partial \mathcal{L}}{\partial A}\right)_{ij} = \sum_{k} G_{ik} B_{jk}.
-
-     Only coordinates ``(i,j)`` where ``A[i,j]`` is stored are evaluated, preserving
-     sparsity in :math:`\partial \mathcal{L} / \partial A` for COO and CSR inputs. Batched
-     sparse matrices are handled by forming a block–diagonal super-matrix during the
-     forward and splitting the resulting sparse gradient in the backward.
-
-    Notes
-    -----
-    This implementation provides a memory-efficient alternative to PyTorch's
-    native :func:`torch.sparse.mm` for gradient computation, addressing the issue where
-    gradients with respect to sparse matrices become dense, leading to excessive
-    memory usage (see `PyTorch issue <https://github.com/pytorch/pytorch/issues/41128>`_).
-
-    The backward pass computes gradients only for the non-zero entries of the
-    sparse matrix, maintaining the original sparsity pattern and reducing
-    memory footprint during backpropagation.
 
     See Also
     --------
@@ -215,7 +208,7 @@ class SparseMatMul(torch.autograd.Function):
             if A.layout == torch.sparse_coo:
                 gradA = torch.sparse_coo_tensor(A._indices(), gradA, A.shape)
             elif A.layout == torch.sparse_csr:
-                gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
+                gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
 
             if ctx.batch_size is not None:
                 shapes = ctx.A_shape[0] * (ctx.A_shape[-2:],)

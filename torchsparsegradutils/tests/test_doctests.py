@@ -20,6 +20,7 @@ DOCTEST_MODULES = [
     "torchsparsegradutils.utils.minres",
     "torchsparsegradutils.utils.random_sparse",
     "torchsparsegradutils.utils.utils",
+    "torchsparsegradutils.utils.dist_stats_helpers",
     "torchsparsegradutils.encoders.pairwise_encoder",
     "torchsparsegradutils.distributions.sparse_multivariate_normal",
     "torchsparsegradutils.jax.jax_bindings",

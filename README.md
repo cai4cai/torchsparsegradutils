@@ -339,6 +339,45 @@ a_gathered = torch.randn(5, 10, requires_grad=True)
 result = gather_mm(a_gathered, b, indices)
 ```
 
+### Statistical Distribution Validation
+
+```python
+import torch
+from torch.distributions import MultivariateNormal
+from torchsparsegradutils.utils import mean_hotelling_t2_test, cov_nagao_test
+
+# Generate sample data from known distribution
+torch.manual_seed(42)
+true_mean = torch.tensor([[0.0, 0.0]])
+true_cov = torch.eye(2).unsqueeze(0)
+n = 1000
+
+# Generate samples and compute statistics
+dist = MultivariateNormal(true_mean.squeeze(0), true_cov.squeeze(0))
+samples = dist.sample((n,)).unsqueeze(1)
+sample_mean = samples.mean(0)
+sample_cov = torch.cov(samples.squeeze(1).T).unsqueeze(0)
+
+# Test if sample mean is consistent with hypothesized mean (should pass)
+result, t2_stat, threshold = mean_hotelling_t2_test(
+    sample_mean, true_mean, sample_cov, n, confidence_level=0.95
+)
+print(f"Mean test passed: {result.item()}")  # True
+
+# Test if sample covariance is consistent with hypothesized covariance (should pass)
+result, t_n_stat, threshold = cov_nagao_test(
+    sample_cov, true_cov, n, confidence_level=0.95
+)
+print(f"Covariance test passed: {result.item()}")  # True
+
+# Test against wrong parameters (should fail)
+wrong_mean = true_mean + 1.0  # Significantly different mean
+result, _, _ = mean_hotelling_t2_test(
+    sample_mean, wrong_mean, sample_cov, n, confidence_level=0.95
+)
+print(f"Wrong mean test passed: {result.item()}")  # False
+```
+
 ## 🧪 Testing and Benchmarks
 
 ### Running Tests
@@ -403,6 +442,18 @@ Results are automatically saved to `torchsparsegradutils/benchmarks/results/` as
 **Sparse Format Conversion**
 - **`convert_coo_to_csr_indices_values(coo_indices, num_rows, values=None)`**: Convert COO indices and values to CSR format, with support for batch dimension
 - **`convert_coo_to_csr(sparse_coo_tensor)`**: Convert COO sparse tensor to CSR format with batch support
+
+#### `torchsparsegradutils.utils.dist_stats_helpers`
+
+**Statistical Distribution Validation**
+- **`mean_hotelling_t2_test(sample_mean, true_mean, sample_cov, n, confidence_level=0.95)`**: One-sample Hotelling T² test for multivariate mean equality using confidence regions
+  - Tests whether hypothesized mean vector lies within confidence region around sample mean
+  - Uses F-distribution for threshold calculation with proper degrees of freedom
+  - Higher confidence levels create larger (more permissive) acceptance regions
+- **`cov_nagao_test(emp_cov, ref_cov, n, confidence_level=0.95)`**: Nagao's test for covariance matrix equality using confidence regions
+  - Tests whether hypothesized covariance matrix is consistent with empirical covariance
+  - Uses χ² distribution with appropriate degrees of freedom
+  - Standardizes covariance matrices for improved numerical stability
 
 
 ## 🤝 Contributing

@@ -43,3 +43,11 @@ Random Sparse Tensor Generation
    :members:
    :undoc-members:
    :show-inheritance:
+
+Statistical Distribution Helpers
+---------------------------------
+
+.. automodule:: torchsparsegradutils.utils.dist_stats_helpers
+   :members:
+   :undoc-members:
+   :show-inheritance:

@@ -1,4 +1,5 @@
 from .bicgstab import BICGSTABSettings, bicgstab
+from .dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
 from .linear_cg import LinearCGSettings, linear_cg
 from .lsmr import lsmr
 from .minres import MINRESSettings, minres
@@ -28,4 +29,6 @@ __all__ = [
     "sparse_block_diag_split",
     "stack_csr",
     "sparse_eye",
+    "mean_hotelling_t2_test",
+    "cov_nagao_test",
 ]

@@ -58,18 +58,18 @@ def bicgstab(
 
     Notes
     -----
-    Per iteration (unpreconditioned) BiCGSTAB uses ~2 matvecs, several dot products,
+    Per iteration (unpreconditioned) BiCGSTAB [1a]_ uses ~2 matvecs, several dot products,
     and vector updates. The algorithm can experience breakdown when certain inner
     products or denominators vanish (e.g., :math:`\langle r_0, v \rangle = 0` or :math:`\langle t, t \rangle = 0`).
-    This implementation follows a standard variant and solves multiple RHS by
+    This implementation follows a standard variant [2a]_ and solves multiple RHS by
     looping over columns (no shared Krylov subspace).
 
     References
     ----------
-    .. [1] Van der Vorst, H. A. (1992). *Bi-CGSTAB: A fast and smoothly converging
+    .. [1a] Van der Vorst, H. A. (1992). *Bi-CGSTAB: A fast and smoothly converging
            variant of Bi-CG for the solution of nonsymmetric linear systems*.
            SIAM J. Sci. Stat. Comput., 13(2), 631–644.
-    .. [2] Kelley, C. T. (1995). *Iterative Methods for Linear and Nonlinear Equations*.
+    .. [2a] Kelley, C. T. (1995). *Iterative Methods for Linear and Nonlinear Equations*.
            SIAM.
 
     Examples
@@ -83,6 +83,7 @@ def bicgstab(
     torch.Size([2])
 
     Multiple right-hand sides:
+
     >>> B = torch.randn(2, 3)
     >>> X = bicgstab(A.matmul, B)
     >>> X.shape
@@ -102,7 +103,6 @@ def bicgstab(
     >>> eps = 1e-12
     >>> safe_diag = torch.where(diagA.abs() < eps, torch.full_like(diagA, eps), diagA)
     >>> inv_diag = 1.0 / safe_diag
-
     >>> # Supply as an operator (apply M^{-1} r = inv_diag * r elementwise)
     >>> settings_precond = BICGSTABSettings(
     ...     precon=lambda r: inv_diag * r  # r has same shape as b

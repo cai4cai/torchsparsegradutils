@@ -170,6 +170,9 @@ def linear_cg(
     ``n_tridiag > 0``, Lanczos tridiagonalization is accumulated alongside CG for
     spectral / log-determinant estimates.
 
+    This implementation is based on MIT-licensed code from the linear_operator
+    library [1e]_.
+
     Examples
     --------
     Basic CG solve::
@@ -204,6 +207,10 @@ def linear_cg(
         >>> values = torch.tensor([4.0, -1.0, -1.0, 4.0, 2.0])
         >>> A_sp = torch.sparse_coo_tensor(indices, values, (3, 3))
         >>> x = linear_cg(lambda v: A_sp @ v, torch.randn(3))
+
+    References
+    ----------
+    .. [1e] linear_operator library. https://github.com/cornellius-gp/linear_operator
     """
     # Unsqueeze, if necessary
     is_vector = rhs.ndimension() == 1

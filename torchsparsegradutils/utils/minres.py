@@ -87,7 +87,7 @@ def minres(
 
     Notes
     -----
-    - MINRES is appropriate for symmetric/Hermitian **indefinite** systems; it
+    - MINRES [1g]_ is appropriate for symmetric/Hermitian **indefinite** systems; it
       minimizes the Euclidean residual norm rather than the A-norm (as in CG).
     - For symmetric positive definite systems, Conjugate Gradient (CG) typically
       converges faster; prefer CG unless indefiniteness/robustness suggests MINRES.
@@ -103,7 +103,7 @@ def minres(
 
     References
     ----------
-    .. [1] Paige, C. C., & Saunders, M. A. (1975). Solution of sparse indefinite
+    .. [1g] Paige, C. C., & Saunders, M. A. (1975). Solution of sparse indefinite
            systems of linear equations. *SIAM Journal on Numerical Analysis*, 12(4), 617–629.
 
     Examples
