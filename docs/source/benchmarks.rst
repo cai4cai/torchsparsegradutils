@@ -6,296 +6,458 @@ This section presents performance benchmarks and comparisons for torchsparsegrad
 Benchmark Overview
 ------------------
 
-Our benchmarking suite evaluates:
+Our benchmarking suite evaluates the performance of sparse linear algebra operations across different:
 
-- **Performance vs. PyTorch native operations**
-- **Scalability with matrix size and sparsity**
-- **Memory efficiency**
-- **GPU vs. CPU performance**
-- **Different backend comparisons (CuPy, JAX)**
+- **Matrix sizes and sparsity patterns**
+- **Data types (float32/float64, int32/int64 indices)**
+- **Sparse layouts (COO/CSR)**
+- **Backend implementations (PyTorch, CuPy/SciPy, JAX)**
+- **Forward and backward pass performance**
+- **Memory efficiency during gradient computation**
+
+All benchmarks are performed using an NVidia RTX 4090 with CUDA 12.8 and PyTorch 2.8.0
+
+For benchmarking we use a real-world sparse matrices from the SuiteSparse Matrix Collection.
+Specifically the `Rothberg/cfd2 <https://sparse.tamu.edu/Rothberg/cfd2>`_ matrix with shape 123,440 x 123,440 and 3,085,406 non-zeros elements.
 
 Sparse Matrix Multiplication
 ----------------------------
 
-Memory Efficiency
-~~~~~~~~~~~~~~~~~
+This benchmark evaluates sparse × dense matrix multiplication with gradient computation on a large real-world matrix from the SuiteSparse collection.
 
-The key advantage of :func:`~torchsparsegradutils.sparse_mm` is gradient memory efficiency:
+**Algorithms Compared:**
 
-.. list-table:: Memory Usage Comparison
+.. list-table::
    :header-rows: 1
-   :widths: 30 25 25 20
+   :widths: 28 47 15
 
-   * - Matrix Size
-     - PyTorch Native
-     - torchsparsegradutils
-     - Memory Savings
-   * - 1000×1000 (1% sparse)
-     - 8.0 MB
-     - 0.16 MB
-     - 50×
-   * - 5000×5000 (0.1% sparse)
-     - 200 MB
-     - 0.8 MB
-     - 250×
-   * - 10000×10000 (0.01% sparse)
-     - 800 MB
-     - 1.6 MB
-     - 500×
+   * - **Code Call**
+     - **Description**
+     - **Plot Alias**
+   * - ``torch.sparse.mm(A, B)``
+     - PyTorch built‑in sparse (COO/CSR) @ dense
+     - torch spmm
+   * - ``tsgu.sparse_mm(A, B)``
+     - torchsparsegradutils sparse @ dense multiplication with full sparse gradient support (COO + CSR)
+     - tsgu spmm
+   * - ``(A.to_dense() @ B)``
+     - Dense PyTorch baseline formed by densifying the sparse matrix prior to multiplication
+     - dense mm
 
-Linear Solver Performance
--------------------------
+**Methodology:**
 
-Convergence Rates
-~~~~~~~~~~~~~~~~~
+We multiply the SuiteSparse matrix ``Rothberg/cfd2`` (shape 123,440 × 123,440, nnz 3,085,406; sparsity ≈ 99.98%) with a dense matrix ``B`` of shape (123,440 × 128) for each combination of:
 
-Comparison of iterative solver convergence for different problem types:
+- Index dtype: ``int32`` / ``int64``
+- Value dtype: ``float32`` / ``float64``
+- Sparse layout: ``torch.sparse_coo`` / ``torch.sparse_csr``
 
-**Symmetric Positive Definite (2D Laplacian)**
+Each algorithm run reports forward and backward wall‑clock time (µs) and peak CUDA memory (MB) using ``torch.cuda.max_memory_allocated``. We perform 100 measurement repetitions (``REPEATS=100``) after 10 warmup passes (``WARMUP_RUNS=10``). Per repetition a fresh cloned tensor (with gradients) is used to avoid accumulation side‑effects. Interquartile range (IQR) filtering removes high / low outliers (±1.5×IQR) before computing mean and standard deviation (error bars). Dense variants and COO backward for ``torch.sparse.mm`` frequently raise CUDA OOM; attempted allocation sizes (≈58 GB for float32, ≈116 GB for float64) are captured and visualized as failed points.
 
-.. code-block:: none
+**Key Testing Features:**
 
-   Matrix Size: 10000×10000, nnz: ~50000
+- Real CFD matrix stresses memory hierarchy rather than synthetic uniform sparsity.
+- Explicit gradient pass included (``out.sum().backward()``) to expose backward memory amplification.
+- OOM handling recorded to highlight infeasible configurations (dense & some COO backward paths).
+- Index dtype sensitivity measured (``int32`` marginally lowers memory versus ``int64`` for COO despite internal ``int64`` index returns).
+- Unified timing & memory harness shared across all benchmark suites for comparability.
+- Layout conversion path (CSR→COO internally for some gradients) explains backward memory differences.
 
-   Method     | Iterations | Time (s) | Final Residual
-   -----------+------------+----------+---------------
-   CG         |     45     |   0.12   |    1e-8
-   BICGSTAB   |     52     |   0.15   |    1e-8
-   MINRES     |     48     |   0.14   |    1e-8
-   LSMR       |     61     |   0.18   |    1e-8
+**Results:**
 
-**Non-symmetric (Convection-Diffusion)**
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_mm_suite_performance_int32_float32_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Matrix Multiplication Performance (int32/float32, COO format)
 
-.. code-block:: none
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_mm_suite_performance_int32_float32_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Matrix Multiplication Performance (int32/float32, CSR format)
 
-   Matrix Size: 10000×10000, nnz: ~50000
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_mm_suite_performance_int32_float64_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Matrix Multiplication Performance (int32/float64, COO format)
 
-   Method     | Iterations | Time (s) | Final Residual
-   -----------+------------+----------+---------------
-   CG         |    N/A     |   N/A    |      N/A
-   BICGSTAB   |     78     |   0.22   |    1e-8
-   MINRES     |    120     |   0.34   |    1e-8
-   LSMR       |     95     |   0.28   |    1e-8
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_mm_suite_performance_int32_float64_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Matrix Multiplication Performance (int32/float64, CSR format)
 
-Backend Comparisons
--------------------
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_mm_suite_performance_int64_float32_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Matrix Multiplication Performance (int64/float32, COO format)
 
-GPU Performance
-~~~~~~~~~~~~~~~
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_mm_suite_performance_int64_float32_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Matrix Multiplication Performance (int64/float32, CSR format)
 
-Performance comparison across different GPU backends:
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_mm_suite_performance_int64_float64_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Matrix Multiplication Performance (int64/float64, COO format)
 
-.. list-table:: Solver Performance (seconds)
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_mm_suite_performance_int64_float64_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Matrix Multiplication Performance (int64/float64, CSR format)
+
+**Conclusions:**
+
+1. Dense baseline (``dense mm``) cannot materialize the 123,440² matrix: attempted allocations ≈58 GB (float32) / ≈116 GB (float64) exceed RTX 4090 memory → forward OOM; no backward possible.
+2. ``torch spmm`` with COO layout densifies during backward → identical OOM pattern; CSR backward succeeds and is generally more memory & time efficient for that layout.
+3. ``tsgu spmm`` is the only method providing successful backward for COO across all dtype combinations.
+4. Using ``int32`` indices yields a consistent small memory reduction versus ``int64`` for COO (e.g. ~493 MB vs ~516 MB forward, float32) despite PyTorch returning indices as ``int64``.
+5. For CSR backward, ``torch spmm`` outperforms ``tsgu spmm`` in both time and peak memory; ``tsgu spmm`` incurs extra memory due to internal CSR→COO conversion for gradient computation.
+6. ``tsgu spmm`` supports CSR gradients contrary to current public PyTorch documentation statements.
+7. Float64 substantially increases runtime variance and lowers throughput, especially in backward, across all surviving methods.
+
+**Recommendations:**
+
+- Use ``tsgu.sparse_mm`` for all COO cases requiring gradients.
+- Prefer ``torch.sparse.mm`` for CSR when minimizing backward memory / time and OOM is not an issue.
+- Avoid dense fallback for matrices of this scale; prefer sparse pipelines early.
+
+Batched Sparse Matrix Multiplication
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This benchmark compares batching strategies for performing many independent sparse × dense products. Inputs are randomly generated (not SuiteSparse) to emphasize structural batching overheads.
+
+**Algorithms Compared:**
+
+.. list-table::
    :header-rows: 1
-   :widths: 20 20 20 20 20
+   :widths: 28 47 15
 
-   * - Problem Size
-     - PyTorch (GPU)
+   * - **Code Call**
+     - **Description**
+     - **Plot Alias**
+   * - ``torch.stack([torch.sparse.mm(A[i], B[i]) for i in range(batch)])``
+     - List comprehension executing per-item PyTorch sparse @ dense
+     - torch list
+   * - ``torch.stack([tsgu.sparse_mm(A[i], B[i]) for i in range(batch)])``
+     - List comprehension executing per-item tsgu sparse @ dense implementation
+     - tsgu list
+   * - ``tsgu.sparse_mm(A_batch, B_batch)``
+     - Batched variant operating on a block-diagonal sparse assembly under the hood (``sparse_block_diag`` / split helpers)
+     - tsgu batched
+
+**Methodology:**
+
+Problem sizes (only the "small" configuration currently enabled):
+
+- ``N = 1024``, ``M = 64`` (dense RHS width)
+- ``nnz = 4096`` per sparse matrix (≈0.39% density)
+- Batch sizes: 4 and 128 (plots below show batch = 128; batch = 4 results are still stored in the CSV output)
+
+For each combination of index dtype (``int32``/``int64``), value dtype (``float32``/``float64``) and layout (COO/CSR) we generate either:
+
+- A list of ``batch`` independently sampled sparse matrices & dense RHS blocks (for list strategies), or
+- A single batched sparse tensor of shape (batch, N, N) plus a batched dense RHS (for the batched variant).
+
+Each algorithm variant is measured with 100 repeats after 10 warmups using the dedicated ``measure_batched_op`` harness which:
+
+- Clones inputs per repetition (ensuring gradient graph isolation)
+- Records peak CUDA memory and forward/backward time separately
+- Applies IQR outlier filtering before aggregating mean/std
+- Handles list vs batched tensor semantics uniformly
+
+**Key Testing Features:**
+
+- Direct comparison of per‑item execution vs block‑diagonal batching.
+- Memory trade‑off: batched construction may allocate a larger combined structure vs incremental list execution.
+- Gradient inclusion exposes any additional bookkeeping cost in backward for batched mode.
+- Layout + dtype interaction tested across 8 (index,value) × 2 layout combinations.
+- Random sparsity prevents exploitation of specific matrix ordering.
+
+**Results:**
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/batched_sparse_mm_performance_int32_float32_coo.png
+   :width: 600px
+   :align: center
+   :alt: Batched Sparse Matrix Multiplication Performance (int32/float32, COO format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/batched_sparse_mm_performance_int32_float32_csr.png
+   :width: 600px
+   :align: center
+   :alt: Batched Sparse Matrix Multiplication Performance (int32/float32, CSR format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/batched_sparse_mm_performance_int32_float64_coo.png
+   :width: 600px
+   :align: center
+   :alt: Batched Sparse Matrix Multiplication Performance (int32/float64, COO format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/batched_sparse_mm_performance_int32_float64_csr.png
+   :width: 600px
+   :align: center
+   :alt: Batched Sparse Matrix Multiplication Performance (int32/float64, CSR format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/batched_sparse_mm_performance_int64_float32_coo.png
+   :width: 600px
+   :align: center
+   :alt: Batched Sparse Matrix Multiplication Performance (int64/float32, COO format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/batched_sparse_mm_performance_int64_float32_csr.png
+   :width: 600px
+   :align: center
+   :alt: Batched Sparse Matrix Multiplication Performance (int64/float32, CSR format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/batched_sparse_mm_performance_int64_float64_coo.png
+   :width: 600px
+   :align: center
+   :alt: Batched Sparse Matrix Multiplication Performance (int64/float64, COO format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/batched_sparse_mm_performance_int64_float64_csr.png
+   :width: 600px
+   :align: center
+   :alt: Batched Sparse Matrix Multiplication Performance (int64/float64, CSR format)
+
+**Conclusions:**
+
+1. ``tsgu batched`` consistently incurs higher peak memory than list strategies because the block‑diagonal assembly materializes all batch blocks simultaneously.
+2. A measurable forward/backward speed advantage for ``tsgu batched`` appears primarily for CSR layouts (better internal indexing locality) at large batch size (128).
+3. For COO, list strategies (``torch list`` / ``tsgu list``) are typically more memory efficient and competitive in time, making batching less attractive.
+4. ``tsgu list`` benefits from the same memory‑efficient kernel as single‑matrix ``tsgu spmm`` while avoiding block concatenation overheads.
+5. Float64 again amplifies runtime variance; batching does not mitigate numeric cost.
+
+**Recommendations:**
+
+- Use ``tsgu batched`` only for large batches with CSR when throughput dominates memory concerns.
+- Prefer ``tsgu list`` for COO or when peak memory is constrained.
+- If gradients are needed and memory is tight, evaluate list strategies first; batching is not universally superior.
+
+Sparse Linear System Solvers
+-----------------------------
+
+This benchmark evaluates iterative and direct sparse linear system solvers with gradient computation across PyTorch (dense baseline), torchsparsegradutils native solvers, CuPy/SciPy wrappers, and JAX wrappers.
+
+**Algorithms Compared:**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 45 15
+
+   * - **Code Call**
+     - **Description**
+     - **Plot Alias**
+   * - ``torch.linalg.solve(A.to_dense(), B)``
+     - Dense PyTorch reference (LU) – baseline memory/time; expected OOM at this scale
+     - Dense
+   * - ``tsgu.sparse_generic_solve(A, B, solve=linear_cg)``
+     - Conjugate Gradient (tsgu) with sparse gradient support
+     - tsgu CG
+   * - ``tsgu.sparse_generic_solve(A, B, solve=bicgstab)``
+     - BiCGSTAB (tsgu) with symmetric forward/backward wrapper
+     - tsgu BiCGSTAB
+   * - ``tsgu.sparse_generic_solve(A, B, solve=minres)``
+     - MINRES (tsgu) implementation for symmetric systems
+     - tsgu MINRES
+   * - ``tsgucupy.sparse_solve_c4t(A, B, solve="cg")``
+     - CuPy CG via torchsparsegradutils conversion (GPU accelerated)
+     - CuPy CG
+   * - ``tsgucupy.sparse_solve_c4t(A, B, solve="cgs")``
+     - CuPy CGS (CG squared) wrapper
+     - CuPy CGS
+   * - ``tsgucupy.sparse_solve_c4t(A, B, solve="minres")``
+     - CuPy MINRES wrapper
+     - CuPy MINRES
+   * - ``tsgucupy.sparse_solve_c4t(A, B, solve="gmres")``
+     - CuPy GMRES wrapper (restarted algorithm)
+     - CuPy GMRES
+   * - ``tsgucupy.sparse_solve_c4t(A, B, solve="spsolve")``
+     - CuPy direct sparse LU (no tolerance parameters)
+     - CuPy spsolve
+   * - ``tsgujax.sparse_solve_j4t(A, B, solve=jax.scipy.sparse.linalg.cg)``
+     - JAX CG solver (wrapped, consistent tolerances)
+     - JAX CG
+   * - ``tsgujax.sparse_solve_j4t(A, B, solve=jax.scipy.sparse.linalg.bicgstab)``
+     - JAX BiCGSTAB solver (wrapped, consistent tolerances)
+     - JAX BiCGSTAB
+
+All iterative solvers use shared convergence settings (relative tol 1e-5, absolute tol 1e-8, max 1000 iterations, no preconditioner). BiCGSTAB uses ``matvec_max = 2 × maxiter`` internally.
+
+**Methodology:**
+
+Matrix: ``Rothberg/cfd2`` (123,440 × 123,440, nnz 3,085,406). Right‑hand side is a single vector (``M=1``) with gradients enabled. For each (index dtype, value dtype, layout) triple we:
+
+- Construct PyTorch sparse tensor (COO then optionally convert to CSR).
+- Run each solver with 10 repeats after 1 warmup (``REPEATS=10``, ``WARMUP_RUNS=1``) using the unified ``measure_op`` harness.
+- Capture forward/backward time & peak CUDA memory; apply IQR filtering before computing mean/std.
+- Compute residual norm ``||A x − B||`` and relative residual ``/ ||B||`` (direct solve residual for ``cupy_spsolve`` may be smallest when successful).
+- Record failures (OOM or cusolver errors) with NaN metrics for visualization (plotted as missing / failure markers).
+
+**Key Testing Features:**
+
+- Uniform tolerance configuration across backends for fairness.
+- Residual norms reported (accuracy dimension in addition to performance).
+- Direct vs iterative solver contrast (``CuPy spsolve`` vs Krylov methods).
+- Cross‑backend gradient pathways (PyTorch native vs CuPy vs JAX) under identical statistical treatment.
+- Layout + dtype sweep highlights memory scaling; CSR vs COO differences mirror matmul findings.
+
+**Results:**
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int32_float32_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Linear Solver Performance (int32/float32, COO format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int32_float32_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Linear Solver Performance (int32/float32, CSR format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int32_float64_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Linear Solver Performance (int32/float64, COO format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int32_float64_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Linear Solver Performance (int32/float64, CSR format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int64_float32_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Linear Solver Performance (int64/float32, COO format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int64_float32_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Linear Solver Performance (int64/float32, CSR format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int64_float64_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Linear Solver Performance (int64/float64, COO format)
+
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int64_float64_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Linear Solver Performance (int64/float64, CSR format)
+
+**Conclusions:**
+
+1. The dense PyTorch solver ``torch.linalg.solve`` fails due to out-of-memory (OOM) errors before the foward pass due to failure of creating a dense tensor which would occupy 57GB of CUDA memory.
+2. ``torch.sparse_csr`` with ``float32`` and ``int32`` indices is the most memory efficient format for both forward and backward passes.
+3. Similar to ``tsgu.sparse_mm``, the ``int32`` indices for ``torch.sparse_coo`` format uses marginally less memory than ``int64`` despite ``A.indices()`` returning ``int64`` indices.
+4. All CuPy and JAX solvers use the same amount of memory on the forward and backward pass.
+5. The native torchsparsegradutils iterative solvers (CG, BiCGSTAB, MINRES) use marginally more memory on the forward pass, but consistent on the backward pass with other methods.
+6. The native torchsparsegradutils iterative solvers (CG, BiCGSTAB, MINRES) are generally faster than the CuPy and JAX implementations for ``torch.sparse_coo`` format, this is likely due to the CuPy solvers converting the sparse matrix to CSR format internally.
+7. The CuPy direct solver ``spsolve`` provides the lowest residual, but fails in most cases due to a ``CUSOLVER_STATUS_ALLOC_FAILED`` error, more debugging is required to determine the exact cause.
+8. The residuals for CuPy CGS and tsgu BiCGSTAB are significantly higher than other methods, indicating poor convergence behavior, which may be improved with preconditioning or improved convergence parameters.
+
+**Recommendations:**
+
+- The ``tsgu.sparse_generic_solve(A, B, solve=linear_cg)`` methods seems to offer the best balance of speed, memory efficiency, and convergence for large sparse linear systems with gradient computation.
+
+Sparse Triangular Linear System Solvers
+---------------------------------------
+
+This benchmark evaluates sparse triangular system solvers with gradient computation using a real-world matrix from the SuiteSparse collection. Unlike the generic linear solves, triangular solves exploit the structure of a (lower or upper) triangular matrix and therefore avoid iterative refinement – they are direct forward (or backward) substitution style operations. The benchmark focuses on memory usage and runtime for both forward and backward passes, and on numerical accuracy via residual norms.
+
+**Algorithms Compared:**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 47 15
+
+   * - **Code Call**
+     - **Description**
+     - **Plot Alias**
+   * - ``torch.triangular_solve(B, A.to_dense(), upper=..., unitriangular=..., transpose=...).solution``
+     - Dense PyTorch triangular solve baseline operating on a densified copy of the sparse matrix
+     - Dense
+   * - ``torch.triangular_solve(B, A, upper=..., unitriangular=..., transpose=...).solution``
+     - PyTorch triangular solve on a sparse input tensor (falls back internally as needed)
+     - torch
+   * - ``tsgu.sparse_triangular_solve(A, B, upper=..., unitriangular=..., transpose=...)``
+     - torchsparsegradutils sparse triangular solve with gradient support and memory efficiency
+     - tsgu
+   * - ``tsgucupy.sparse_solve_c4t(A, B, solve=lambda A_c,B_c: cupy.spsolve_triangular(A_c,B_c, lower=..., unit_diagonal=...))``
+     - CuPy triangular solve wrapped for PyTorch tensors (no explicit transpose solve path required here)
      - CuPy
-     - JAX
-     - Speedup (Best)
-   * - 1k×1k
-     - 0.05
-     - 0.02
-     - 0.03
-     - 2.5×
-   * - 10k×10k
-     - 0.8
-     - 0.3
-     - 0.4
-     - 2.7×
-   * - 100k×100k
-     - 15.2
-     - 4.8
-     - 6.1
-     - 3.2×
 
-Distribution Sampling
----------------------
+**Methodology:**
 
-Sparse Multivariate Normal Performance
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Using the same SuiteSparse matrix ``Rothberg/cfd2`` (shape 123,440 × 123,440, nnz 3,085,406; sparsity ~99.98%), we first construct a torch sparse tensor on GPU and then extract only the required triangular portion for benchmarking:
 
-Sampling performance for different parameterizations:
+- Lower triangle (including diagonal) is used (``upper=False``) in the current configuration (see source constants ``UPPER=False``, ``UNITRIANGULAR=False``, ``TRANSPOSE=False``).
+- For each combination of index dtype (``int32`` / ``int64``), value dtype (``float32`` / ``float64``) and sparse layout (COO / CSR), the triangular mask is applied and a new sparse tensor with only triangular non-zeros is formed.
+- A dense right-hand side matrix ``B`` with 2 columns (``M = 2``) is sampled from a standard normal distribution with gradients enabled.
+- Each algorithm is timed with 10 repeats (``REPEATS=10``) after a single warmup (``WARMUP_RUNS=1``); outliers (upper / lower IQR) are removed, and mean + std of forward/backward time and memory are recorded using the same measurement utility as earlier sections.
+- Residual quality is computed with the triangular matrix actually solved (``A_sparse @ x - B``) to ensure the residual reflects the triangular system, not the original full matrix.
 
-.. code-block:: none
+**Key Testing Features:**
 
-   Dimension: 5000, Sparsity: 99%
-   Batch Size: 1000 samples
+- Triangular extraction makes residual norms meaningful and avoids counting unused entries.
+- Consistent benchmarking harness shared with other suites (shared timing, memory, and statistical treatment).
+- Gradient pass inclusion highlights additional memory overhead or lack thereof.
+- Multiple sparse layouts and index/value dtype combinations expose layout and precision trade‑offs.
 
-   Parameterization | Sampling Time | Memory Usage
-   -----------------+---------------+-------------
-   Precision LDL    |     0.08s     |    45 MB
-   Precision LL     |     0.12s     |    52 MB
-   Covariance LL    |     0.15s     |    58 MB
-   Dense (baseline) |     2.3s      |   950 MB
+**Results:**
 
-Scalability Analysis
---------------------
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/triangular_solve_suitesparse_performance_int32_float32_coo.png
+    :width: 600px
+    :align: center
+    :alt: Sparse Triangular Solver Performance (int32/float32, COO format)
 
-Problem Size Scaling
-~~~~~~~~~~~~~~~~~~~~~
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/triangular_solve_suitesparse_performance_int32_float32_csr.png
+    :width: 600px
+    :align: center
+    :alt: Sparse Triangular Solver Performance (int32/float32, CSR format)
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/triangular_solve_suitesparse_performance_int32_float64_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Triangular Solver Performance (int32/float64, COO format)
 
-How performance scales with problem dimensions:
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/triangular_solve_suitesparse_performance_int32_float64_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Triangular Solver Performance (int32/float64, CSR format)
 
-.. code-block:: python
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/triangular_solve_suitesparse_performance_int64_float32_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Triangular Solver Performance (int64/float32, COO format)
 
-   # Benchmark code example
-   import torch
-   import time
-   from torchsparsegradutils import sparse_mm
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/triangular_solve_suitesparse_performance_int64_float32_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Triangular Solver Performance (int64/float32, CSR format)
 
-   sizes = [100, 500, 1000, 5000, 10000]
-   sparsity = 0.01  # 1% non-zero
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/triangular_solve_suitesparse_performance_int64_float64_coo.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Triangular Solver Performance (int64/float64, COO format)
 
-   times = []
-   for n in sizes:
-       nnz = int(n * n * sparsity)
-       indices = torch.randint(0, n, (2, nnz))
-       values = torch.randn(nnz)
-       A = torch.sparse_coo_tensor(indices, values, (n, n))
-       B = torch.randn(n, 100)
+.. image:: ../../torchsparsegradutils/benchmarks/benchmark_visualizations/triangular_solve_suitesparse_performance_int64_float64_csr.png
+   :width: 600px
+   :align: center
+   :alt: Sparse Triangular Solver Performance (int64/float64, CSR format)
 
-       start = time.time()
-       for _ in range(10):
-           result = sparse_mm(A, B)
-       end = time.time()
+**Conclusions:**
 
-       times.append((end - start) / 10)
-       print(f"Size {n}×{n}: {times[-1]:.4f}s")
+1. Attempting to densify the sparse matrix for ``Dense`` triangular solve leads to OOM errors due to the large memory footprint (≈58 GB for float32, ≈114 GB for float64) on the RTX 4090.
+2. ``torch`` sparse triangular solve on COO layout also fails on backward and forward as torch.triangular_solve does not support sparse COO
+3. ``torch`` sparse triangular solve on CSR layout succeeds on forward pass but fails on backward pass due to internal densification of gradients.
+4. ``CuPy`` triangular solve does provide a sensible memory footprint but has excessive runtime on the backward pass
+5. ``tsgu`` triangular solve provides a good balance of memory efficiency and runtime performance on both forward and backward passes.
+6. Residuals are neglible due to the direct nature of forward and backward substitution
 
-Expected scaling behavior:
+**Recommendations:**
 
-- **Sparse matrix-vector**: O(nnz)
-- **Iterative solvers**: O(iterations × nnz)
-- **Memory usage**: O(nnz) for sparse, O(n²) for dense
-
-Sparsity Impact
-~~~~~~~~~~~~~~~
-
-Performance vs. sparsity level:
-
-.. list-table:: Sparsity Impact (10k×10k matrix)
-   :header-rows: 1
-   :widths: 25 25 25 25
-
-   * - Sparsity Level
-     - nnz
-     - Time (s)
-     - Memory (MB)
-   * - 0.001% (very sparse)
-     - 1,000
-     - 0.001
-     - 0.04
-   * - 0.01% (sparse)
-     - 10,000
-     - 0.008
-     - 0.4
-   * - 0.1% (medium)
-     - 100,000
-     - 0.08
-     - 4.0
-   * - 1.0% (dense-ish)
-     - 1,000,000
-     - 0.8
-     - 40
-   * - Dense baseline
-     - 100,000,000
-     - 12.0
-     - 3,200
-
-Real-World Benchmarks
----------------------
-
-Scientific Computing Examples
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Finite Element Analysis**
-
-.. code-block:: none
-
-   Problem: 2D Heat Equation, 50×50 grid
-   Matrix: 2500×2500, nnz: ~12000
-
-   Operation              | Time (ms) | Memory (MB)
-   ----------------------+-----------+------------
-   Assembly               |     5.2   |    2.1
-   Sparse solve (CG)      |     8.1   |    0.8
-   Dense solve (baseline) |   124.3   |   50.0
-   Total speedup          |   15.4×   |   25×
-
-**Graph Neural Networks**
-
-.. code-block:: none
-
-   Problem: Social network, 10000 nodes
-   Adjacency: 10000×10000, nnz: ~80000
-
-   Operation              | Time (ms) | Memory (MB)
-   ----------------------+-----------+------------
-   Graph convolution      |    12.5   |    6.4
-   Dense equivalent       |   245.0   |   400.0
-   Speedup                |   19.6×   |   62.5×
-
-**Gaussian Processes**
-
-.. code-block:: none
-
-   Problem: Sparse GP regression, 5000 points
-   Precision: 5000×5000, nnz: ~25000
-
-   Operation              | Time (ms) | Memory (MB)
-   ----------------------+-----------+------------
-   Log-likelihood         |    45.2   |    12.5
-   Sampling (1000)        |    78.5   |    18.2
-   Dense GP (baseline)    |  2340.0   |   950.0
-   Total speedup          |   30×     |   52×
-
-Benchmarking Your Own Code
----------------------------
-
-Use our benchmarking utilities:
-
-.. code-block:: python
-
-   from torchsparsegradutils.benchmarks import benchmark_sparse_mm
-   from torchsparsegradutils.benchmarks import profile_sparse_solve
-
-   # Benchmark sparse matrix multiplication
-   results = benchmark_sparse_mm(
-       sizes=[1000, 2000, 5000],
-       sparsities=[0.001, 0.01, 0.1],
-       batch_sizes=[1, 10, 100]
-   )
-
-   # Profile linear solver performance
-   profile_results = profile_sparse_solve(
-       problem_type='laplacian_2d',
-       size=5000,
-       methods=['cg', 'bicgstab', 'minres']
-   )
-
-Performance Recommendations
----------------------------
-
-Based on our benchmarks:
-
-1. **Use CSR format** for repeated operations (2-5× speedup)
-2. **Batch operations** when possible (up to 10× speedup)
-3. **Choose appropriate solver** based on matrix properties:
-
-   - SPD matrices: CG
-   - General symmetric: MINRES
-   - Nonsymmetric: BICGSTAB
-   - Least squares: LSMR
-
-4. **Consider GPU backends** for large problems (2-3× speedup)
-5. **Use mixed precision** for memory-limited scenarios (50% memory savings)
+1. Prefer ``tsgu`` sparse triangular solve in all cases
 
 Reproducing Benchmarks
 -----------------------
 
-All benchmarks can be reproduced using our benchmark suite:
+All benchmarks can be reproduced using our benchmark suite. You can either run all benchmarks at once or run them individually:
+
+**Run all benchmarks:**
 
 .. code-block:: bash
 
@@ -303,6 +465,21 @@ All benchmarks can be reproduced using our benchmark suite:
    python benchmark_suite.py --all
    python visualize_benchmark_results.py
 
-The benchmark data and plots will be saved in `benchmark_visualizations/`.
+**Run specific benchmarks individually:**
 
-For custom benchmarks, see the examples in `torchsparsegradutils/benchmarks/`.
+.. code-block:: bash
+
+   # Navigate to benchmark directory
+   cd torchsparsegradutils/benchmarks
+
+   # Run specific benchmarks
+   python sparse_mm_rand.py              # Random matrix multiplication
+   python sparse_mm_suite.py             # SuiteSparse matrix multiplication
+   python sparse_generic_solve_rand.py   # Random linear system solving
+   python sparse_generic_solve_suite.py  # SuiteSparse linear system solving
+   python sparse_triangular_solve_rand.py # Random triangular solving
+   python sparse_triangular_solve_suitesparse.py # SuiteSparse triangular
+   python batched_sparse_mm_rand.py      # Batched operations
+
+   # Generate visualizations
+   python visualize_benchmark_results.py

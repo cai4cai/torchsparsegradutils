@@ -233,6 +233,5 @@ Next Steps
 ----------
 
 - Explore the :doc:`api/index` for complete function references
-- Check out the :doc:`mathematical_background` for theory
 - View :doc:`benchmarks` for performance comparisons
 - See :doc:`contributing` for development setup with devcontainers

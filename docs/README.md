@@ -68,7 +68,6 @@ docs/
 │   ├── index.rst            # Main documentation page
 │   ├── installation.rst     # Installation guide
 │   ├── quickstart.rst       # Quick start guide
-│   ├── mathematical_background.rst  # Mathematical theory
 │   ├── benchmarks.rst       # Performance benchmarks
 │   ├── contributing.rst     # Contributing guide
 │   ├── changelog.rst        # Version history

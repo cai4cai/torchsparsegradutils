@@ -8,7 +8,23 @@ Comprehensive visualization script for torc        # Set labels and title
 
         # Always set logarithmic scale
         ax.set_yscale('log')radutils benchmark results.
-Creates multiple types of plots grouped by different dimensions for paper and documentation use.
+Creates multiple types of plots grouped by different dimensions            # Create 1x3 subplot layout:             # Create 1x3 subplot layout: Memory Usage, Computation Time, and Relative Residual
+            fig, axes = plt.subplots(1, 3, figsize=(20, 8))
+            combo_title = f"Triangular Solve Performance: {idx_dt}/{val_dt}/{layout.upper()}"
+            fig.suptitle(combo_title, fontsize=16, fontweight="bold")
+
+            # Use the new standardized plotting function with residual for solvers
+            self._create_memory_and_time_plots(combo_df, axes, show_residual=True)
+
+            plt.tight_layout(rect=(0, 0.1, 1, 0.95))  # Leave space for rotated labelsage, Computation Time, and Relative Residual
+            fig, axes = plt.subplots(1, 3, figsize=(20, 8))
+            combo_title = f"Sparse Solve Performance: {idx_dt}/{val_dt}/{layout.upper()}"
+            fig.suptitle(combo_title, fontsize=16, fontweight="bold")
+
+            # Use the new standardized plotting function with residual for solvers
+            self._create_memory_and_time_plots(combo_df, axes, show_residual=True)
+
+            plt.tight_layout(rect=(0, 0.1, 1, 0.95))  # Leave space for rotated labelsr and documentation use.
 """
 
 import warnings
@@ -41,6 +57,48 @@ class BenchmarkVisualizer:
         self.data = {}
         self.load_all_data()
 
+    def _determine_scale_and_limits(self, values, include_zero=False):
+        """Determine appropriate scale (linear/log) and y-limits based on data range"""
+        # Filter out invalid values (NaN, 0, negative for log scale)
+        valid_values = values[~(pd.isna(values) | (values <= 0))]
+
+        if len(valid_values) == 0:
+            return "linear", (0, 1), 0.5  # fallback
+
+        min_val = np.min(valid_values)
+        max_val = np.max(valid_values)
+
+        # Determine if log scale is appropriate
+        # Use log scale if: range spans more than 2 orders of magnitude
+        range_ratio = max_val / min_val if min_val > 0 else 1
+        use_log = range_ratio >= 100  # 2 orders of magnitude
+
+        if use_log:
+            # Log scale: add some padding in log space
+            log_min = np.log10(min_val)
+            log_max = np.log10(max_val)
+            log_range = log_max - log_min
+            padding = max(0.2, log_range * 0.15)  # More padding for failure markers
+
+            ylim_min = 10 ** (log_min - padding)
+            ylim_max = 10 ** (log_max + padding)
+            failure_y = ylim_min * 2  # Place failure markers within the visible range
+        else:
+            # Linear scale: add padding and ensure failure markers are visible
+            value_range = max_val - min_val
+            padding = max(value_range * 0.15, (max_val * 0.1))  # More padding
+
+            ylim_min = max(0, min_val - padding) if not include_zero else 0
+            ylim_max = max_val + padding
+
+            # Place failure markers within the visible range
+            if ylim_min > 0:
+                failure_y = ylim_min + (ylim_max - ylim_min) * 0.05  # 5% from bottom
+            else:
+                failure_y = ylim_max * 0.02  # 2% of max value
+
+        return "log" if use_log else "linear", (ylim_min, ylim_max), failure_y
+
     def _add_failure_markers(self, ax, x_positions, time_values, algorithm_names=None):
         """Add red X markers for failed experiments (NaN, 0, or missing values)"""
         for i, (x_pos, time_val) in enumerate(zip(x_positions, time_values)):
@@ -55,6 +113,9 @@ class BenchmarkVisualizer:
         valid_indices = np.where(valid_mask)[0]
         failed_indices = np.where(~valid_mask)[0]
 
+        # Determine appropriate scaling based on valid data
+        scale_type, ylimits, failure_y = self._determine_scale_and_limits(times)
+
         # Plot valid bars
         if len(valid_indices) > 0:
             valid_times = times[valid_indices]
@@ -66,26 +127,20 @@ class BenchmarkVisualizer:
 
         # Add failure markers
         if len(failed_indices) > 0:
-            # Set y-axis to log scale first to establish limits
-            if np.any(valid_mask):
-                ax.set_yscale("log")
-                # Use minimum valid value / 10 as failure marker position
-                min_valid = np.min(times[valid_mask]) if np.any(valid_mask) else 1
-                failure_y = min_valid / 10
-            else:
-                failure_y = 1  # fallback value
-
             for idx in failed_indices:
                 ax.scatter(idx, failure_y, marker="X", color="red", s=150, zorder=10)
 
         # Set labels and title
         ax.set_xticks(range(len(algorithms)))
-        ax.set_xticklabels(algorithms, rotation=45)
+        clean_algorithms = self._clean_algorithm_names(algorithms)
+        ax.set_xticklabels(clean_algorithms, rotation=45, ha="right", rotation_mode="anchor")
         ax.set_title(title)
         ax.set_ylabel(ylabel)
 
-        # Always set logarithmic scale
-        ax.set_yscale("log")
+        # Apply appropriate scale and limits
+        ax.set_yscale(scale_type)
+        if len(valid_indices) > 0:  # Only set limits if we have valid data
+            ax.set_ylim(ylimits)
 
     def _create_memory_and_time_plots(self, combo_df, axes, show_residual=False):
         """Create standardized memory usage and computation time plots"""
@@ -97,6 +152,9 @@ class BenchmarkVisualizer:
     def _create_memory_plot(self, combo_df, ax):
         """Create memory usage plot"""
         if "fwd_mem_MB" in combo_df.columns and "bwd_mem_MB" in combo_df.columns:
+            # Handle both 'algo' and 'algorithm' column names
+            algo_col = "algo" if "algo" in combo_df.columns else "algorithm"
+
             # Use existing std columns if available, otherwise calculate
             fwd_std_col = "fwd_mem_std_MB" if "fwd_mem_std_MB" in combo_df.columns else None
             bwd_std_col = "bwd_mem_std_MB" if "bwd_mem_std_MB" in combo_df.columns else None
@@ -104,7 +162,7 @@ class BenchmarkVisualizer:
             if fwd_std_col and bwd_std_col:
                 # Use pre-calculated standard deviations
                 mem_stats = (
-                    combo_df.groupby("algorithm")
+                    combo_df.groupby(algo_col)
                     .agg({"fwd_mem_MB": "mean", "bwd_mem_MB": "mean", fwd_std_col: "mean", bwd_std_col: "mean"})
                     .reset_index()
                 )
@@ -113,7 +171,7 @@ class BenchmarkVisualizer:
             else:
                 # Calculate standard deviations from grouped data
                 mem_stats = (
-                    combo_df.groupby("algorithm")
+                    combo_df.groupby(algo_col)
                     .agg({"fwd_mem_MB": ["mean", "std"], "bwd_mem_MB": ["mean", "std"]})
                     .reset_index()
                 )
@@ -121,7 +179,7 @@ class BenchmarkVisualizer:
                 bwd_mem_std = mem_stats[("bwd_mem_MB", "std")].fillna(0).values
 
             if not mem_stats.empty:
-                algorithms = mem_stats["algorithm"].values
+                algorithms = mem_stats[algo_col].values
                 if fwd_std_col and bwd_std_col:
                     fwd_mem = mem_stats["fwd_mem_MB"].fillna(0).values
                     bwd_mem = mem_stats["bwd_mem_MB"].fillna(0).values
@@ -148,6 +206,9 @@ class BenchmarkVisualizer:
     def _create_time_plot(self, combo_df, ax):
         """Create computation time plot"""
         if "fwd_time_us" in combo_df.columns and "bwd_time_us" in combo_df.columns:
+            # Handle both 'algo' and 'algorithm' column names
+            algo_col = "algo" if "algo" in combo_df.columns else "algorithm"
+
             # Use existing std columns if available, otherwise calculate
             fwd_std_col = "fwd_time_std_us" if "fwd_time_std_us" in combo_df.columns else None
             bwd_std_col = "bwd_time_std_us" if "bwd_time_std_us" in combo_df.columns else None
@@ -155,7 +216,7 @@ class BenchmarkVisualizer:
             if fwd_std_col and bwd_std_col:
                 # Use pre-calculated standard deviations
                 time_stats = (
-                    combo_df.groupby("algorithm")
+                    combo_df.groupby(algo_col)
                     .agg({"fwd_time_us": "mean", "bwd_time_us": "mean", fwd_std_col: "mean", bwd_std_col: "mean"})
                     .reset_index()
                 )
@@ -164,14 +225,14 @@ class BenchmarkVisualizer:
             else:
                 # Calculate standard deviations from grouped data
                 time_stats = (
-                    combo_df.groupby("algorithm")
+                    combo_df.groupby(algo_col)
                     .agg({"fwd_time_us": ["mean", "std"], "bwd_time_us": ["mean", "std"]})
                     .reset_index()
                 )
                 fwd_time_std = time_stats[("fwd_time_us", "std")].fillna(0).values
                 bwd_time_std = time_stats[("bwd_time_us", "std")].fillna(0).values
 
-            algorithms = time_stats["algorithm"].values
+            algorithms = time_stats[algo_col].values
             if fwd_std_col and bwd_std_col:
                 fwd_time = time_stats["fwd_time_us"].fillna(0).values
                 bwd_time = time_stats["bwd_time_us"].fillna(0).values
@@ -219,6 +280,10 @@ class BenchmarkVisualizer:
         x = np.arange(len(algorithms))
         width = 0.35
 
+        # Combine all data to determine appropriate scaling
+        all_data = np.concatenate([fwd_data, bwd_data])
+        scale_type, ylimits, failure_y = self._determine_scale_and_limits(all_data)
+
         # Forward phase bars
         valid_fwd = ~(pd.isna(fwd_data) | (fwd_data == 0))
         if np.any(valid_fwd):
@@ -245,30 +310,94 @@ class BenchmarkVisualizer:
                 capsize=3,
             )
 
-        # Add failure markers
-        self._add_phase_failure_markers(ax, x, width, valid_fwd, valid_bwd, fwd_data, bwd_data)
+        # Add failure markers using the calculated failure_y position
+        self._add_phase_failure_markers(ax, x, width, valid_fwd, valid_bwd, fwd_data, bwd_data, failure_y)
 
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.set_xticks(x)
-        ax.set_xticklabels(algorithms, rotation=45)
-        ax.set_yscale("log")
+
+        # Improve label formatting and alignment
+        clean_algorithms = self._clean_algorithm_names(algorithms)
+        ax.set_xticklabels(clean_algorithms, rotation=45, ha="right", rotation_mode="anchor")
+
+        # Apply appropriate scale and limits
+        ax.set_yscale(scale_type)
+        if np.any(valid_fwd) or np.any(valid_bwd):  # Only set limits if we have valid data
+            ax.set_ylim(ylimits)
         ax.legend()
 
-    def _add_phase_failure_markers(self, ax, x, width, valid_fwd, valid_bwd, fwd_data, bwd_data):
+    def _clean_algorithm_names(self, algorithms):
+        """Clean up algorithm names for better display"""
+        clean_names = []
+        for algo in algorithms:
+            # Create shorter, more readable names
+            clean_name = algo
+
+            # Specific mappings for exact algorithm names (higher priority)
+            exact_mappings = {
+                # General solvers:
+                "sparse_generic_cg": "tsgu CG",
+                "sparse_generic_bicgstab": "tsgu BiCGSTAB",
+                "sparse_generic_minres": "tsgu MINRES",
+                "sparse_generic_lsmr": "tsgu LSMR",
+                "cupy_cg": "CuPy CG",
+                "cupy_cgs": "CuPy CGS",
+                "cupy_minres": "CuPy MINRES",
+                "cupy_gmres": "CuPy GMRES",
+                "cupy_spsolve": "CuPy spsolve",
+                "dense.solve": "Dense",
+                "jax_cg": "JAX CG",
+                "jax_bicgstab": "JAX BiCGSTAB",
+                # batched sparse mm:
+                "torch_sparse_mm_list": "torch list",
+                "sparse_mm_list": "tsgu list",
+                "batched_sparse_mm": "tsgu batched",
+                # Triangular:
+                "cupy.spsolve_triangular": "CuPy",
+                "dense.triangular_solve": "Dense",
+                "torch_triangular_solve": "torch",
+                "sparse_triangular_solve": "tsgu",
+                # matmul:
+                "sparse_mm": "tsgu spmm",
+                "sparse.mm": "torch spmm",
+                "dense.mm": "dense mm",
+            }
+
+            # Check for exact matches first
+            if clean_name in exact_mappings:
+                clean_name = exact_mappings[clean_name]
+            else:
+                # Replace common prefixes/patterns for brevity (fallback)
+                replacements = {
+                    "sparse_generic_": "",
+                    "sparse_triangular_": "tri_",
+                    "batched_sparse_": "batch_",
+                }
+
+                for old, new in replacements.items():
+                    if old in clean_name:
+                        clean_name = clean_name.replace(old, new)
+                        break
+
+                # Add line breaks for very long names (> 10 chars) that weren't handled above
+                if len(clean_name) > 10 and "_" in clean_name:
+                    parts = clean_name.split("_")
+                    if len(parts) >= 2:
+                        mid = len(parts) // 2
+                        clean_name = "_".join(parts[:mid]) + "\n" + "_".join(parts[mid:])
+
+            clean_names.append(clean_name)
+
+        return clean_names
+
+    def _add_phase_failure_markers(self, ax, x, width, valid_fwd, valid_bwd, fwd_data, bwd_data, failure_y):
         """Add red X markers for failed phases"""
         failed_fwd = ~valid_fwd
         failed_bwd = ~valid_bwd
 
         if np.any(failed_fwd | failed_bwd):
-            min_val = 1
-            if np.any(valid_fwd):
-                min_val = min(min_val, np.min(fwd_data[valid_fwd]))
-            if np.any(valid_bwd):
-                min_val = min(min_val, np.min(bwd_data[valid_bwd]))
-
-            failure_y = min_val / 10
             for i in range(len(x)):
                 if failed_fwd[i]:
                     ax.scatter(x[i] - width / 2, failure_y, marker="X", color="red", s=100, zorder=10)
@@ -302,7 +431,11 @@ class BenchmarkVisualizer:
         if "sparse_triangular_solve_suitesparse" in self.data:
             self._plot_triangular_solve_performance()
 
-        # 4. Suite Performance (Real matrices) - keeping this for any additional suite data
+        # 4. Batched Sparse Matrix Multiplication Performance
+        if "batched_sparse_mm_rand" in self.data:
+            self._plot_batched_sparse_mm_performance()
+
+        # 5. Suite Performance (Real matrices) - keeping this for any additional suite data
         self._plot_suite_performance()
 
     def _plot_sparse_mm_performance(self):
@@ -325,14 +458,14 @@ class BenchmarkVisualizer:
                 continue
 
             # Create 1x2 subplot layout: Memory Usage and Computation Time
-            fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+            fig, axes = plt.subplots(1, 2, figsize=(16, 8))
             combo_title = f"Sparse MM Performance: {idx_dt}/{val_dt}/{layout.upper()}"
             fig.suptitle(combo_title, fontsize=16, fontweight="bold")
 
             # Use the new standardized plotting function (no residual for MM)
             self._create_memory_and_time_plots(combo_df, axes, show_residual=False)
 
-            plt.tight_layout()
+            plt.tight_layout(rect=(0, 0.1, 1, 0.95))  # Leave space for rotated labels
             filename = f"sparse_mm_suite_performance_{idx_dt}_{val_dt}_{layout}.{OUTPUT_FORMAT}"
             plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
             plt.close()
@@ -358,14 +491,14 @@ class BenchmarkVisualizer:
                 continue
 
             # Create 1x3 subplot layout: Memory Usage, Computation Time, and Relative Residual
-            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+            fig, axes = plt.subplots(1, 3, figsize=(24, 8))
             combo_title = f"Sparse Solve Performance: {idx_dt}/{val_dt}/{layout.upper()}"
             fig.suptitle(combo_title, fontsize=16, fontweight="bold")
 
             # Use the new standardized plotting function (with residual for sparse solve)
             self._create_memory_and_time_plots(combo_df, axes, show_residual=True)
 
-            plt.tight_layout()
+            plt.tight_layout(rect=(0, 0.15, 1, 0.95))  # Leave more space for rotated labels
             filename = f"sparse_solve_suite_performance_{idx_dt}_{val_dt}_{layout}.{OUTPUT_FORMAT}"
             plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
             plt.close()
@@ -400,6 +533,51 @@ class BenchmarkVisualizer:
 
             plt.tight_layout()
             filename = f"triangular_solve_suitesparse_performance_{idx_dt}_{val_dt}_{layout}.{OUTPUT_FORMAT}"
+            plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
+            plt.close()
+            print(f"✓ Created {filename}")
+
+    def _plot_batched_sparse_mm_performance(self):
+        """Plot batched sparse matrix multiplication performance split by dtype and layout combinations"""
+        df = self.data["batched_sparse_mm_rand"].copy()
+
+        # Configure batch size to visualize
+        TARGET_BATCH_SIZE = 128
+
+        # Filter for the target batch size
+        df = df[df["batch"] == TARGET_BATCH_SIZE].copy()
+
+        if len(df) == 0:
+            print(f"⚠ No data found for batch size {TARGET_BATCH_SIZE}")
+            return
+
+        # Get all dtype and layout combinations
+        combinations = []
+        for index_dt in df["index_dt"].dropna().unique():
+            for value_dt in df["value_dt"].dropna().unique():
+                for layout in df["layout"].dropna().unique():
+                    combinations.append((index_dt, value_dt, layout))
+
+        # Create separate plots for each combination
+        for idx_dt, val_dt, layout in combinations:
+            # Filter data for this specific combination - include ALL data, even failed experiments
+            combo_df = df[(df["index_dt"] == idx_dt) & (df["value_dt"] == val_dt) & (df["layout"] == layout)].copy()
+
+            if len(combo_df) == 0:
+                continue
+
+            # Create 1x2 subplot layout: Memory Usage and Computation Time
+            fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+            combo_title = (
+                f"Batched Sparse MM Performance (Batch Size {TARGET_BATCH_SIZE}): {idx_dt}/{val_dt}/{layout.upper()}"
+            )
+            fig.suptitle(combo_title, fontsize=16, fontweight="bold")
+
+            # Use the new standardized plotting function (no residual for MM)
+            self._create_memory_and_time_plots(combo_df, axes, show_residual=False)
+
+            plt.tight_layout(rect=(0, 0.1, 1, 0.95))  # Leave space for rotated labels
+            filename = f"batched_sparse_mm_performance_{idx_dt}_{val_dt}_{layout}.{OUTPUT_FORMAT}"
             plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
             plt.close()
             print(f"✓ Created {filename}")
@@ -817,5 +995,55 @@ class BenchmarkVisualizer:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generate benchmark visualizations for torchsparsegradutils")
+    parser.add_argument(
+        "--benchmark",
+        choices=["all", "batched_sparse_mm", "sparse_mm", "sparse_solve", "triangular_solve", "scaling", "comparative"],
+        default="all",
+        help="Which benchmark to visualize (default: all)",
+    )
+
+    args = parser.parse_args()
+
     visualizer = BenchmarkVisualizer()
-    visualizer.generate_all_visualizations()
+
+    if args.benchmark == "all":
+        visualizer.generate_all_visualizations()
+    elif args.benchmark == "batched_sparse_mm":
+        print("Generating batched sparse matrix multiplication visualizations...")
+        if "batched_sparse_mm_rand" in visualizer.data:
+            visualizer._plot_batched_sparse_mm_performance()
+            print("✓ Batched sparse MM plots created")
+        else:
+            print("⚠ No batched sparse MM data found")
+    elif args.benchmark == "sparse_mm":
+        print("Generating sparse matrix multiplication visualizations...")
+        if "sparse_mm_suite" in visualizer.data:
+            visualizer._plot_sparse_mm_performance()
+            print("✓ Sparse MM plots created")
+        else:
+            print("⚠ No sparse MM suite data found")
+    elif args.benchmark == "sparse_solve":
+        print("Generating sparse linear solve visualizations...")
+        if "sparse_generic_solve_suite" in visualizer.data:
+            visualizer._plot_sparse_solve_performance()
+            print("✓ Sparse solve plots created")
+        else:
+            print("⚠ No sparse solve suite data found")
+    elif args.benchmark == "triangular_solve":
+        print("Generating triangular solve visualizations...")
+        if "sparse_triangular_solve_suitesparse" in visualizer.data:
+            visualizer._plot_triangular_solve_performance()
+            print("✓ Triangular solve plots created")
+        else:
+            print("⚠ No triangular solve data found")
+    elif args.benchmark == "scaling":
+        print("Generating scaling analysis visualizations...")
+        visualizer.create_scaling_analysis_plots()
+        print("✓ Scaling analysis plots created")
+    elif args.benchmark == "comparative":
+        print("Generating comparative analysis visualizations...")
+        visualizer.create_comparative_analysis_plots()
+        print("✓ Comparative analysis plots created")
