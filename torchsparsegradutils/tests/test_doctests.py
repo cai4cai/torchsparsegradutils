@@ -29,13 +29,6 @@ DOCTEST_MODULES = [
     "torchsparsegradutils.cupy.cupy_sparse_solve",
 ]
 
-# Modules with known doctest issues (skip for now)
-# Move modules from here to DOCTEST_MODULES when their doctests are fixed
-SKIP_MODULES = [
-    # "torchsparsegradutils.sparse_matmul",  # Fixed - moved to DOCTEST_MODULES
-    # "torchsparsegradutils.sparse_lstsq",  # Fixed - moved to DOCTEST_MODULES
-]
-
 
 @pytest.mark.parametrize("module_name", DOCTEST_MODULES)
 def test_doctest(module_name):
@@ -78,11 +71,3 @@ def test_doctest_coverage():
             continue
 
     assert total_tests > 0, "No doctests found in any tested modules"
-
-
-@pytest.mark.skip(reason="Known issues - fix these doctests to enable")
-@pytest.mark.parametrize("module_name", SKIP_MODULES)
-def test_doctest_skipped(module_name):
-    """Placeholder test for modules with known doctest issues."""
-    # This test is skipped but documents which modules need doctest fixes
-    pass
