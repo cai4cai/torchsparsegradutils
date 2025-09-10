@@ -28,6 +28,7 @@ setuptools.setup(
     packages=setuptools.find_packages(exclude=("tests",)),
     install_requires=[
         "torch>=2.5",
+        "scipy",
     ],
     setup_requires=["pytest-runner"],
     tests_require=["pytest"],
