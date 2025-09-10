@@ -2,10 +2,9 @@
 # Minor modifications for torchsparsegradutils to remove dependencies
 
 import warnings
+from typing import Callable, NamedTuple, Optional, Union
 
 import torch
-
-from typing import NamedTuple
 
 
 class LinearCGSettings(NamedTuple):
@@ -99,42 +98,121 @@ def _jit_linear_cg_updates_no_precond(
 
 
 def linear_cg(
-    matmul_closure,
-    rhs,
-    n_tridiag=0,
-    tolerance=None,
-    eps=1e-10,
-    stop_updating_after=1e-10,
-    max_iter=None,
-    max_tridiag_iter=None,
-    initial_guess=None,
-    preconditioner=None,
-    settings=LinearCGSettings(),
-):
+    matmul_closure: Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]],
+    rhs: torch.Tensor,
+    n_tridiag: int = 0,
+    tolerance: Optional[float] = None,
+    eps: float = 1e-10,
+    stop_updating_after: float = 1e-10,
+    max_iter: Optional[int] = None,
+    max_tridiag_iter: Optional[int] = None,
+    initial_guess: Optional[torch.Tensor] = None,
+    preconditioner: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+    settings: LinearCGSettings = LinearCGSettings(),
+) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+    r"""
+    Solve symmetric positive definite linear systems using conjugate gradient (CG).
+
+    Implements linear CG for systems :math:`A x = b` with symmetric positive definite
+    operator :math:`A`. Supports single/multiple RHS and optional stochastic Lanczos
+    tridiagonalization for eigenvalue/log-determinant estimation.
+
+    Parameters
+    ----------
+    matmul_closure : {``torch.Tensor``, callable(x) -> ``A x``}
+        Matrix–vector multiply. If a tensor is provided, its ``.matmul`` is used.
+        The callable must accept inputs shaped like ``rhs`` and return ``A @ rhs``.
+    rhs : torch.Tensor, shape ``(..., n)`` or ``(..., n, k)``
+        Right-hand side(s). Leading batch dims are supported.
+    n_tridiag : int, optional
+        Number of Lanczos tridiagonalizations (probe vectors). If ``> 0``,
+        tridiagonal matrices are returned in addition to the solution. Default: ``0``.
+    tolerance : float, optional
+        Average residual-norm stopping criterion. If ``None``, uses
+        ``settings.cg_tolerance``.
+    eps : float, optional
+        Small constant to avoid division by zero. Default: ``1e-10``.
+    stop_updating_after : float, optional
+        Per-vector early-stop threshold for residual norms. Default: ``1e-10``.
+    max_iter : int, optional
+        Maximum CG iterations. If ``None``, uses ``settings.max_cg_iterations``.
+    max_tridiag_iter : int, optional
+        Maximum Lanczos size. If ``None``, uses
+        ``settings.max_lanczos_quadrature_iterations``.
+    initial_guess : torch.Tensor, optional, shape like ``rhs``
+        Initial guess. If ``None``, zeros are used.
+    preconditioner : callable, optional
+        Preconditioner with signature ``preconditioner(x) -> M^{-1} x``.
+        If ``None``, no preconditioning is used.
+    settings : LinearCGSettings, optional
+        Configuration for iteration caps, tolerances, and logging verbosity.
+
+    Returns
+    -------
+    torch.Tensor or (torch.Tensor, torch.Tensor)
+        * If ``n_tridiag == 0``: solution ``x`` with the same shape as ``rhs``.
+        * If ``n_tridiag > 0``: ``(x, T)`` where ``T`` has shape
+          ``(n_tridiag, *rhs.shape[:-2], r, r)`` with ``r = last_tridiag_iter + 1``
+          and ``r <= min(max_tridiag_iter, n)``. Without batch dims this is ``(n_tridiag, r, r)``.
+
+    Raises
+    ------
+    RuntimeError
+        If ``max_tridiag_iter > max_iter``.
+    RuntimeError
+        If ``matmul_closure`` is neither a tensor nor a callable.
+
+    Notes
+    -----
+    CG converges in at most ``n`` iterations for SPD matrices, but typically much
+    faster if eigenvalues are clustered. Preconditioning (e.g. diagonal or
+    incomplete Cholesky) can significantly accelerate convergence. When
+    ``n_tridiag > 0``, Lanczos tridiagonalization is accumulated alongside CG for
+    spectral / log-determinant estimates.
+
+    This implementation is based on MIT-licensed code from the linear_operator
+    library [1e]_.
+
+    Examples
+    --------
+    Basic CG solve::
+
+        >>> A = torch.tensor([[4.0, -1.0], [-1.0, 4.0]])
+        >>> b = torch.tensor([1.0, 2.0])
+        >>> x = linear_cg(A.matmul, b)
+        >>> x.shape
+        torch.Size([2])
+
+    Multiple RHS::
+
+        >>> B = torch.randn(2, 5)  # 5 RHS
+        >>> X = linear_cg(A.matmul, B, max_iter=100, tolerance=1e-8)
+        >>> X.shape
+        torch.Size([2, 5])
+
+    With preconditioning::
+
+        >>> M_inv = torch.diag(1.0 / torch.diag(A))
+        >>> x = linear_cg(A.matmul, b, preconditioner=lambda v: M_inv @ v)
+
+    With Lanczos tridiagonalization::
+
+        >>> x, T = linear_cg(A.matmul, b, n_tridiag=1)
+        >>> T.shape  # (n_tridiag, r, r) with r <= n
+        torch.Size([1, 2, 2])
+
+    Sparse operator via closure::
+
+        >>> indices = torch.tensor([[0, 0, 1, 1, 2], [0, 1, 0, 1, 2]])
+        >>> values = torch.tensor([4.0, -1.0, -1.0, 4.0, 2.0])
+        >>> A_sp = torch.sparse_coo_tensor(indices, values, (3, 3))
+        >>> x = linear_cg(lambda v: A_sp @ v, torch.randn(3))
+
+    References
+    ----------
+    .. [1e] linear_operator library. https://github.com/cornellius-gp/linear_operator
     """
-    Implements the linear conjugate gradients method for (approximately) solving systems of the form
-
-        lhs result = rhs
-
-    for positive definite and symmetric matrices.
-
-    Args:
-      - matmul_closure - a function which performs a left matrix multiplication with lhs_mat
-      - rhs - the right-hand side of the equation
-      - n_tridiag - returns a tridiagonalization of the first n_tridiag columns of rhs
-      - tolerance - stop the solve when the (average) norm of the residual(s) is less than this
-      - eps - noise to add to prevent division by zero
-      - stop_updating_after - will stop updating a vector after this residual norm is reached
-      - max_iter - the maximum number of CG iterations
-      - max_tridiag_iter - the maximum size of the tridiagonalization matrix
-      - initial_guess - an initial guess at the solution `result`
-      - precondition_closure - a functions which left-preconditions a supplied vector
-
-    Returns:
-      result - a solution to the system (if n_tridiag is 0)
-      result, tridiags - a solution to the system, and corresponding tridiagonal matrices (if n_tridiag > 0)
-    """
-    # Unsqueeze, if necesasry
+    # Unsqueeze, if necessary
     is_vector = rhs.ndimension() == 1
     if is_vector:
         rhs = rhs.unsqueeze(-1)
@@ -147,7 +225,7 @@ def linear_cg(
     if initial_guess is None:
         initial_guess = torch.zeros_like(rhs)
     else:
-        # Unsqueeze, if necesasry
+        # Unsqueeze, if necessary
         is_vector = initial_guess.ndimension() == 1
         if is_vector:
             initial_guess = initial_guess.unsqueeze(-1)

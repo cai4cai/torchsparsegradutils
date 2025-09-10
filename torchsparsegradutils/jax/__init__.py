@@ -1,4 +1,9 @@
 import importlib
+import os
+
+# disable JAX’s 90%‐of‐GPU preallocation
+# os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 
 jax_spec = importlib.util.find_spec("jax")
 if jax_spec is None:
@@ -10,8 +15,7 @@ if jax_spec is None:
     )
 else:
     have_jax = True
-    from .jax_bindings import j2t, t2j, spmm_t4j, j2t_coo, t2j_coo, j2t_csr, t2j_csr
-
+    from .jax_bindings import j2t, j2t_coo, j2t_csr, spmm_t4j, t2j, t2j_coo, t2j_csr
     from .jax_sparse_solve import sparse_solve_j4t
 
     __all__ = ["j2t", "t2j", "spmm_t4j", "j2t_coo", "t2j_coo", "j2t_csr", "t2j_csr", "sparse_solve_j4t"]

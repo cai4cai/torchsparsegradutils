@@ -1,5 +1,5 @@
-import torch
 import pytest
+import torch
 
 if torch.__version__ < (2, 4):
     pytest.skip(

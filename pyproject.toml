@@ -1,6 +1,6 @@
 [tool.black]
 line-length = 120
-target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+target-version = ['py310', 'py311', 'py312']
 include = '\.pyi?$'
 exclude = '''
 (
@@ -22,3 +22,28 @@ exclude = '''
   #| some_file
 )
 '''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 120
+known_first_party = ["torchsparsegradutils"]
+force_grid_wrap = 0
+combine_as_imports = true
+include_trailing_comma = true
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = ["-v"]
+testpaths = [
+    "torchsparsegradutils/tests",
+]
+doctest_optionflags = [
+    "NORMALIZE_WHITESPACE",
+    "IGNORE_EXCEPTION_DETAIL",
+    "ELLIPSIS"
+]
+# Separate command for doctests due to potential issues
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

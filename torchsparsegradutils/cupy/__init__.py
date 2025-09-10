@@ -11,7 +11,7 @@ if cupy_spec is None:
 else:
     have_cupy = True
 
-from .cupy_bindings import c2t_coo, t2c_coo, c2t_csr, t2c_csr, _get_array_modules
+from .cupy_bindings import _get_array_modules, c2t_coo, c2t_csr, t2c_coo, t2c_csr
 from .cupy_sparse_solve import sparse_solve_c4t
 
 __all__ = ["c2t_coo", "t2c_coo", "c2t_csr", "t2c_csr", "_get_array_modules", "sparse_solve_c4t"]

@@ -1,18 +1,14 @@
 {
     "name": "torchsparsegradutils Dev Container",
     "build": {
-        "dockerfile": "./Dockerfile",
-        "context": ".",
-        "args": {
-            "CUDA_VERSION": "12.4.0",
-            "PYTORCH_VERSION": "2.5.0",
-            "CUDATOOLKIT_VERSION": "12.4",
-            "PYTHON_VERSION": "3.12"
-        }
+        "dockerfile": "./Dockerfile.stable",
+        "context": "."
     },
     "runArgs": [
         "--gpus",
-        "all"
+        "all",
+        "--cpuset-cpus",
+        "0-1,3-5,7-23"
     ],
     "remoteEnv": {
         "SSH_AUTH_SOCK": "/tmp/ssh-agent.sock"
@@ -20,32 +16,55 @@
     "customizations": {
         "vscode": {
             "settings": {
-                "python.defaultInterpreterPath": "/opt/conda/bin/python",
+                "python.defaultInterpreterPath": "/usr/bin/python3",
                 "terminal.integrated.shell.linux": "/bin/bash",
                 "terminal.integrated.env.linux": {
-                    "CONDA_DEFAULT_ENV": "base",
-                    "CONDA_PREFIX": "/opt/conda",
-                    "CONDA_PYTHON_EXE": "/opt/conda/bin/python",
-                    "PATH": "/opt/conda/bin:${env:PATH}"
+                    "PATH": "${env:PATH}"
                 },
                 "python.testing.pytestArgs": [
                     "torchsparsegradutils/tests"
                 ],
                 "python.testing.unittestEnabled": false,
-                "python.testing.pytestEnabled": true
+                "python.testing.pytestEnabled": true,
+                "editor.formatOnSave": true,
+                "editor.codeActionsOnSave": {
+                    "source.organizeImports": "explicit"
+                },
+                "[python]": {
+                    "editor.defaultFormatter": "ms-python.black-formatter",
+                    "editor.codeActionsOnSave": {
+                        "source.organizeImports": "explicit"
+                    }
+                },
+                "isort.args": [
+                    "--profile",
+                    "black",
+                    "--line-length",
+                    "120"
+                ],
+                "python.linting.enabled": true,
+                "python.linting.flake8Enabled": true,
+                "python.linting.pylintEnabled": false,
+                "python.languageServer": "Pylance",
+                "python.analysis.indexing": true,
+                "python.analysis.logLevel": "Trace"
             },
             "extensions": [
-                "dbaeumer.vscode-eslint",
                 "ms-python.vscode-pylance",
                 "ms-python.python",
+                "ms-toolsai.jupyter",
                 "github.copilot",
                 "GitHub.vscode-pull-request-github",
                 "GitHub.vscode-github-actions",
                 "mhutchie.git-graph",
-                "waderyan.gitblame"
+                "waderyan.gitblame",
+                "ms-python.black-formatter",
+                "ms-python.flake8",
+                "ms-python.isort",
+                "ReprEng.csv",
+                "peakchen90.open-html-in-browser"
             ]
         }
     },
-    "remoteUser": "vscode",
-    "postCreateCommand": "echo 'Container is ready!'"
+    "remoteUser": "vscode"
 }
