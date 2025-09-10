@@ -70,7 +70,6 @@ docs/
 │   ├── quickstart.rst       # Quick start guide
 │   ├── benchmarks.rst       # Performance benchmarks
 │   ├── contributing.rst     # Contributing guide
-│   ├── changelog.rst        # Version history
 │   ├── api/                 # API reference
 │   │   ├── index.rst
 │   │   ├── core.rst         # Core functions

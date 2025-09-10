@@ -62,7 +62,6 @@ Sparse Multivariate Normal Distributions
    api/index
    benchmarks
    contributing
-   changelog
 
 Installation
 ============

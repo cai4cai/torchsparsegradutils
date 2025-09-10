@@ -324,14 +324,12 @@ Submitting Pull Requests
 
 1. **Ensure all tests pass** locally
 2. **Write clear commit messages**
-3. **Update CHANGELOG.md** if appropriate
-4. **Reference related issues**
+3. **Reference related issues**
 
 PR template checklist:
 
 - [ ] Tests added/updated
 - [ ] Documentation updated
-- [ ] CHANGELOG.md updated
 - [ ] All CI checks pass
 - [ ] Backwards compatibility maintained
 
@@ -401,11 +399,10 @@ Releases follow semantic versioning:
 Release checklist:
 
 1. Update version numbers
-2. Update CHANGELOG.md
-3. Run full test suite
-4. Build documentation
-5. Create GitHub release
-6. Publish to PyPI
+2. Run full test suite
+3. Build documentation
+4. Create GitHub release
+5. Publish to PyPI
 
 Getting Help
 ------------
