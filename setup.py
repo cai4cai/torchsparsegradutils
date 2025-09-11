@@ -43,6 +43,8 @@ setuptools.setup(
             "sphinx-autobuild>=2021.3.14",
             "matplotlib>=3.5.0",
             "sphinx-autodoc-typehints>=1.24.0",
+            "sphinxcontrib-bibtex>=2.5.0",
+            "sphinx-gallery>=0.13.0",
         ],
     },
     zip_safe=False,
