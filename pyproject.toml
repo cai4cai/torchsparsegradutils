@@ -1,3 +1,64 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torchsparsegradutils"
+version = "0.2.0"
+description = "A collection of utility functions to work with PyTorch sparse tensors"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [
+    {name = "CAI4CAI research group", email = "contact@cai4cai.uk"}
+]
+keywords = ["sparse", "torch", "utility"]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "torch>=2.5",
+    "scipy",
+]
+
+[project.optional-dependencies]
+extras = ["jax", "cupy"]
+docs = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=1.3.0",
+    "sphinx-copybutton>=0.5.0",
+    "myst-parser>=2.0.0",
+    "sphinx-autobuild>=2021.3.14",
+    "matplotlib>=3.5.0",
+    "sphinx-autodoc-typehints>=1.24.0",
+    "sphinxcontrib-bibtex>=2.5.0",
+    "sphinx-gallery>=0.13.0",
+]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "isort",
+    "flake8",
+]
+
+[project.urls]
+Homepage = "https://github.com/cai4cai/torchsparsegradutils"
+Documentation = "https://torchsparsegradutils.readthedocs.io"
+Repository = "https://github.com/cai4cai/torchsparsegradutils"
+Issues = "https://github.com/cai4cai/torchsparsegradutils/issues"
+Changelog = "https://github.com/cai4cai/torchsparsegradutils/releases"
+
+[tool.setuptools]
+zip-safe = false
+include-package-data = true
+
+[tool.setuptools.packages.find]
+exclude = ["tests*"]
+
 [tool.black]
 line-length = 120
 target-version = ['py310', 'py311', 'py312']
