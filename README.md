@@ -1,6 +1,6 @@
 # torchsparsegradutils: Sparsity-preserving gradient utility tools for PyTorch
 
-[![PyPI](https://img.shields.io/pypi/v/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) [![Python Versions](https://img.shields.io/pypi/pyversions/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) [![Downloads](https://img.shields.io/pypi/dm/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) ![PyTorch 2.5+](https://img.shields.io/badge/PyTorch-2.5%2B-ee4c2c?logo=pytorch) ![Tested 2.5 / 2.8 / nightly](https://img.shields.io/badge/Tested-2.5%20|%202.8%20|%20nightly-ee4c2c?logo=pytorch) [![Build](https://github.com/cai4cai/torchsparsegradutils/actions/workflows/python-package.yml/badge.svg)](https://github.com/cai4cai/torchsparsegradutils/actions/workflows/python-package.yml) [![Docs](https://readthedocs.org/projects/torchsparsegradutils/badge/?version=latest)](https://readthedocs.org/projects/torchsparsegradutils) [![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black) [![License](https://img.shields.io/github/license/cai4cai/torchsparsegradutils)](LICENSE) [![status](https://joss.theoj.org/papers/6da0e92488d06f70c0a03d0a7cbfba7d/status.svg)](https://joss.theoj.org/papers/6da0e92488d06f70c0a03d0a7cbfba7d)
+[![PyPI](https://img.shields.io/pypi/v/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) [![Python Versions](https://img.shields.io/pypi/pyversions/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) [![Downloads](https://img.shields.io/pypi/dm/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) ![PyTorch 2.5+](https://img.shields.io/badge/PyTorch-2.5%2B-ee4c2c?logo=pytorch) ![Tested 2.5 / 2.9 / nightly](https://img.shields.io/badge/Tested-2.5%20|%202.9%20|%20nightly-ee4c2c?logo=pytorch) [![Build](https://github.com/cai4cai/torchsparsegradutils/actions/workflows/python-package.yml/badge.svg)](https://github.com/cai4cai/torchsparsegradutils/actions/workflows/python-package.yml) [![Docs](https://readthedocs.org/projects/torchsparsegradutils/badge/?version=latest)](https://readthedocs.org/projects/torchsparsegradutils) [![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black) [![License](https://img.shields.io/github/license/cai4cai/torchsparsegradutils)](LICENSE) [![status](https://joss.theoj.org/papers/6da0e92488d06f70c0a03d0a7cbfba7d/status.svg)](https://joss.theoj.org/papers/6da0e92488d06f70c0a03d0a7cbfba7d)
 
 A comprehensive collection of utility functions to work with PyTorch sparse tensors, ensuring memory efficiency and supporting various sparsity-preserving tensor operations with automatic differentiation. This package addresses fundamental gaps in PyTorch's sparse tensor ecosystem, providing essential operations that preserve sparsity in gradients during backpropagation.
 
@@ -112,7 +112,7 @@ pip install scipy matplotlib pandas tqdm pytest
 
 ## 📊 Performance Benchmarks
 
-Our comprehensive benchmark suite demonstrates significant performance improvements across various sparse operations. All benchmarks were conducted on an NVIDIA GeForce RTX 4090 with PyTorch 2.8.0+cu128. Benchmarks are performed using [Rothberg/cfd2](https://suitesparse-collection-website.herokuapp.com/Rothberg/cfd2) matrix from [SuiteSparse Matrix Collection](https://suitesparse-collection-website.herokuapp.com/)
+Our comprehensive benchmark suite demonstrates significant performance improvements across various sparse operations. All benchmarks were conducted on an NVIDIA GeForce RTX 4090 with PyTorch 2.9.0+cu130. Benchmarks are performed using [Rothberg/cfd2](https://suitesparse-collection-website.herokuapp.com/Rothberg/cfd2) matrix from [SuiteSparse Matrix Collection](https://suitesparse-collection-website.herokuapp.com/)
 
 ![Sparse MM Suite Performance (int32/float32 COO)](torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_mm_suite_performance_int32_float32_coo.png)
 
@@ -499,7 +499,7 @@ For a consistent development environment with GPU support and all dependencies p
 
 **Available Configurations:**
 
-- **`.devcontainer/Dockerfile.stable`** (default): Uses stable PyTorch with CUDA 12.8 support
+- **`.devcontainer/Dockerfile.stable`** (default): Uses stable PyTorch with CUDA 13.0 support
 - **`.devcontainer/Dockerfile.nightly`**: Uses nightly PyTorch builds for latest features
 
 To switch configurations, modify the `dockerfile` field in `.devcontainer/devcontainer.json`:
@@ -511,7 +511,7 @@ To switch configurations, modify the `dockerfile` field in `.devcontainer/devcon
 ```
 
 **What's Included:**
-- **CUDA 12.8**: Full GPU development support with NVIDIA drivers
+- **CUDA 13.0**: Full GPU development support with NVIDIA drivers
 - **Pre-installed Dependencies**: PyTorch, CuPy, JAX, SciPy, and all development tools
 - **VS Code Extensions**: Python, Pylance, Jupyter, GitHub Copilot, and code formatting tools
 - **Development Tools**: pytest, black, flake8, pre-commit hooks

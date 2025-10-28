@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
+FROM nvidia/cuda:13.0.0-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -16,7 +16,7 @@ ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
 
 # Install Python dependencies
 COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu128 && \
+RUN pip3 install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu130 && \
     pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 # Create 'python' symlink for convenience
