@@ -1,7 +1,7 @@
 """
 Integration tests for PairwiseEncoder and SparseMultivariateNormal components.
 
-This module tests the integration of PairwiseVoxelEncoder/PairwiseEncoder with
+This module tests the integration of PairwiseEncoder with
 SparseMultivariateNormal distribution, focusing on:
 - Forward sampling and backward passes through multiple iterations
 - Memory stability with large tensors
@@ -26,7 +26,7 @@ import pytest
 import torch
 
 from torchsparsegradutils.distributions import SparseMultivariateNormal
-from torchsparsegradutils.encoders.pairwise_voxel_encoder import PairwiseEncoder, PairwiseVoxelEncoder
+from torchsparsegradutils.encoders import PairwiseEncoder
 
 # Skip entire test module if CUDA is not available
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="Integration tests require CUDA")

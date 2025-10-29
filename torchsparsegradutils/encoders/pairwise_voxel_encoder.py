@@ -3,15 +3,8 @@ from typing import Tuple
 
 import torch
 
-# Deprecation warning for the entire module
-warnings.warn(
-    "The 'pairwise_voxel_encoder' module is deprecated and will be removed in a future version. "
-    "Please use 'pairwise_encoder' instead, which provides the same functionality with support for arbitrary N-dimensional spatial relationships.",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 # Import everything from the new module for backward compatibility
+from .pairwise_encoder import calc_pariwise_coo_indices  # typo version for backward compatibility
 from .pairwise_encoder import (
     PairwiseEncoder,
     _gen_coords,
@@ -19,8 +12,8 @@ from .pairwise_encoder import (
     _gen_offsets,
     _gen_offsets_nd,
     _trim_nd,
+    calc_pairwise_coo_indices,
     calc_pairwise_coo_indices_nd,
-    calc_pariwise_coo_indices,
 )
 
 
@@ -105,7 +98,7 @@ class PairwiseVoxelEncoder(PairwiseEncoder):
             "PairwiseVoxelEncoder is deprecated and will be removed in a future version. "
             "Use PairwiseEncoder instead, which supports arbitrary N-dimensional spatial relationships.",
             DeprecationWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
         # Validate input for backward compatibility

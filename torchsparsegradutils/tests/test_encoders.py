@@ -11,19 +11,16 @@ import torch
 import yaml
 
 # Import from the new pairwise_encoder module (recommended)
+from torchsparsegradutils.encoders import PairwiseEncoder
 from torchsparsegradutils.encoders.pairwise_encoder import (
-    PairwiseEncoder,
     _gen_coords,
     _gen_coords_nd,
     _gen_offsets,
     _gen_offsets_nd,
     _trim_nd,
+    calc_pairwise_coo_indices,
     calc_pairwise_coo_indices_nd,
-    calc_pariwise_coo_indices,
 )
-
-# Import from deprecated module for backward compatibility tests
-from torchsparsegradutils.encoders.pairwise_voxel_encoder import PairwiseVoxelEncoder
 from torchsparsegradutils.utils.utils import _sort_coo_indices
 
 if torch.__version__ >= (2,):
@@ -207,7 +204,7 @@ def test_gen_offsets(radius, upper, num_channels, channel_voxel_relation, expect
     assert offsets == expected_shifts
 
 
-# Test the calc_pariwise_coo_indices function:
+# Test the calc_pairwise_coo_indices function:
 
 
 # Test invalid inputs:
@@ -223,18 +220,18 @@ def test_gen_offsets(radius, upper, num_channels, channel_voxel_relation, expect
 )
 def test_pariwise_coo_indices_invalid_inputs(radius, volume_shape, dtype, channel_voxel_relation):
     with pytest.raises(ValueError):
-        calc_pariwise_coo_indices(radius, volume_shape, dtype=dtype, channel_voxel_relation=channel_voxel_relation)
+        calc_pairwise_coo_indices(radius, volume_shape, dtype=dtype, channel_voxel_relation=channel_voxel_relation)
 
 
 # Test dtype and devices:
 def test_pairwise_coo_indices_dtype_and_device(indices_dtype, device):
     radius = 1
     volume_shape = (2, 2, 2, 2)
-    indices_dict = calc_pariwise_coo_indices(
+    indices_dict = calc_pairwise_coo_indices(
         radius, volume_shape, diag=True, upper=False, dtype=indices_dtype, device=device
     )
     for k, indices in indices_dict.items():
-        # NOTE: The calc_pariwise_coo_indices function returns regular tensors, not sparse tensors,
+        # NOTE: The calc_pairwise_coo_indices function returns regular tensors, not sparse tensors,
         # so PyTorch's int32->int64 conversion only happens when creating sparse COO tensors
         assert indices.dtype == indices_dtype
         assert indices.device.type == device.type
@@ -242,7 +239,7 @@ def test_pairwise_coo_indices_dtype_and_device(indices_dtype, device):
 
 # Test upper flag:
 def test_pairwise_coo_indices_upper_lower(radius, volume_shape, diag, upper, channel_voxel_relation):
-    indices_dict = calc_pariwise_coo_indices(radius, volume_shape, diag, upper, channel_voxel_relation)
+    indices_dict = calc_pairwise_coo_indices(radius, volume_shape, diag, upper, channel_voxel_relation)
     for k, indices in indices_dict.items():
         if upper is not None:
             if upper and not diag:
@@ -257,7 +254,7 @@ def test_pairwise_coo_indices_upper_lower(radius, volume_shape, diag, upper, cha
 
 # Test all the indices are unique:
 def test_pairwise_coo_indices_unique(radius, volume_shape, diag, upper, channel_voxel_relation):
-    indices_dict = calc_pariwise_coo_indices(radius, volume_shape, diag, upper, channel_voxel_relation)
+    indices_dict = calc_pairwise_coo_indices(radius, volume_shape, diag, upper, channel_voxel_relation)
     all_indices = []
     total_indices_count = 0
     for k, indices in indices_dict.items():
@@ -294,7 +291,7 @@ def test_pariwise_coo_indices(radius, volume_shape, diag, upper, channel_relatio
         literal_eval(k): torch.tensor(v).reshape(2, -1) for k, v in expected_indices.items()
     }  # reshape just required to make empty tensors have shape (2, 0)
 
-    indices_dict = calc_pariwise_coo_indices(radius, volume_shape, diag, upper, channel_relation)
+    indices_dict = calc_pairwise_coo_indices(radius, volume_shape, diag, upper, channel_relation)
 
     assert indices_dict.keys() == expected_indices_dict.keys()
 
@@ -312,12 +309,12 @@ def test_pariwise_coo_indices(radius, volume_shape, diag, upper, channel_relatio
             raise AssertionError(f"Assertion failed for key {k}: {e}")
 
 
-# Test the PairwiseVoxelEncoder class:
+# Test the PairwiseEncoder class (formerly PairwiseVoxelEncoder):
 
 
 # Test just the initialisation of the class:
 def test_PVE_init():
-    pve = PairwiseVoxelEncoder(1.5, (1, 2, 3, 4))
+    pve = PairwiseEncoder(1.5, (1, 2, 3, 4))
 
     assert pve.radius == 1.5
     assert pve.volume_shape == (1, 2, 3, 4)
@@ -329,7 +326,7 @@ def test_PVE_init():
     assert pve.device == torch.device("cpu")
 
 
-# Test invalid inputs to pairwise voxel encoder:
+# Test invalid inputs to pairwise encoder (N-dimensional version):
 
 
 @pytest.mark.parametrize(
@@ -338,15 +335,15 @@ def test_PVE_init():
         (1.0, (4, 5, 5, 0), torch.sparse_coo, torch.int64, ValueError),  # volume shape with a dimension of 0
         (1.0, (4, 5, -5, 5), torch.sparse_coo, torch.int64, ValueError),  # volume shape with a negative dimension
         (1.0, (4, 5, "5", 5), torch.sparse_coo, torch.int64, ValueError),  # volume shape with a string dimension
-        (1.0, (4, 5, 5), torch.sparse_coo, torch.int64, ValueError),  # volume shape with too few dimensions
-        (1.0, (4, 5, 5, 5, 5, 5), torch.sparse_coo, torch.int64, ValueError),  # volume shape with too many dimensions
+        (1.0, (5,), torch.sparse_coo, torch.int64, ValueError),  # volume shape with too few dimensions (needs >= 2)
+        # Note: PairwiseEncoder (N-D version) accepts any number of dimensions >= 2, so no "too many dimensions" test
         (1.0, (4, 5, 5, 5), torch.sparse_coo, torch.float32, ValueError),  # indices_dtype is a float
         (1.0, (4, 5, 5, 5), torch.sparse_coo, torch.bool, ValueError),  # indices_dtype is bool
     ],
 )
 def test_PVE_init_invalid_inputs(radius, volume_shape, layout, indices_dtype, expected_error):
     with pytest.raises(expected_error):
-        PairwiseVoxelEncoder(
+        PairwiseEncoder(
             radius=radius,
             volume_shape=volume_shape,
             layout=layout,
@@ -371,7 +368,7 @@ def test_PVE_init_invalid_inputs(radius, volume_shape, layout, indices_dtype, ex
     ],
 )
 def test_PVE_call_invalid_inputs(values, expected_error):
-    encoder = PairwiseVoxelEncoder(
+    encoder = PairwiseEncoder(
         radius=1.0,
         volume_shape=(5, 5, 5, 5),
     )
@@ -382,7 +379,7 @@ def test_PVE_call_invalid_inputs(values, expected_error):
 
 def test_PVE_dtype_device(batch_size, layout, indices_dtype, values_dtype, device):
 
-    encoder = PairwiseVoxelEncoder(
+    encoder = PairwiseEncoder(
         radius=1.0,
         volume_shape=(5, 5, 5, 5),
         layout=layout,
@@ -419,7 +416,7 @@ def test_PVE_dtype_device(batch_size, layout, indices_dtype, values_dtype, devic
 
 
 def test_PVE_to_device(layout, device):
-    encoder = PairwiseVoxelEncoder(
+    encoder = PairwiseEncoder(
         radius=1.0,
         volume_shape=(5, 5, 5, 5),
         layout=layout,
@@ -454,7 +451,7 @@ def test_PVE_values(radius, volume_shape, diag, upper, channel_relation, expecte
     }  # reshape just required to make empty tensors have shape (2, 0)
     volume_shape = tuple(volume_shape)
 
-    pve = PairwiseVoxelEncoder(radius, volume_shape, diag, upper, channel_relation, layout, indices_dtype, device)
+    pve = PairwiseEncoder(radius, volume_shape, diag, upper, channel_relation, layout, indices_dtype, device)
     num_offsets = len(pve.offsets)
 
     # create tensor with different values for each offset
@@ -490,8 +487,8 @@ def test_PVE_values(radius, volume_shape, diag, upper, channel_relation, expecte
 
 def test_PVE_COO_vs_CSR():
     volume_shape = (5, 5, 5, 5)
-    pve_coo = PairwiseVoxelEncoder(1, volume_shape, layout=torch.sparse_coo)
-    pve_csr = PairwiseVoxelEncoder(1, volume_shape, layout=torch.sparse_csr)
+    pve_coo = PairwiseEncoder(1, volume_shape, layout=torch.sparse_coo)
+    pve_csr = PairwiseEncoder(1, volume_shape, layout=torch.sparse_csr)
     values = torch.randn((6, 5, 5, 5, 5))
     matrix_coo = pve_coo(values)
     matrix_csr = pve_csr(values)
@@ -499,7 +496,7 @@ def test_PVE_COO_vs_CSR():
 
 
 def test_PVE_size(volume_shape, layout, batch_size):
-    pve = PairwiseVoxelEncoder(1, volume_shape, layout=layout)
+    pve = PairwiseEncoder(1, volume_shape, layout=layout)
 
     volume_numel = reduce(mul, volume_shape)
     if batch_size is None:
@@ -522,7 +519,7 @@ def test_PVE_diagonal_consistency(radius, volume_shape, layout, batch_size, chan
     values_dtype = torch.float64
     device = torch.device("cpu")
 
-    pve = PairwiseVoxelEncoder(radius, volume_shape, diag, upper, channel_voxel_relation, layout, indices_dtype, device)
+    pve = PairwiseEncoder(radius, volume_shape, diag, upper, channel_voxel_relation, layout, indices_dtype, device)
     num_offsets = len(pve.offsets)
 
     # create tensor with different values for each offset
@@ -558,7 +555,7 @@ def test_PVE_row_consistency(radius, volume_shape, upper, layout, batch_size, ch
     values_dtype = torch.float64
     device = torch.device("cpu")
 
-    pve = PairwiseVoxelEncoder(radius, volume_shape, diag, upper, channel_voxel_relation, layout, indices_dtype, device)
+    pve = PairwiseEncoder(radius, volume_shape, diag, upper, channel_voxel_relation, layout, indices_dtype, device)
     num_offsets = len(pve.offsets)
 
     # create tensor with different values for each voxel, repeated for each offset
@@ -619,7 +616,7 @@ def test_pariwise_coo_indices_visually():
     # Iterate over the radii
     for radius in radius_list:
         # Create a color dictionary for maximum shifts
-        indices_dict_max = calc_pariwise_coo_indices(
+        indices_dict_max = calc_pairwise_coo_indices(
             radius=radius,
             volume_shape=volume_shape,
             diag=diag,
@@ -635,7 +632,7 @@ def test_pariwise_coo_indices_visually():
         # Iterate over the channel_voxel_relations
         for j, channel_voxel_relation in enumerate(channel_voxel_relation_list):
             # Create the encoder and get the indices dictionary
-            indices_dict = calc_pariwise_coo_indices(
+            indices_dict = calc_pairwise_coo_indices(
                 radius=radius,
                 volume_shape=volume_shape,
                 diag=diag,
@@ -743,8 +740,10 @@ def test_PairwiseEncoder_1d():
 
 
 def test_PairwiseVoxelEncoder_deprecation_warning():
-    # Test that PairwiseVoxelEncoder issues deprecation warning
+    # Test that PairwiseVoxelEncoder issues deprecation warning when accessed via lazy import
     with pytest.warns(DeprecationWarning, match="PairwiseVoxelEncoder is deprecated"):
+        from torchsparsegradutils.encoders import PairwiseVoxelEncoder
+
         _ = PairwiseVoxelEncoder(1.0, (2, 3, 3, 3))
 
 
@@ -756,29 +755,26 @@ def test_pairwise_voxel_encoder_module_deprecation_warning():
     pass
 
 
-def test_PairwiseVoxelEncoder_backward_compatibility():
-    # Test that PairwiseVoxelEncoder still works as before
+def test_PairwiseEncoder_backward_compatibility():
+    # Test that PairwiseEncoder works correctly (it's the current non-deprecated class)
     volume_shape = (2, 3, 3, 3)
 
-    # Suppress deprecation warning for this test
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
+    # No need to suppress warnings - PairwiseEncoder is not deprecated
+    encoder_old = PairwiseEncoder(1.0, volume_shape, diag=True)
+    encoder_new = PairwiseEncoder(1.0, volume_shape, diag=True)
 
-        encoder_old = PairwiseVoxelEncoder(1.0, volume_shape, diag=True)
-        encoder_new = PairwiseEncoder(1.0, volume_shape, diag=True)
+    # Check that offsets are the same
+    assert encoder_old.offsets == encoder_new.offsets
 
-        # Check that offsets are the same
-        assert encoder_old.offsets == encoder_new.offsets
+    # Test with same values
+    num_offsets = len(encoder_old.offsets)
+    values = torch.randn(num_offsets, 2, 3, 3, 3)
 
-        # Test with same values
-        num_offsets = len(encoder_old.offsets)
-        values = torch.randn(num_offsets, 2, 3, 3, 3)
+    sparse_old = encoder_old(values)
+    sparse_new = encoder_new(values)
 
-        sparse_old = encoder_old(values)
-        sparse_new = encoder_new(values)
-
-        # Should produce identical results
-        assert torch.allclose(sparse_old.to_dense(), sparse_new.to_dense())
+    # Should produce identical results
+    assert torch.allclose(sparse_old.to_dense(), sparse_new.to_dense())
 
 
 def test_PairwiseEncoder_nd_batch():
@@ -806,14 +802,14 @@ def test_calc_pairwise_coo_indices_nd_invalid_shape():
         calc_pairwise_coo_indices_nd(1.0, (3,))  # Only 1D
 
 
-def test_PairwiseEncoder_vs_PairwiseVoxelEncoder_equivalence():
+def test_PairwiseEncoder_vs_PairwiseEncoder_equivalence():
     # Test that both encoders produce identical results for 4D case
     volume_shape = (2, 4, 4, 4)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
 
-        encoder_old = PairwiseVoxelEncoder(1.5, volume_shape, diag=True, upper=False)
+        encoder_old = PairwiseEncoder(1.5, volume_shape, diag=True, upper=False)
         encoder_new = PairwiseEncoder(1.5, volume_shape, diag=True, upper=False)
 
         # Test both have same configuration
@@ -834,7 +830,7 @@ def test_PairwiseEncoder_vs_PairwiseVoxelEncoder_equivalence():
 
 
 def test_PairwiseEncoder_supports_nd():
-    # Test various dimensional cases that PairwiseVoxelEncoder cannot handle
+    # Test various dimensional cases that PairwiseEncoder cannot handle
 
     # 1D spatial (2D total)
     encoder_1d = PairwiseEncoder(1.0, (3, 5))
@@ -860,16 +856,11 @@ def test_PairwiseEncoder_supports_nd():
 
 def test_imports_from_init():
     # Test that we can import from the main module
-    from torchsparsegradutils.encoders import (
-        PairwiseEncoder,
-        PairwiseVoxelEncoder,
-        calc_pairwise_coo_indices_nd,
-        calc_pariwise_coo_indices,
-    )
+    from torchsparsegradutils.encoders import PairwiseEncoder, calc_pairwise_coo_indices, calc_pairwise_coo_indices_nd
 
     # Test that these are the right classes
     assert PairwiseEncoder.__name__ == "PairwiseEncoder"
-    assert PairwiseVoxelEncoder.__name__ == "PairwiseVoxelEncoder"
+    assert PairwiseEncoder.__name__ == "PairwiseEncoder"
 
-    # Test PairwiseVoxelEncoder is a subclass of PairwiseEncoder
-    assert issubclass(PairwiseVoxelEncoder, PairwiseEncoder)
+    # Test PairwiseEncoder is a subclass of PairwiseEncoder
+    assert issubclass(PairwiseEncoder, PairwiseEncoder)

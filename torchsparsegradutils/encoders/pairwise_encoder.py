@@ -505,7 +505,7 @@ def calc_pairwise_coo_indices_nd(
     return indices
 
 
-def calc_pariwise_coo_indices(
+def calc_pairwise_coo_indices(
     radius: float,
     volume_shape: Tuple[int, int, int, int],
     diag: bool = False,
@@ -548,11 +548,15 @@ def calc_pariwise_coo_indices(
     """
     # Validate 4D shape for backward compatibility
     if not (len(volume_shape) == 4 and all(isinstance(dim, int) and dim > 0 for dim in volume_shape)):
-        raise ValueError("volume_shape must be a 4D tuple of positive integers for backward compatibility")
+        raise ValueError("`volume_shape` must be a 4D tuple of positive integers, representing [C, H, D, W]")
 
     out = calc_pairwise_coo_indices_nd(radius, volume_shape, diag, upper, channel_voxel_relation, dtype, device)
     # Narrow key type for static checker (all offsets have length 4 here)
     return {tuple(k): v for k, v in out.items()}  # type: ignore[return-value]
+
+
+# Keep the typo version for backward compatibility
+calc_pariwise_coo_indices = calc_pairwise_coo_indices  # type: ignore[misc]
 
 
 class PairwiseEncoder(torch.nn.Module):
