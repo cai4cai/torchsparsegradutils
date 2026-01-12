@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
     "torch>=2.5",
     "scipy",
+    "packaging",
 ]
 
 [project.optional-dependencies]
