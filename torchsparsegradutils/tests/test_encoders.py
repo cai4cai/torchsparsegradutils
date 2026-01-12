@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import torch
 import yaml
+from packaging.version import parse as parse_version
 
 # Import from the new pairwise_encoder module (recommended)
 from torchsparsegradutils.encoders import PairwiseEncoder
@@ -23,7 +24,7 @@ from torchsparsegradutils.encoders.pairwise_encoder import (
 )
 from torchsparsegradutils.utils.utils import _sort_coo_indices
 
-if torch.__version__ >= (2,):
+if parse_version(torch.__version__) >= parse_version("2.0"):
     # https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html
     torch.sparse.check_sparse_tensor_invariants.enable()
 

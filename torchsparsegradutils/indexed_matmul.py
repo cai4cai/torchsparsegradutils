@@ -1,4 +1,5 @@
 import torch
+from packaging.version import parse as parse_version
 
 try:
     import dgl.ops as dglops
@@ -73,7 +74,7 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torc
         >>> segment_mm(a, b, seglen_a).shape
         torch.Size([18, 2])
     """
-    if torch.__version__ < (2, 4):
+    if parse_version(torch.__version__) < parse_version("2.4"):
         raise NotImplementedError("PyTorch version is too old for nested tensors")
 
     if dgl_installed:
@@ -177,7 +178,7 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Te
         tensor([[1., 2.],
                 [6., 8.]])
     """
-    if torch.__version__ < (2, 4):
+    if parse_version(torch.__version__) < parse_version("2.4"):
         raise NotImplementedError("PyTorch version is too old for nested tensors")
 
     if dgl_installed:
