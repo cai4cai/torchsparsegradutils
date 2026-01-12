@@ -838,8 +838,6 @@ def sparse_eye(
 
     Notes
     -----
-    - In COO format, ``.coalesce()`` is called on the result to ensure
-      duplicate indices are removed and sorted.
     - For batched inputs, each batch element is an independent identity matrix.
 
     Examples
@@ -891,8 +889,8 @@ def sparse_eye(
             values = values.repeat(size[0])
 
         return torch.sparse_coo_tensor(
-            indices, values, size, dtype=values_dtype, device=device, requires_grad=requires_grad
-        ).coalesce()
+            indices, values, size, dtype=values_dtype, device=device, requires_grad=requires_grad, is_coalesced=True
+        )
 
     elif layout == torch.sparse_csr:
         if indices_dtype not in [torch.int32, torch.int64]:
