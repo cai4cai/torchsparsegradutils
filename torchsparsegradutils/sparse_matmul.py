@@ -150,7 +150,7 @@ class SparseMatMul(torch.autograd.Function):
 
         if ctx.batch_size is not None:
             A = sparse_block_diag(*A)
-            B = torch.cat([*B])
+            B = B.reshape(-1, B.size(-1))
 
         x = torch.sparse.mm(A, B)
 
@@ -194,7 +194,7 @@ class SparseMatMul(torch.autograd.Function):
                 raise ValueError(f"Unsupported layout: {A.layout}")
 
             if ctx.batch_size is not None:
-                grad_for_A = torch.cat([*grad])
+                grad_for_A = grad.reshape(-1, grad.size(-1))
             else:
                 grad_for_A = grad
 
@@ -221,7 +221,7 @@ class SparseMatMul(torch.autograd.Function):
         # -------- Only compute gradB if needed --------
         if ctx.needs_input_grad[1]:
             if ctx.batch_size is not None:
-                grad_for_B = torch.cat([*grad])
+                grad_for_B = grad.reshape(-1, grad.size(-1))
             else:
                 grad_for_B = grad
 
