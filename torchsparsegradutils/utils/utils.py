@@ -888,6 +888,7 @@ def sparse_eye(
             indices = torch.cat([batch_dim_indices, sparse_dim_indices])
             values = values.repeat(size[0])
 
+        # NOTE: is_coalesced=True since there are no duplicate indices in identity matrix, flag avails in PyTorch 2.1+
         return torch.sparse_coo_tensor(
             indices, values, size, dtype=values_dtype, device=device, requires_grad=requires_grad, is_coalesced=True
         )
