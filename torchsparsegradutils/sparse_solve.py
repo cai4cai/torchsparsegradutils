@@ -171,7 +171,7 @@ class SparseTriangularSolve(torch.autograd.Function):
 
         if ctx.batch_size is not None:
             A = sparse_block_diag(*A)
-            B = torch.cat([*B])
+            B = B.reshape(-1, B.size(-1))
 
         if A.layout == torch.sparse_coo:
             A = convert_coo_to_csr(A)  # NOTE: triangular solve doesn't work with sparse coo
@@ -194,7 +194,7 @@ class SparseTriangularSolve(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad):  # type: ignore[override]
         if ctx.batch_size is not None:
-            grad = torch.cat([*grad])
+            grad = grad.reshape(-1, grad.size(-1))
 
         A, x = ctx.saved_tensors
 
