@@ -146,8 +146,37 @@ def _sort_coo_indices(
     --------
     torch.Tensor.coalesce : Built-in method for sorting/merging duplicate COO indices.
     """
-    indices_sorted, permutation = torch.unique(indices, dim=-1, sorted=True, return_inverse=True)
-    return indices_sorted.contiguous(), torch.argsort(permutation)
+    # Handle empty tensor case
+    if indices.shape[1] == 0:
+        return indices.contiguous(), torch.empty(0, dtype=torch.long, device=indices.device)
+
+    # Convert indices to a single column for lexicographic sorting
+    # For 2D indices (row, col): create (row * max_col + col) for sorting
+    # For 3D indices (batch, row, col): create unique key per batch
+    if indices.shape[0] == 2:
+        # Unbatched: (2, nnz) -> create sort keys
+        max_col = indices[1].max() + 1
+        sort_keys = indices[0] * max_col + indices[1]
+    else:
+        # Batched: (3, nnz) -> create sort keys accounting for batch
+        max_row = indices[1].max() + 1
+        max_col = indices[2].max() + 1
+        sort_keys = indices[0] * (max_row * max_col) + indices[1] * max_col + indices[2]
+
+    # Single sort operation
+    sorted_keys, permutation = torch.sort(sort_keys)
+    indices_sorted = indices[:, permutation]
+
+    # Remove duplicates to match original behavior of torch.unique
+    # Find unique keys and keep only the first occurrence of each
+    unique_mask = torch.ones(sorted_keys.shape[0], dtype=torch.bool, device=sorted_keys.device)
+    unique_mask[1:] = sorted_keys[1:] != sorted_keys[:-1]
+
+    indices_sorted = indices_sorted[:, unique_mask]
+    # Return the permutation that maps original indices to sorted positions
+    permutation = permutation[unique_mask]
+
+    return indices_sorted.contiguous(), permutation
 
 
 def _compress_row_indices(
