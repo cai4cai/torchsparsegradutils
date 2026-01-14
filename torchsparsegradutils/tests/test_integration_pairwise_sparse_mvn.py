@@ -24,6 +24,7 @@ from typing import Any, Dict, Tuple
 
 import pytest
 import torch
+from test_config import INDEX_DTYPES, SPARSE_LAYOUTS, VALUE_DTYPES
 
 from torchsparsegradutils.distributions import SparseMultivariateNormal
 from torchsparsegradutils.encoders import PairwiseEncoder
@@ -32,11 +33,7 @@ from torchsparsegradutils.encoders import PairwiseEncoder
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="Integration tests require CUDA")
 
 # Testing Parameters - Focus on CUDA with large tensors
-DEVICES = [torch.device("cuda")]  # Only CUDA devices
-
-INDEX_DTYPES = [torch.int32, torch.int64]
-VALUE_DTYPES = [torch.float32, torch.float64]
-SPARSE_LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
+DEVICES = [torch.device("cuda")]  # Only CUDA devices (not from test_config)
 PARAMETERIZATIONS = ["ldlt", "llt"]  # LDL^T vs LL^T
 MATRIX_TYPES = ["cov", "prec"]  # covariance vs precision
 
@@ -126,11 +123,10 @@ def matrix_type(request):
 
 
 @pytest.fixture(autouse=True)
-def set_seed_and_cleanup():
-    """Set random seed and cleanup memory before/after each test."""
-    torch.manual_seed(42)
+def cleanup_memory():
+    """Cleanup memory before/after each test."""
+    # Note: RNG seeding handled by conftest.py global fixture
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(42)
         torch.cuda.empty_cache()
 
     yield

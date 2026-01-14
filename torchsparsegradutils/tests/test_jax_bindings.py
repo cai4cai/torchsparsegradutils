@@ -1,4 +1,3 @@
-import jax
 import numpy as np
 import pytest
 import torch
@@ -11,6 +10,7 @@ pytest.importorskip("jax")
 if not tsgujax.have_jax:
     pytest.skip("JAX bindings unavailable, skipping jax tests", allow_module_level=True)
 
+import jax
 import jax.numpy as jnp
 
 # Device fixture

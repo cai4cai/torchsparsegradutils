@@ -2,6 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from test_config import DEVICES
 
 from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_coo_matrix,
@@ -17,11 +18,6 @@ from torchsparsegradutils.utils.utils import (
     sparse_eye,
     stack_csr,
 )
-
-# Device fixture
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda:0"))
 
 
 def _id_device(d):

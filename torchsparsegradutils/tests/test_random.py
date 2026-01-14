@@ -1,5 +1,6 @@
 import pytest
 import torch
+from test_config import DEVICES, Tolerances
 
 from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_coo_matrix,
@@ -14,11 +15,6 @@ from torchsparsegradutils.utils.random_sparse import (
 # enable sparse invariants checks if available
 if hasattr(torch.sparse, "check_sparse_tensor_invariants"):
     torch.sparse.check_sparse_tensor_invariants.enable()
-
-# Device fixture
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda:0"))
 
 
 def _id_device(d):
@@ -575,7 +571,8 @@ def test_make_spd_sparse_basic(layout, value_dtype, index_dtype, device):
         assert A_sparse.col_indices().dim() == 1
 
     # Check that sparse and dense versions are equivalent
-    assert torch.allclose(A_sparse.to_dense(), A_dense, atol=1e-6)
+    atol, rtol = Tolerances.direct(value_dtype)
+    assert torch.allclose(A_sparse.to_dense(), A_dense, atol=atol, rtol=rtol)
 
 
 @pytest.mark.parametrize("layout", [torch.sparse_coo, torch.sparse_csr])
@@ -917,7 +914,8 @@ def test_make_spd_sparse_dtype_consistency(device):
         assert A_sparse.dtype == A_dense.dtype == value_dtype
 
         # Sparse and dense should be equivalent (within tolerance)
-        assert torch.allclose(A_sparse.to_dense(), A_dense, atol=1e-6)
+        atol, rtol = Tolerances.direct(value_dtype)
+        assert torch.allclose(A_sparse.to_dense(), A_dense, atol=atol, rtol=rtol)
 
         # Both should be on the same device
         assert A_sparse.device == A_dense.device == device

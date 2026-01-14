@@ -2,14 +2,11 @@
 
 import pytest
 import torch
+from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
 from torchsparsegradutils.sparse_solve import sparse_generic_solve
 from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, linear_cg, minres
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
-
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda"))
 
 TEST_DATA = [
     # name  A_shape, B_shape, A_num_zero
@@ -18,12 +15,8 @@ TEST_DATA = [
     ("multi_rhs", (12, 12), (12, 6), 32),
 ]
 
-INDEX_DTYPES = [torch.int32, torch.int64]
-VALUE_DTYPES = [torch.float32, torch.float64]
 LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 SOLVES = [None, linear_cg, bicgstab, minres]
-
-ATOL = 1e-6
 
 
 # Define Test Names:
@@ -82,9 +75,7 @@ def solve(request):
     return request.param
 
 
-@pytest.mark.flaky(reruns=5)
 def test_solve_forward_routine(layout, solve, device, value_dtype, index_dtype, shapes):
-
     _, A_shape, B_shape, num_zero = shapes
     n = A_shape[0]
     A, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
@@ -93,12 +84,11 @@ def test_solve_forward_routine(layout, solve, device, value_dtype, index_dtype, 
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=solve, transpose_solve=solve)
 
-    assert torch.allclose(X_test, X_ref, atol=ATOL)
+    atol, rtol = Tolerances.iterative(value_dtype)
+    assert torch.allclose(X_test, X_ref, atol=atol, rtol=rtol)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_solve_backward_routine(layout, solve, device, value_dtype, index_dtype, shapes):
-
     _, A_shape, B_shape, num_zero = shapes
     n = A_shape[0]
     As1, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
@@ -115,12 +105,12 @@ def test_solve_backward_routine(layout, solve, device, value_dtype, index_dtype,
     res_ref.backward(grad_output)
     res_test.backward(grad_output)
 
+    atol, rtol = Tolerances.iterative(value_dtype)
     nz_mask = As1.grad.to_dense() != 0.0
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL)
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=atol, rtol=rtol)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_linear_cg_kwargs(device, value_dtype, layout):
     """Test sparse_generic_solve with LinearCGSettings kwargs."""
     from torchsparsegradutils.utils.linear_cg import LinearCGSettings
@@ -129,18 +119,21 @@ def test_linear_cg_kwargs(device, value_dtype, layout):
     A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
     B = torch.rand(n, dtype=value_dtype, device=device)
 
+    atol, rtol = Tolerances.iterative(value_dtype)
     # Test with custom LinearCGSettings
     settings = LinearCGSettings(
-        cg_tolerance=ATOL, max_cg_iterations=500, terminate_cg_by_size=False, verbose_linalg=False
+        cg_tolerance=atol,
+        max_cg_iterations=500,
+        terminate_cg_by_size=False,
+        verbose_linalg=False,
     )
 
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg, settings=settings)
 
-    assert torch.allclose(X_test, X_ref, atol=ATOL)
+    assert torch.allclose(X_test, X_ref, atol=atol, rtol=rtol)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_bicgstab_kwargs(device, value_dtype, layout):
     """Test sparse_generic_solve with BICGSTABSettings kwargs."""
     from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
@@ -149,16 +142,16 @@ def test_bicgstab_kwargs(device, value_dtype, layout):
     A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
     B = torch.rand(n, dtype=value_dtype, device=device)
 
+    atol, rtol = Tolerances.iterative(value_dtype)
     # Test with custom BICGSTABSettings
-    settings = BICGSTABSettings(reltol=ATOL, abstol=1e-8, matvec_max=1000, precon=None)
+    settings = BICGSTABSettings(reltol=rtol, abstol=atol / 100, matvec_max=1000, precon=None)
 
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=bicgstab, transpose_solve=bicgstab, settings=settings)
 
-    assert torch.allclose(X_test, X_ref, atol=ATOL)
+    assert torch.allclose(X_test, X_ref, atol=atol, rtol=rtol)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_minres_kwargs(device, value_dtype, layout):
     """Test sparse_generic_solve with MINRESSettings kwargs."""
     from torchsparsegradutils.utils.minres import MINRESSettings
@@ -167,16 +160,16 @@ def test_minres_kwargs(device, value_dtype, layout):
     A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
     B = torch.rand(n, dtype=value_dtype, device=device)
 
+    atol, rtol = Tolerances.iterative(value_dtype)
     # Test with custom MINRESSettings
-    settings = MINRESSettings(minres_tolerance=ATOL, max_cg_iterations=500, verbose_linalg=False)
+    settings = MINRESSettings(minres_tolerance=atol, max_cg_iterations=500, verbose_linalg=False)
 
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=minres, transpose_solve=minres, settings=settings)
 
-    assert torch.allclose(X_test, X_ref, atol=ATOL)
+    assert torch.allclose(X_test, X_ref, atol=atol, rtol=rtol)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_kwargs_backward_pass(device, value_dtype, layout):
     """Test that kwargs work correctly during backward pass."""
     from torchsparsegradutils.utils.linear_cg import LinearCGSettings
@@ -190,9 +183,13 @@ def test_kwargs_backward_pass(device, value_dtype, layout):
     Bd1 = torch.rand(n, dtype=value_dtype, device=device).requires_grad_()
     Bd2 = Bd1.clone().detach().requires_grad_()
 
+    atol, rtol = Tolerances.iterative(value_dtype)
     # Test with custom settings
     settings = LinearCGSettings(
-        cg_tolerance=ATOL, max_cg_iterations=500, terminate_cg_by_size=False, verbose_linalg=False
+        cg_tolerance=atol,
+        max_cg_iterations=500,
+        terminate_cg_by_size=False,
+        verbose_linalg=False,
     )
 
     res_ref = torch.linalg.solve(Ad2, Bd2)
@@ -205,11 +202,10 @@ def test_kwargs_backward_pass(device, value_dtype, layout):
 
     # Check gradients
     nz_mask = As1.grad.to_dense() != 0.0
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL)
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=atol, rtol=rtol)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_multiple_kwargs(device, value_dtype):
     """Test sparse_generic_solve with multiple kwargs (like used in benchmarks)."""
     from torchsparsegradutils.utils.linear_cg import LinearCGSettings
@@ -219,19 +215,22 @@ def test_multiple_kwargs(device, value_dtype):
     A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
     B = torch.rand(n, dtype=value_dtype, device=device)
 
+    atol, rtol = Tolerances.iterative(value_dtype)
     # Test with multiple kwargs similar to the benchmark suite
     settings = LinearCGSettings(
-        cg_tolerance=1e-5, max_cg_iterations=1000, terminate_cg_by_size=False, verbose_linalg=False
+        cg_tolerance=atol,
+        max_cg_iterations=1000,
+        terminate_cg_by_size=False,
+        verbose_linalg=False,
     )
 
     # Pass both settings and additional kwargs
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg, settings=settings)
 
-    assert torch.allclose(X_test, X_ref, atol=ATOL)
+    assert torch.allclose(X_test, X_ref, atol=atol, rtol=rtol)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_kwargs_with_different_solvers_same_matrix():
     """Test that different solvers with their respective kwargs produce similar results."""
     from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
@@ -246,10 +245,11 @@ def test_kwargs_with_different_solvers_same_matrix():
     A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
     B = torch.rand(n, dtype=value_dtype, device=device)
 
+    atol, rtol = Tolerances.iterative(value_dtype)
     # Reference solution
     X_ref = torch.linalg.solve(A_dense, B)
 
-    # Test linear_cg with settings
+    # Test linear_cg with settings (use tighter tolerance for solver convergence)
     cg_settings = LinearCGSettings(cg_tolerance=1e-8, max_cg_iterations=1000)
     X_cg = sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg, settings=cg_settings)
 
@@ -262,10 +262,10 @@ def test_kwargs_with_different_solvers_same_matrix():
     X_minres = sparse_generic_solve(A, B, solve=minres, transpose_solve=minres, settings=minres_settings)
 
     # All solutions should be close to reference
-    assert torch.allclose(X_cg, X_ref, atol=ATOL)
-    assert torch.allclose(X_bicgstab, X_ref, atol=ATOL)
-    assert torch.allclose(X_minres, X_ref, atol=ATOL)
+    assert torch.allclose(X_cg, X_ref, atol=atol, rtol=rtol)
+    assert torch.allclose(X_bicgstab, X_ref, atol=atol, rtol=rtol)
+    assert torch.allclose(X_minres, X_ref, atol=atol, rtol=rtol)
 
     # All solutions should be close to each other
-    assert torch.allclose(X_cg, X_minres, atol=ATOL)
-    assert torch.allclose(X_bicgstab, X_minres, atol=ATOL)
+    assert torch.allclose(X_cg, X_minres, atol=atol, rtol=rtol)
+    assert torch.allclose(X_bicgstab, X_minres, atol=atol, rtol=rtol)

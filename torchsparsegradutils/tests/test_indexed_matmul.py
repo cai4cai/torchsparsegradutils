@@ -1,23 +1,13 @@
 import pytest
 import torch
+from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
 from torchsparsegradutils import gather_mm, segment_mm
-
-# Identify Testing Parameters
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda"))
 
 TEST_DATA = [
     # name  N, R, D1, D2
     ("small", 100, 32, 7, 10),
 ]
-
-INDEX_DTYPES = [torch.int32, torch.int64]
-VALUE_DTYPES = [torch.float32, torch.float64]
-
-ATOL = 1e-6  # relaxed tolerance to allow for float32
-RTOL = 1e-4
 
 
 # Define Test Names:
@@ -60,6 +50,8 @@ def device(request):
 
 
 def test_segment_mm(device, value_dtype, index_dtype, shapes):
+    # NOTE: value_dtype fixture not used - gather_mm has a bug with float64
+    # TODO: Fix gather_mm to support float64, then enable dtype testing here
     _, N, R, D1, D2 = shapes
 
     a = torch.randn((N, D1), device=device)
@@ -69,14 +61,17 @@ def test_segment_mm(device, value_dtype, index_dtype, shapes):
 
     ab = segment_mm(a, b, seglen_a)
 
+    atol, rtol = Tolerances.direct(torch.float32)  # default dtype
     k = 0
     for i in range(R):
         for j in range(seglen_a[i]):
-            assert torch.allclose(ab[k, :].squeeze(), a[k, :].squeeze() @ b[i, :, :].squeeze(), atol=ATOL, rtol=RTOL)
+            assert torch.allclose(ab[k, :].squeeze(), a[k, :].squeeze() @ b[i, :, :].squeeze(), atol=atol, rtol=rtol)
             k += 1
 
 
 def test_gather_mm(device, value_dtype, index_dtype, shapes):
+    # NOTE: value_dtype fixture not used - gather_mm has a bug with float64
+    # TODO: Fix gather_mm to support float64, then enable dtype testing here
     _, N, R, D1, D2 = shapes
 
     a = torch.randn((N, D1), device=device)
@@ -85,8 +80,9 @@ def test_gather_mm(device, value_dtype, index_dtype, shapes):
 
     ab = gather_mm(a, b, idx_b)
 
+    atol, rtol = Tolerances.direct(torch.float32)  # default dtype
     for i in range(N):
-        assert torch.allclose(ab[i, :].squeeze(), a[i, :].squeeze() @ b[idx_b[i], :, :].squeeze(), atol=ATOL, rtol=RTOL)
+        assert torch.allclose(ab[i, :].squeeze(), a[i, :].squeeze() @ b[idx_b[i], :, :].squeeze(), atol=atol, rtol=rtol)
 
 
 def test_segment_mm_raises_on_old_pytorch():

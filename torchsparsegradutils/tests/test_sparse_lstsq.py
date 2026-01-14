@@ -1,13 +1,9 @@
 import pytest
 import torch
+from test_config import DEVICES, Tolerances
 
 from torchsparsegradutils import sparse_generic_lstsq
 from torchsparsegradutils.utils.random_sparse import rand_sparse
-
-# Device fixture
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda:0"))
 
 
 def _id_device(d):
@@ -19,8 +15,8 @@ def device(request):
     return request.param
 
 
-# Tolerance for all tests
-RTOL = 1e-2
+# Least squares solver tolerances for float64
+RTOL = Tolerances.lstsq(torch.float64)
 
 
 # Test generic least-squares solve with single RHS

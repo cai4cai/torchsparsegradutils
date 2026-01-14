@@ -4,17 +4,10 @@ import numpy as np
 import pytest
 import scipy.sparse as nsp
 import torch
+from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES
 
 import torchsparsegradutils.cupy as tsgucupy
 from torchsparsegradutils.utils import rand_sparse
-
-# Device fixture
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda:0"))
-
-INDEX_DTYPES = [torch.int32, torch.int64]
-VALUE_DTYPES = [torch.float32, torch.float64]
 
 
 def _id_device(d):

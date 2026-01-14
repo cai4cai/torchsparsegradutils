@@ -1,23 +1,18 @@
 # MIT-licensed code imported from https://github.com/cornellius-gp/linear_operator
 # Minor modifications for torchsparsegradutils to remove dependencies
 
-import random
-
 import pytest
 import torch
+from test_config import Tolerances
 
 import torchsparsegradutils
 from torchsparsegradutils.utils import MINRESSettings
 from torchsparsegradutils.utils.minres import minres
 
+# Note: RNG seeding handled by conftest.py global fixture
 
-@pytest.fixture(autouse=True)
-def set_seed():
-    seed = 0
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    random.seed(seed)
+# Get iterative solver tolerances for float64 (used throughout this file)
+ATOL, RTOL = Tolerances.iterative(torch.float64)
 
 
 def _run_minres(rhs_shape, shifts=None, matrix_batch_shape=torch.Size([])):
@@ -45,7 +40,7 @@ def _run_minres(rhs_shape, shifts=None, matrix_batch_shape=torch.Size([])):
     if rhs.dim() == 1:
         actual = actual.squeeze(-1)
     # assert closeness
-    assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(solves, actual, atol=ATOL, rtol=RTOL)
 
 
 def test_minres_vec():

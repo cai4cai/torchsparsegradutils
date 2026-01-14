@@ -13,13 +13,9 @@ including:
 import numpy as np
 import pytest
 import torch
+from test_config import DEVICES
 
 from torchsparsegradutils.utils.dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
-
-# Test configurations
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda"))
 
 # Test parameters
 TEST_DIMENSIONS = [2, 4, 8]  # Different dimensionalities
@@ -60,7 +56,6 @@ class TestMeanHotellingT2Test:
 
     def test_correct_mean_should_pass(self, device, dimension, batch_size_fixture):
         """Test that correct means pass the test at reasonable confidence levels."""
-        torch.manual_seed(42)
         n = 100_000  # Large sample for stability
 
         # True parameters
@@ -84,7 +79,6 @@ class TestMeanHotellingT2Test:
 
     def test_wrong_mean_should_fail(self, device, dimension):
         """Test that significantly wrong means fail the test."""
-        torch.manual_seed(42)
         n = 100_000
         batch_size = 2
 
@@ -161,7 +155,6 @@ class TestCovNagaoTest:
 
     def test_correct_covariance_should_pass(self, device, dimension, batch_size_fixture):
         """Test that correct covariances pass the test at reasonable confidence levels."""
-        torch.manual_seed(42)
         n = 100_000  # Large sample for stability
 
         # True parameters
@@ -187,7 +180,6 @@ class TestCovNagaoTest:
 
     def test_wrong_covariance_should_fail(self, device, dimension):
         """Test that significantly wrong covariances fail the test."""
-        torch.manual_seed(42)
         n = 10000
         batch_size = 2
 
@@ -241,7 +233,6 @@ class TestIntegrationBehavior:
 
     def test_confidence_level_ordering(self):
         """Test that higher confidence levels are more permissive."""
-        torch.manual_seed(42)
         p, batch_size, n = 3, 1, 1000
 
         # Create borderline case
@@ -269,8 +260,6 @@ class TestIntegrationBehavior:
     def test_known_statistical_example(self):
         """Test with a known statistical example for validation."""
         # Create a simple 2D case where we know the expected behavior
-        torch.manual_seed(12345)  # Fixed seed for reproducibility
-
         n = 100000  # Very large sample for stable statistics
         p = 2
         batch_size = 1

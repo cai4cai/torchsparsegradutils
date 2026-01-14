@@ -22,13 +22,12 @@ import random
 
 import pytest
 import torch
+from test_config import DEVICES, Tolerances
 
 from torchsparsegradutils.utils import lsmr
 
-# Device fixture
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda:0"))
+# Get iterative solver tolerances for float64 (used throughout this file)
+ATOL, RTOL = Tolerances.iterative(torch.float64)
 
 
 def _id_device(d):
@@ -87,7 +86,7 @@ def lsmrtest(m, n, damp, dtype, device):
     conlim = 1e10
     itnlim = 10 * n
     x = lsmr(A, b, damp=damp, atol=atol, btol=btol, conlim=conlim, maxiter=itnlim)[0]
-    assert torch.allclose(Afun(x), b, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(Afun(x), b, atol=ATOL, rtol=RTOL)
 
 
 # --- Tests for real-valued systems ---
@@ -99,7 +98,7 @@ def test_identity_case1(device):
     xtrue = torch.zeros((n, 1), dtype=torch.float64, device=device)
     b = A.matmul(xtrue)
     x = lsmr(A, b)[0]
-    assert torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(x, xtrue, atol=ATOL, rtol=RTOL)
 
 
 def test_identity_case2(device):
@@ -108,7 +107,7 @@ def test_identity_case2(device):
     xtrue = torch.ones((n, 1), dtype=torch.float64, device=device)
     b = A.matmul(xtrue)
     x = lsmr(A, b)[0]
-    assert torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(x, xtrue, atol=ATOL, rtol=RTOL)
 
 
 def test_identity_case3(device):
@@ -117,7 +116,7 @@ def test_identity_case3(device):
     xtrue = torch.arange(n, 0, -1, dtype=torch.float64, device=device).unsqueeze(0)
     b = A.matmul(xtrue.unsqueeze(-1)).squeeze(-1)
     x = lsmr(A, b)[0]
-    assert torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(x, xtrue, atol=ATOL, rtol=RTOL)
 
 
 def test_bidiagonalA(device):
@@ -127,14 +126,14 @@ def test_bidiagonalA(device):
     xtrue = torch.arange(n, 0, -1, dtype=torch.float64, device=device)
     b = A.matmul(xtrue)
     x = lsmr(A, b)[0]
-    assert torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(x, xtrue, atol=ATOL, rtol=RTOL)
 
 
 def test_scalarB(device):
     A = torch.tensor([[1.0, 2.0]], dtype=torch.float64, device=device)
     b = torch.tensor([3.0], dtype=torch.float64, device=device)
     x = lsmr(A, b)[0]
-    assert torch.allclose(A.matmul(x), b, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(A.matmul(x), b, atol=ATOL, rtol=RTOL)
 
 
 # --- Tests for complex systems ---
@@ -147,7 +146,7 @@ def test_complexX(device, cdtype):
     xtrue = torch.arange(n, 0, -1, dtype=torch.float64, device=device).to(dtype=cdtype) * (1 + 1j)
     b = A.matmul(xtrue)
     x = lsmr(A, b)[0]
-    assert torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(x, xtrue, atol=ATOL, rtol=RTOL)
 
 
 @pytest.mark.parametrize("cdtype", [torch.complex128])
@@ -158,7 +157,7 @@ def test_complexX0(device, cdtype):
     b = A.matmul(xtrue)
     x0 = torch.zeros(n, dtype=cdtype, device=device)
     x = lsmr(A, b, x0=x0)[0]
-    assert torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(x, xtrue, atol=ATOL, rtol=RTOL)
 
 
 @pytest.mark.parametrize("cdtype", [torch.complex128])
@@ -168,7 +167,7 @@ def test_complexA(device, cdtype):
     xtrue = torch.arange(n, 0, -1, dtype=torch.float64, device=device).to(dtype=cdtype)
     b = A.matmul(xtrue)
     x = lsmr(A, b)[0]
-    assert torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(x, xtrue, atol=ATOL, rtol=RTOL)
 
 
 @pytest.mark.parametrize("cdtype", [torch.complex128])
@@ -178,7 +177,7 @@ def test_complexB(device, cdtype):
     xtrue = torch.arange(n, 0, -1, dtype=torch.float64, device=device).to(dtype=cdtype) * (1 + 1j)
     b = A.matmul(xtrue)
     x = lsmr(A, b)[0]
-    assert torch.allclose(x, xtrue, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(x, xtrue, atol=ATOL, rtol=RTOL)
 
 
 def test_columnB(device):
@@ -186,7 +185,7 @@ def test_columnB(device):
     A = torch.eye(n, dtype=torch.float64, device=device)
     b = torch.ones((n, 1), dtype=torch.float64, device=device)
     x = lsmr(A, b)[0]
-    assert torch.allclose(A.matmul(x), b, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(A.matmul(x), b, atol=ATOL, rtol=RTOL)
 
 
 # --- Test initialization and warm-start ---
@@ -196,13 +195,13 @@ def test_initialization(device):
     dtype = torch.float64
     G, b = _gettestproblem(dtype, device)
     x_ref = lsmr(G, b)[0]
-    assert torch.allclose(G @ x_ref, b, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(G @ x_ref, b, atol=ATOL, rtol=RTOL)
     x0 = torch.zeros_like(b)
     x = lsmr(G, b, x0=x0)[0]
-    assert torch.allclose(x, x_ref, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(x, x_ref, atol=ATOL, rtol=RTOL)
     x0_ws = lsmr(G, b, maxiter=1)[0]
     x = lsmr(G, b, x0=x0_ws)[0]
-    assert torch.allclose(G @ x, b, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(G @ x, b, atol=ATOL, rtol=RTOL)
 
 
 # --- Verbose run ---
@@ -226,7 +225,7 @@ def test_unchanged_x0(device):
     x0 = torch.ones(n, dtype=dtype, device=device)
     x0_copy = x0.clone()
     _ = lsmr(A, b, x0=x0)
-    assert torch.allclose(x0, x0_copy, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(x0, x0_copy, atol=ATOL, rtol=RTOL)
 
 
 def test_normr(device):
@@ -238,7 +237,7 @@ def test_normr(device):
     Afun = A.matmul
     b = Afun(xtrue)
     x = lsmr(A, b)[0]
-    assert torch.allclose(Afun(x), b, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(Afun(x), b, atol=ATOL, rtol=RTOL)
 
 
 def test_normar(device):
@@ -252,4 +251,4 @@ def test_normar(device):
     b = Afun(xtrue)
     x = lsmr(A, b)[0]
     residual = b - Afun(x)
-    assert torch.allclose(Arfun(residual), torch.zeros_like(x), atol=1e-3, rtol=1e-4)
+    assert torch.allclose(Arfun(residual), torch.zeros_like(x), atol=ATOL, rtol=RTOL)

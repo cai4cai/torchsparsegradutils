@@ -10,6 +10,7 @@ import pytest
 import torch
 import yaml
 from packaging.version import parse as parse_version
+from test_config import DEVICES, INDEX_DTYPES, SPARSE_LAYOUTS, VALUE_DTYPES
 
 # Import from the new pairwise_encoder module (recommended)
 from torchsparsegradutils.encoders import PairwiseEncoder
@@ -27,15 +28,6 @@ from torchsparsegradutils.utils.utils import _sort_coo_indices
 if parse_version(torch.__version__) >= parse_version("2.0"):
     # https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html
     torch.sparse.check_sparse_tensor_invariants.enable()
-
-# Overall testing parameters:
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda"))
-
-INDICES_DTYPES = [torch.int32, torch.int64]
-VALUES_DTYPES = [torch.float32, torch.float64]
-SPASRE_LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
 RADII = [1, 1.5, 2]
 VOLUME_SHAPES = [(3, 5, 5, 5), (5, 7, 7, 7)]
@@ -94,17 +86,17 @@ def device(request):
     return request.param
 
 
-@pytest.fixture(params=INDICES_DTYPES, ids=lambda x: str(x).split(".")[-1])
+@pytest.fixture(params=INDEX_DTYPES, ids=lambda x: str(x).split(".")[-1])
 def indices_dtype(request):
     return request.param
 
 
-@pytest.fixture(params=VALUES_DTYPES, ids=lambda x: str(x).split(".")[-1])
+@pytest.fixture(params=VALUE_DTYPES, ids=lambda x: str(x).split(".")[-1])
 def values_dtype(request):
     return request.param
 
 
-@pytest.fixture(params=SPASRE_LAYOUTS, ids=lambda x: str(x).split(".")[-1].split("_")[-1].upper())
+@pytest.fixture(params=SPARSE_LAYOUTS, ids=lambda x: str(x).split(".")[-1].split("_")[-1].upper())
 def layout(request):
     return request.param
 
