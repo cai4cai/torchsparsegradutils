@@ -80,7 +80,6 @@ def solver(request):
     return request.param
 
 
-@pytest.mark.flaky(reruns=5)
 def test_solve_forward_cupy(layout, device, value_dtype, index_dtype, solver, shapes):
     _, A_shape, B_shape, num_zero = shapes
 
@@ -89,7 +88,9 @@ def test_solve_forward_cupy(layout, device, value_dtype, index_dtype, solver, sh
         pytest.skip("Iterative solvers only support vector RHS")
 
     n = A_shape[0]
-    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
+    A_sp, A_dense = make_spd_sparse(
+        n, layout, value_dtype, index_dtype, device, nz=num_zero
+    )
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_solve_c4t(A_sp, B, solve=solver, transpose_solve=solver)
@@ -100,7 +101,6 @@ def test_solve_forward_cupy(layout, device, value_dtype, index_dtype, solver, sh
         assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_solve_backward_cupy(layout, device, value_dtype, index_dtype, solver, shapes):
     _, A_shape, B_shape, num_zero = shapes
 
@@ -109,7 +109,9 @@ def test_solve_backward_cupy(layout, device, value_dtype, index_dtype, solver, s
         pytest.skip("Iterative solvers only support vector RHS")
 
     n = A_shape[0]
-    A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
+    A_sp, A_dense = make_spd_sparse(
+        n, layout, value_dtype, index_dtype, device, nz=num_zero
+    )
     A_sp = A_sp.detach().clone().requires_grad_()
     Ad = A_dense.detach().clone().requires_grad_()
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
@@ -130,7 +132,6 @@ def test_solve_backward_cupy(layout, device, value_dtype, index_dtype, solver, s
         assert torch.allclose(Bd.grad, Bd2.grad, atol=ATOL)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_cupy_cg_kwargs(device, value_dtype, layout):
     """Test sparse_solve_c4t with CG solver kwargs."""
     n = 10
@@ -139,12 +140,13 @@ def test_cupy_cg_kwargs(device, value_dtype, layout):
 
     # Test with custom CG kwargs
     X_ref = torch.linalg.solve(A_dense, B)
-    X_test = sparse_solve_c4t(A_sp, B, solve="cg", transpose_solve="cg", tol=1e-6, atol=1e-8, maxiter=500)
+    X_test = sparse_solve_c4t(
+        A_sp, B, solve="cg", transpose_solve="cg", tol=1e-6, atol=1e-8, maxiter=500
+    )
 
     assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_cupy_cgs_kwargs(device, value_dtype, layout):
     """Test sparse_solve_c4t with CGS solver kwargs."""
     n = 10
@@ -153,12 +155,13 @@ def test_cupy_cgs_kwargs(device, value_dtype, layout):
 
     # Test with custom CGS kwargs
     X_ref = torch.linalg.solve(A_dense, B)
-    X_test = sparse_solve_c4t(A_sp, B, solve="cgs", transpose_solve="cgs", tol=1e-6, atol=1e-8, maxiter=500)
+    X_test = sparse_solve_c4t(
+        A_sp, B, solve="cgs", transpose_solve="cgs", tol=1e-6, atol=1e-8, maxiter=500
+    )
 
     assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_cupy_minres_kwargs(device, value_dtype, layout):
     """Test sparse_solve_c4t with MINRES solver kwargs."""
     n = 10
@@ -167,12 +170,19 @@ def test_cupy_minres_kwargs(device, value_dtype, layout):
 
     # Test with custom MINRES kwargs
     X_ref = torch.linalg.solve(A_dense, B)
-    X_test = sparse_solve_c4t(A_sp, B, solve="minres", transpose_solve="minres", tol=1e-6, atol=1e-8, maxiter=500)
+    X_test = sparse_solve_c4t(
+        A_sp,
+        B,
+        solve="minres",
+        transpose_solve="minres",
+        tol=1e-6,
+        atol=1e-8,
+        maxiter=500,
+    )
 
     assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_cupy_gmres_kwargs(device, value_dtype, layout):
     """Test sparse_solve_c4t with GMRES solver kwargs."""
     n = 10
@@ -181,12 +191,19 @@ def test_cupy_gmres_kwargs(device, value_dtype, layout):
 
     # Test with custom GMRES kwargs
     X_ref = torch.linalg.solve(A_dense, B)
-    X_test = sparse_solve_c4t(A_sp, B, solve="gmres", transpose_solve="gmres", tol=1e-6, atol=1e-8, maxiter=500)
+    X_test = sparse_solve_c4t(
+        A_sp,
+        B,
+        solve="gmres",
+        transpose_solve="gmres",
+        tol=1e-6,
+        atol=1e-8,
+        maxiter=500,
+    )
 
     assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_cupy_kwargs_backward_pass(device, value_dtype, layout):
     """Test that CuPy kwargs work correctly during backward pass."""
     n = 10
@@ -200,7 +217,9 @@ def test_cupy_kwargs_backward_pass(device, value_dtype, layout):
 
     # Test with custom kwargs
     res_ref = torch.linalg.solve(Ad2, Bd2)
-    res_test = sparse_solve_c4t(A_sp1, Bd1, solve="cg", transpose_solve="cg", tol=1e-6, atol=1e-8, maxiter=500)
+    res_test = sparse_solve_c4t(
+        A_sp1, Bd1, solve="cg", transpose_solve="cg", tol=1e-6, atol=1e-8, maxiter=500
+    )
 
     # Backward pass
     grad_output = torch.rand_like(res_test)
@@ -213,7 +232,6 @@ def test_cupy_kwargs_backward_pass(device, value_dtype, layout):
     assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_cupy_multiple_kwargs(device, value_dtype):
     """Test sparse_solve_c4t with multiple kwargs (like used in benchmarks)."""
     n = 10
@@ -223,12 +241,13 @@ def test_cupy_multiple_kwargs(device, value_dtype):
 
     # Test with multiple kwargs similar to the benchmark suite
     X_ref = torch.linalg.solve(A_dense, B)
-    X_test = sparse_solve_c4t(A_sp, B, solve="cgs", transpose_solve="cgs", tol=1e-5, atol=1e-8, maxiter=1000)
+    X_test = sparse_solve_c4t(
+        A_sp, B, solve="cgs", transpose_solve="cgs", tol=1e-5, atol=1e-8, maxiter=1000
+    )
 
     assert torch.allclose(X_test, X_ref, atol=ATOL)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_cupy_spsolve_kwargs_ignored():
     """Test that spsolve ignores tolerance kwargs as expected."""
     device = torch.device("cpu")
@@ -257,7 +276,6 @@ def test_cupy_spsolve_kwargs_ignored():
     assert torch.allclose(X_spsolve, X_ref, atol=1e-12)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_cupy_kwargs_with_different_solvers():
     """Test that CG and CGS solvers with their respective kwargs produce similar results."""
     device = torch.device("cpu")
@@ -269,10 +287,14 @@ def test_cupy_kwargs_with_different_solvers():
     B = torch.rand(n, dtype=value_dtype, device=device)
 
     # Test CG with kwargs
-    X_cg = sparse_solve_c4t(A_sp, B, solve="cg", transpose_solve="cg", tol=1e-8, atol=1e-10, maxiter=1000)
+    X_cg = sparse_solve_c4t(
+        A_sp, B, solve="cg", transpose_solve="cg", tol=1e-8, atol=1e-10, maxiter=1000
+    )
 
     # Test CGS with kwargs
-    X_cgs = sparse_solve_c4t(A_sp, B, solve="cgs", transpose_solve="cgs", tol=1e-8, atol=1e-10, maxiter=1000)
+    X_cgs = sparse_solve_c4t(
+        A_sp, B, solve="cgs", transpose_solve="cgs", tol=1e-8, atol=1e-10, maxiter=1000
+    )
 
     # Iterative solutions should be close to each other
     assert torch.allclose(X_cg, X_cgs, atol=ATOL)

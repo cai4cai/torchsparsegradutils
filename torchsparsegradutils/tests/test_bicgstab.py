@@ -21,7 +21,9 @@ def device(request):
 def test_bicgstab(device):
     # setup SPD test problem
     size = 100
-    matrix_dense = torch.randn(size, size, dtype=torch.float64, device=device) + 10 * torch.eye(size, device=device)
+    matrix_dense = torch.randn(
+        size, size, dtype=torch.float64, device=device
+    ) + 10 * torch.eye(size, device=device)
     matrix_sparse = matrix_dense.to_sparse_csr()
     rhs = torch.randn(size, dtype=torch.float64, device=device)
     # reference solution
@@ -37,13 +39,12 @@ def test_bicgstab(device):
     assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_bicgstab_2d_rhs(device):
     size = 100
     # build SPD test problem
-    matrix_dense = torch.randn(size, size, dtype=torch.float64, device=device) + 10 * torch.eye(
-        size, dtype=torch.float64, device=device
-    )
+    matrix_dense = torch.randn(
+        size, size, dtype=torch.float64, device=device
+    ) + 10 * torch.eye(size, dtype=torch.float64, device=device)
     matrix_sparse = matrix_dense.to_sparse_csr()
 
     # multiple RHS columns

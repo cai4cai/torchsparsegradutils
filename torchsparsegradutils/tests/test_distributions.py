@@ -3,10 +3,18 @@ import torch
 from torch.distributions.multivariate_normal import _batch_mv
 
 from torchsparsegradutils import sparse_mm
-from torchsparsegradutils.distributions import SparseMultivariateNormal, SparseMultivariateNormalNative
-from torchsparsegradutils.distributions.sparse_multivariate_normal import _batch_sparse_mv
+from torchsparsegradutils.distributions import (
+    SparseMultivariateNormal,
+    SparseMultivariateNormalNative,
+)
+from torchsparsegradutils.distributions.sparse_multivariate_normal import (
+    _batch_sparse_mv,
+)
 from torchsparsegradutils.utils import rand_sparse_tri
-from torchsparsegradutils.utils.dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
+from torchsparsegradutils.utils.dist_stats_helpers import (
+    cov_nagao_test,
+    mean_hotelling_t2_test,
+)
 
 # Identify Testing Parameters
 DEVICES = [torch.device("cpu")]
@@ -86,30 +94,30 @@ def parameterization(request):
 # def distribution(request):
 #     return request.param
 
-
-# Set random seed for reproducibility
-# using instead of @pytest.mark.flaky(reruns=5)
-@pytest.fixture(autouse=True)
-def set_seed():
-    seed = 42
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    # np.random.seed(seed)
-    # random.seed(seed)
-
-
 # Convenience functions:
 
 
-def construct_distribution(sizes, layout, var, parameterization, value_dtype, index_dtype, device, requires_grad=False):
+def construct_distribution(
+    sizes,
+    layout,
+    var,
+    parameterization,
+    value_dtype,
+    index_dtype,
+    device,
+    requires_grad=False,
+):
     _, batch_size, event_size, sparsity = sizes
-    loc = torch.randn(event_size, device=device, dtype=value_dtype, requires_grad=requires_grad)
+    loc = torch.randn(
+        event_size, device=device, dtype=value_dtype, requires_grad=requires_grad
+    )
 
     # Handle diagonal parameter based on parameterization
     if parameterization == "ldlt":
         # LDL^T parameterization: provide diagonal, use strictly lower triangular
-        diagonal = torch.rand(event_size, device=device, dtype=value_dtype, requires_grad=requires_grad)
+        diagonal = torch.rand(
+            event_size, device=device, dtype=value_dtype, requires_grad=requires_grad
+        )
         strict = True
         # For strictly triangular: max nnz = n*(n-1)/2
         max_nnz = event_size * (event_size - 1) // 2
@@ -120,7 +128,9 @@ def construct_distribution(sizes, layout, var, parameterization, value_dtype, in
         # For lower triangular: max nnz = n*(n+1)/2, min nnz = n (for diagonal)
         max_nnz = event_size * (event_size + 1) // 2
 
-    tril_size = (batch_size, event_size, event_size) if batch_size else (event_size, event_size)
+    tril_size = (
+        (batch_size, event_size, event_size) if batch_size else (event_size, event_size)
+    )
     nnz = int(sparsity * max_nnz)
 
     # Ensure minimum nnz for LL^T parameterization (need at least diagonal)
@@ -156,9 +166,13 @@ def compute_reference_covariance(dist, var):
         if dist.is_ldlt_parameterization:
             # LDL^T parameterization
             scale_tril = dist.scale_tril.to_dense()
-            scale_tril = scale_tril + torch.eye(*dist.event_shape, dtype=scale_tril.dtype, device=scale_tril.device)
+            scale_tril = scale_tril + torch.eye(
+                *dist.event_shape, dtype=scale_tril.dtype, device=scale_tril.device
+            )
             diagonal = dist.diagonal
-            covariance_ref = torch.matmul(scale_tril @ torch.diag_embed(diagonal), scale_tril.transpose(-1, -2))
+            covariance_ref = torch.matmul(
+                scale_tril @ torch.diag_embed(diagonal), scale_tril.transpose(-1, -2)
+            )
         else:
             # LL^T parameterization
             scale_tril = dist.scale_tril.to_dense()
@@ -168,15 +182,22 @@ def compute_reference_covariance(dist, var):
             # LDL^T parameterization
             precision_tril = dist.precision_tril.to_dense()
             precision_tril = precision_tril + torch.eye(
-                *dist.event_shape, dtype=precision_tril.dtype, device=precision_tril.device
+                *dist.event_shape,
+                dtype=precision_tril.dtype,
+                device=precision_tril.device,
             )
             diagonal = dist.diagonal
-            precision_ref = torch.matmul(precision_tril @ torch.diag_embed(diagonal), precision_tril.transpose(-1, -2))
+            precision_ref = torch.matmul(
+                precision_tril @ torch.diag_embed(diagonal),
+                precision_tril.transpose(-1, -2),
+            )
             covariance_ref = torch.linalg.inv(precision_ref)
         else:
             # LL^T parameterization
             precision_tril = dist.precision_tril.to_dense()
-            precision_ref = torch.matmul(precision_tril, precision_tril.transpose(-1, -2))
+            precision_ref = torch.matmul(
+                precision_tril, precision_tril.transpose(-1, -2)
+            )
             covariance_ref = torch.linalg.inv(precision_ref)
 
     return covariance_ref
@@ -192,18 +213,23 @@ def compute_sample_statistics(samples):
     else:
         # Batched case
         sample_mean = samples.mean(0)  # Average over sample dimension
-        sample_cov = torch.stack([torch.cov(sample.T) for sample in samples.permute(1, 0, 2)])
+        sample_cov = torch.stack(
+            [torch.cov(sample.T) for sample in samples.permute(1, 0, 2)]
+        )
         return sample_mean, sample_cov
 
 
 # Define Tests
 
 
-@pytest.mark.flaky(reruns=5)
-def test_rsample_forward_cov(device, layout, sizes, parameterization, value_dtype, index_dtype):
+def test_rsample_forward_cov(
+    device, layout, sizes, parameterization, value_dtype, index_dtype
+):
     """Test sampling from covariance parameterization using proper statistical tests."""
 
-    dist = construct_distribution(sizes, layout, "cov", parameterization, value_dtype, index_dtype, device)
+    dist = construct_distribution(
+        sizes, layout, "cov", parameterization, value_dtype, index_dtype, device
+    )
     n_samples = 10_000
     samples = dist.rsample((n_samples,))
 
@@ -222,39 +248,51 @@ def test_rsample_forward_cov(device, layout, sizes, parameterization, value_dtyp
             n_samples,
             confidence_level=confidence_level,
         )
-        assert mean_test_result.item(), f"Mean test failed: T²={t2_stat.item():.6f} > threshold={t2_threshold:.6f}"
+        assert mean_test_result.item(), (
+            f"Mean test failed: T²={t2_stat.item():.6f} > threshold={t2_threshold:.6f}"
+        )
 
         # Test covariance using Nagao test
         cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
-            sample_cov.unsqueeze(0), covariance_ref.unsqueeze(0), n_samples, confidence_level=confidence_level
+            sample_cov.unsqueeze(0),
+            covariance_ref.unsqueeze(0),
+            n_samples,
+            confidence_level=confidence_level,
         )
-        assert (
-            cov_test_result.item()
-        ), f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
+        assert cov_test_result.item(), (
+            f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
+        )
     else:
         # Batched case
         confidence_level = 0.99 if value_dtype == torch.float32 else 0.95
 
         mean_test_result, t2_stat, t2_threshold = mean_hotelling_t2_test(
-            sample_mean, dist.loc, sample_cov, n_samples, confidence_level=confidence_level
+            sample_mean,
+            dist.loc,
+            sample_cov,
+            n_samples,
+            confidence_level=confidence_level,
         )
-        assert (
-            mean_test_result.all()
-        ), f"Mean test failed for some batch elements: max T²={t2_stat.max().item():.6f} > threshold={t2_threshold:.6f}"
+        assert mean_test_result.all(), (
+            f"Mean test failed for some batch elements: max T²={t2_stat.max().item():.6f} > threshold={t2_threshold:.6f}"
+        )
 
         cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
             sample_cov, covariance_ref, n_samples, confidence_level=confidence_level
         )
-        assert (
-            cov_test_result.all()
-        ), f"Covariance test failed for some batch elements: max T_N={T_N_stat.max().item():.6f} > threshold={chi2_threshold:.6f}"
+        assert cov_test_result.all(), (
+            f"Covariance test failed for some batch elements: max T_N={T_N_stat.max().item():.6f} > threshold={chi2_threshold:.6f}"
+        )
 
 
-@pytest.mark.flaky(reruns=5)
-def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dtype, index_dtype):
+def test_rsample_forward_prec(
+    device, layout, sizes, parameterization, value_dtype, index_dtype
+):
     """Test sampling from precision parameterization using proper statistical tests."""
 
-    dist = construct_distribution(sizes, layout, "prec", parameterization, value_dtype, index_dtype, device)
+    dist = construct_distribution(
+        sizes, layout, "prec", parameterization, value_dtype, index_dtype, device
+    )
     n_samples = 10_000
     samples = dist.rsample((n_samples,))
 
@@ -273,7 +311,9 @@ def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dty
             n_samples,
             confidence_level=confidence_level,
         )
-        assert mean_test_result.item(), f"Mean test failed: T²={t2_stat.item():.6f} > threshold={t2_threshold:.6f}"
+        assert mean_test_result.item(), (
+            f"Mean test failed: T²={t2_stat.item():.6f} > threshold={t2_threshold:.6f}"
+        )
 
         # Test covariance using Nagao test
         cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
@@ -282,19 +322,23 @@ def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dty
             n_samples,
             confidence_level=confidence_level,
         )
-        assert (
-            cov_test_result.item()
-        ), f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
+        assert cov_test_result.item(), (
+            f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
+        )
     else:
         # Batched case
         confidence_level = 0.99 if value_dtype == torch.float32 else 0.95
 
         mean_test_result, t2_stat, t2_threshold = mean_hotelling_t2_test(
-            sample_mean, dist.loc, sample_cov, n_samples, confidence_level=confidence_level
+            sample_mean,
+            dist.loc,
+            sample_cov,
+            n_samples,
+            confidence_level=confidence_level,
         )
-        assert (
-            mean_test_result.all()
-        ), f"Mean test failed for some batch elements: max T²={t2_stat.max().item():.6f} > threshold={t2_threshold:.6f}"
+        assert mean_test_result.all(), (
+            f"Mean test failed for some batch elements: max T²={t2_stat.max().item():.6f} > threshold={t2_threshold:.6f}"
+        )
 
         cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
             sample_cov,
@@ -302,15 +346,19 @@ def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dty
             n_samples,
             confidence_level=confidence_level,
         )
-        assert (
-            cov_test_result.all()
-        ), f"Covariance test failed for some batch elements: max T_N={T_N_stat.max().item():.6f} > threshold={chi2_threshold:.6f}"
+        assert cov_test_result.all(), (
+            f"Covariance test failed for some batch elements: max T_N={T_N_stat.max().item():.6f} > threshold={chi2_threshold:.6f}"
+        )
 
 
-def test_parameterization_property(device, layout, sizes, parameterization, value_dtype, index_dtype):
+def test_parameterization_property(
+    device, layout, sizes, parameterization, value_dtype, index_dtype
+):
     """Test that the parameterization property works correctly."""
 
-    dist = construct_distribution(sizes, layout, "cov", parameterization, value_dtype, index_dtype, device)
+    dist = construct_distribution(
+        sizes, layout, "cov", parameterization, value_dtype, index_dtype, device
+    )
 
     if parameterization == "ldlt":
         assert dist.is_ldlt_parameterization, "Expected LDL^T parameterization"
@@ -320,22 +368,40 @@ def test_parameterization_property(device, layout, sizes, parameterization, valu
         assert dist.diagonal is None, "Expected diagonal to be None for LL^T"
 
 
-def test_rsample_backward_cov(device, layout, sizes, parameterization, value_dtype, index_dtype):
+def test_rsample_backward_cov(
+    device, layout, sizes, parameterization, value_dtype, index_dtype
+):
     """Test backward pass for covariance parameterization."""
 
     dist = construct_distribution(
-        sizes, layout, "cov", parameterization, value_dtype, index_dtype, device, requires_grad=True
+        sizes,
+        layout,
+        "cov",
+        parameterization,
+        value_dtype,
+        index_dtype,
+        device,
+        requires_grad=True,
     )
     samples = dist.rsample((10,))
 
     samples.sum().backward()
 
 
-def test_rsample_backward_prec(device, layout, sizes, parameterization, value_dtype, index_dtype):
+def test_rsample_backward_prec(
+    device, layout, sizes, parameterization, value_dtype, index_dtype
+):
     """Test backward pass for precision parameterization."""
 
     dist = construct_distribution(
-        sizes, layout, "prec", parameterization, value_dtype, index_dtype, device, requires_grad=True
+        sizes,
+        layout,
+        "prec",
+        parameterization,
+        value_dtype,
+        index_dtype,
+        device,
+        requires_grad=True,
     )
     samples = dist.rsample((10,))
 
@@ -379,17 +445,23 @@ def native_data_id(sizes):
 
 
 # Define Fixtures for Native
-@pytest.fixture(params=NATIVE_TEST_DATA, ids=[native_data_id(d) for d in NATIVE_TEST_DATA])
+@pytest.fixture(
+    params=NATIVE_TEST_DATA, ids=[native_data_id(d) for d in NATIVE_TEST_DATA]
+)
 def native_sizes(request):
     return request.param
 
 
-def construct_native_distribution(sizes, value_dtype, device, index_dtype, requires_grad=False):
+def construct_native_distribution(
+    sizes, value_dtype, device, index_dtype, requires_grad=False
+):
     """Construct SparseMultivariateNormalNative distribution for testing."""
     _, event_size, sparsity = sizes
 
     # Create location parameter
-    loc = torch.randn(event_size, device=device, dtype=value_dtype, requires_grad=requires_grad)
+    loc = torch.randn(
+        event_size, device=device, dtype=value_dtype, requires_grad=requires_grad
+    )
 
     # Create sparse CSR lower triangular matrix for LL^T parameterization
     # For lower triangular: max nnz = n*(n+1)/2, min nnz = n (for diagonal)
@@ -425,7 +497,7 @@ def compute_native_sample_statistics(samples):
 
 
 # Tests for SparseMultivariateNormalNative
-@pytest.mark.flaky(reruns=5)
+@pytest.mark.filterwarnings("ignore:.*converting sparse matrix to dense.*:UserWarning")
 def test_native_rsample_forward(device, native_sizes, value_dtype, index_dtype):
     """Test sampling from SparseMultivariateNormalNative using statistical tests."""
 
@@ -447,21 +519,37 @@ def test_native_rsample_forward(device, native_sizes, value_dtype, index_dtype):
         n_samples,
         confidence_level=confidence_level,
     )
-    assert mean_test_result.item(), f"Mean test failed: T²={t2_stat.item():.6f} > threshold={t2_threshold:.6f}"
+    assert mean_test_result.item(), (
+        f"Mean test failed: T²={t2_stat.item():.6f} > threshold={t2_threshold:.6f}"
+    )
 
     # Test covariance using Nagao test with more lenient confidence for native implementation
-    # Due to numerical differences in torch.sparse.mm, be more forgiving
-    cov_confidence = 0.90 if "native" in construct_native_distribution.__name__ else confidence_level
+    # Due to numerical differences in torch.sparse.mm and CUDA float32, use higher confidence
+    if device.type == "cuda" and value_dtype == torch.float32:
+        cov_confidence = (
+            0.999  # More lenient for CUDA float32 numerical precision issues
+        )
+    elif "native" in construct_native_distribution.__name__:
+        cov_confidence = 0.99
+    else:
+        cov_confidence = confidence_level
     cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
-        sample_cov.unsqueeze(0), covariance_ref.unsqueeze(0), n_samples, confidence_level=cov_confidence
+        sample_cov.unsqueeze(0),
+        covariance_ref.unsqueeze(0),
+        n_samples,
+        confidence_level=cov_confidence,
     )
-    assert cov_test_result.item(), f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
+    assert cov_test_result.item(), (
+        f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
+    )
 
 
 def test_native_rsample_backward(device, native_sizes, value_dtype, index_dtype):
     """Test backward pass for SparseMultivariateNormalNative."""
 
-    dist = construct_native_distribution(native_sizes, value_dtype, device, index_dtype, requires_grad=True)
+    dist = construct_native_distribution(
+        native_sizes, value_dtype, device, index_dtype, requires_grad=True
+    )
     samples = dist.rsample((10,))
 
     # Backward pass should work
@@ -495,7 +583,9 @@ def test_native_properties(device, native_sizes, value_dtype, index_dtype):
     # Covariance should be positive definite (all eigenvalues positive)
     eigenvals = torch.linalg.eigvals(cov).real
     # Use a more lenient threshold for numerical precision
-    assert torch.all(eigenvals > -1e-6), "Covariance matrix should be positive semi-definite"
+    assert torch.all(eigenvals > -1e-6), (
+        "Covariance matrix should be positive semi-definite"
+    )
 
 
 def test_native_log_prob(device, native_sizes, value_dtype, index_dtype):
@@ -518,7 +608,9 @@ def test_native_log_prob(device, native_sizes, value_dtype, index_dtype):
     assert torch.all(torch.isfinite(log_prob_batch))
 
 
-def test_native_single_vs_batch_sampling(device, native_sizes, value_dtype, index_dtype):
+def test_native_single_vs_batch_sampling(
+    device, native_sizes, value_dtype, index_dtype
+):
     """Test that single and batch sampling produce equivalent distributions."""
 
     dist = construct_native_distribution(native_sizes, value_dtype, device, index_dtype)

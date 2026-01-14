@@ -106,10 +106,13 @@ def layout(request):
 # Define Tests
 
 
-@pytest.mark.flaky(reruns=5)
-def test_tri_solve_forward_routine(layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
+def test_tri_solve_forward_routine(
+    layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose
+):
     if sys.platform == "win32" and device == torch.device("cpu"):
-        pytest.skip("Skipping triangular solve CPU tests as solver not implemented for Windows OS")
+        pytest.skip(
+            "Skipping triangular solve CPU tests as solver not implemented for Windows OS"
+        )
 
     _, A_shape, B_shape, A_nnz = shapes
     A = rand_sparse_tri(
@@ -125,16 +128,23 @@ def test_tri_solve_forward_routine(layout, device, value_dtype, index_dtype, sha
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
     Ad = A.to_dense()
 
-    res_ref = torch.triangular_solve(B, Ad, upper=upper, unitriangular=unitriangular, transpose=transpose).solution
-    res_test = sparse_triangular_solve(A, B, upper=upper, unitriangular=unitriangular, transpose=transpose)
+    res_ref = torch.triangular_solve(
+        B, Ad, upper=upper, unitriangular=unitriangular, transpose=transpose
+    ).solution
+    res_test = sparse_triangular_solve(
+        A, B, upper=upper, unitriangular=unitriangular, transpose=transpose
+    )
 
     assert torch.allclose(res_test, res_ref, atol=ATOL, rtol=RTOL)
 
 
-@pytest.mark.flaky(reruns=10)
-def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
+def test_tri_solve_backward_routine(
+    layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose
+):
     if sys.platform == "win32" and device == torch.device("cpu"):
-        pytest.skip("Skipping triangular solve CPU tests as solver not implemented for Windows OS")
+        pytest.skip(
+            "Skipping triangular solve CPU tests as solver not implemented for Windows OS"
+        )
 
     _, A_shape, B_shape, A_nnz = shapes
 
@@ -163,8 +173,12 @@ def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, sh
     Bd2.requires_grad_()
     Bd3.requires_grad_()
 
-    res_ref = torch.triangular_solve(Bd2, Ad2, upper=upper, unitriangular=unitriangular, transpose=transpose).solution
-    res_test = sparse_triangular_solve(As1, Bd1, upper=upper, unitriangular=unitriangular, transpose=transpose)
+    res_ref = torch.triangular_solve(
+        Bd2, Ad2, upper=upper, unitriangular=unitriangular, transpose=transpose
+    ).solution
+    res_test = sparse_triangular_solve(
+        As1, Bd1, upper=upper, unitriangular=unitriangular, transpose=transpose
+    )
 
     # Let's add another test to make sure that the transpose argument is working as epexcted:
     if transpose:
@@ -172,7 +186,9 @@ def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, sh
             Ad3.transpose(-2, -1), Bd3, upper=not upper, unitriangular=unitriangular
         )
     else:
-        res_test2 = torch.linalg.solve_triangular(Ad3, Bd3, upper=upper, unitriangular=unitriangular)
+        res_test2 = torch.linalg.solve_triangular(
+            Ad3, Bd3, upper=upper, unitriangular=unitriangular
+        )
 
     # Generate random gradients for the backward pass
     grad_output = torch.rand_like(res_test, dtype=value_dtype, device=device)
@@ -183,8 +199,12 @@ def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, sh
 
     nz_mask = As1.grad.to_dense() != 0.0
 
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL, rtol=RTOL)
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad3.grad[nz_mask], atol=ATOL, rtol=RTOL)
+    assert torch.allclose(
+        As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL, rtol=RTOL
+    )
+    assert torch.allclose(
+        As1.grad.to_dense()[nz_mask], Ad3.grad[nz_mask], atol=ATOL, rtol=RTOL
+    )
 
     assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL, rtol=RTOL)
     assert torch.allclose(Bd1.grad, Bd3.grad, atol=ATOL, rtol=RTOL)
@@ -212,7 +232,9 @@ def test_torch_triangular_solve_backward_fail(
     Ad = As1.to_dense()
     # torch.triangular_solve does not support backward on general inputs
     with pytest.raises(RuntimeError):
-        sol = torch.triangular_solve(Bd1, Ad, upper=upper, unitriangular=unitriangular, transpose=transpose).solution
+        sol = torch.triangular_solve(
+            Bd1, Ad, upper=upper, unitriangular=unitriangular, transpose=transpose
+        ).solution
         sol.sum().backward()
 
 
@@ -252,7 +274,9 @@ def test_torch_linalg_solve_triangular_backward_fail(
         sol.sum().backward()
 
 
-def test_sparse_triangular_solve_optimize_A_multiple_steps(layout, device, value_dtype, index_dtype):
+def test_sparse_triangular_solve_optimize_A_multiple_steps(
+    layout, device, value_dtype, index_dtype
+):
     # small problem
     N, M, NNZ = 30, 10, 50
     A = rand_sparse_tri(
@@ -275,7 +299,9 @@ def test_sparse_triangular_solve_optimize_A_multiple_steps(layout, device, value
 
     for step in range(3):
         # forward: solve A X = B
-        X = sparse_triangular_solve(A, B, upper=True, unitriangular=False, transpose=False)
+        X = sparse_triangular_solve(
+            A, B, upper=True, unitriangular=False, transpose=False
+        )
         loss = X.sum()
 
         # backward

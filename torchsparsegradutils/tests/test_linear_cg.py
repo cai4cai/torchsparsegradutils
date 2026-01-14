@@ -7,22 +7,6 @@ import torch
 from torchsparsegradutils.utils.linear_cg import linear_cg
 
 
-# Autouse fixture to seed RNG and restore state after each test
-@pytest.fixture(autouse=True)
-def seed_restore():
-    unlock = os.getenv("UNLOCK_SEED")
-    if unlock is None or unlock.lower() == "false":
-        rng = torch.get_rng_state()
-        torch.manual_seed(0)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(0)
-        random.seed(0)
-        yield
-        torch.set_rng_state(rng)
-    else:
-        yield
-
-
 # Test basic CG solve for vectors and matrices
 def test_cg():
     size = 100
@@ -44,7 +28,9 @@ def test_cg():
     rhs_mat = torch.randn(size, 50, dtype=torch.float64)
     solves = linear_cg(matrix.matmul, rhs=rhs_mat, max_iter=size)
     init_mat = torch.randn(size, 50, dtype=torch.float64)
-    solves_init = linear_cg(matrix.matmul, rhs=rhs_mat, max_iter=size, initial_guess=init_mat)
+    solves_init = linear_cg(
+        matrix.matmul, rhs=rhs_mat, max_iter=size, initial_guess=init_mat
+    )
     actual_mat = torch.cholesky_solve(rhs_mat, chol)
     assert torch.allclose(solves, actual_mat, atol=1e-3, rtol=1e-4)
     assert torch.allclose(solves_init, actual_mat, atol=1e-3, rtol=1e-4)
@@ -58,7 +44,13 @@ def test_cg_with_tridiag():
     matrix.div_(matrix.norm()).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
     rhs = torch.randn(size, 50, dtype=torch.float64)
     solves, t_mats = linear_cg(
-        matrix.matmul, rhs=rhs, n_tridiag=5, max_tridiag_iter=10, max_iter=size, tolerance=0, eps=1e-15
+        matrix.matmul,
+        rhs=rhs,
+        n_tridiag=5,
+        max_tridiag_iter=10,
+        max_iter=size,
+        tolerance=0,
+        eps=1e-15,
     )
     chol = torch.linalg.cholesky(matrix)
     actual = torch.cholesky_solve(rhs, chol)
@@ -95,7 +87,13 @@ def test_batch_cg_with_tridiag(batch):
     b_shape = (batch, size, 10) if batch else (size, 10)
     rhs = torch.randn(*b_shape, dtype=torch.float64)
     solves, t_mats = linear_cg(
-        matrix.matmul, rhs=rhs, n_tridiag=8, max_iter=size, max_tridiag_iter=10, tolerance=0, eps=1e-30
+        matrix.matmul,
+        rhs=rhs,
+        n_tridiag=8,
+        max_iter=size,
+        max_tridiag_iter=10,
+        tolerance=0,
+        eps=1e-30,
     )
     chol = torch.linalg.cholesky(matrix)
     actual = torch.cholesky_solve(rhs, chol)
@@ -117,7 +115,9 @@ def test_batch_cg_init():
     matrix.div_(matrix.norm()).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
     rhs = torch.randn(batch, size, 50, dtype=torch.float64)
     solves = linear_cg(matrix.matmul, rhs=rhs, max_iter=size, max_tridiag_iter=0)
-    solves_init = linear_cg(matrix.matmul, rhs=rhs, max_iter=1, initial_guess=solves, max_tridiag_iter=0)
+    solves_init = linear_cg(
+        matrix.matmul, rhs=rhs, max_iter=1, initial_guess=solves, max_tridiag_iter=0
+    )
     chol = torch.linalg.cholesky(matrix)
     actual = torch.cholesky_solve(rhs, chol)
     assert torch.allclose(solves_init, actual, atol=1e-3, rtol=1e-4)
