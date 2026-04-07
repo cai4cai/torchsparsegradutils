@@ -38,6 +38,20 @@ import scipy.sparse.linalg
 import torch
 
 
+def _torch_to_backend(tensor: torch.Tensor, xp) -> Any:
+    r"""Convert a PyTorch tensor to a backend array (NumPy or CuPy) using DLPack for CUDA."""
+    if tsgucupy.have_cupy and xp is cp:
+        return cp.from_dlpack(tensor)
+    return xp.asarray(tensor)
+
+
+def _backend_to_torch(array) -> torch.Tensor:
+    r"""Convert a backend array (NumPy or CuPy) to a PyTorch tensor using DLPack for CUDA."""
+    if tsgucupy.have_cupy and isinstance(array, cp.ndarray):
+        return torch.from_dlpack(array)
+    return torch.as_tensor(array)
+
+
 def _get_array_modules(x: Any) -> Tuple[Any, Any]:
     r"""
     Select dense & sparse array modules (NumPy/SciPy or CuPy/cupyx.scipy.sparse).
@@ -116,9 +130,9 @@ def t2c_csr(x_torch: torch.Tensor) -> Any:
     """
     xp, xsp = _get_array_modules(x_torch)
 
-    data_c = xp.asarray(x_torch.values())
-    col_idx_c = xp.asarray(x_torch.col_indices())
-    ind_ptr_c = xp.asarray(x_torch.crow_indices())
+    data_c = _torch_to_backend(x_torch.values(), xp)
+    col_idx_c = _torch_to_backend(x_torch.col_indices(), xp)
+    ind_ptr_c = _torch_to_backend(x_torch.crow_indices(), xp)
     x_cupy = xsp.csr_matrix((data_c, col_idx_c, ind_ptr_c), shape=x_torch.shape)
     return x_cupy
 
@@ -150,9 +164,9 @@ def c2t_csr(x_cupy: Any) -> torch.Tensor:
     >>> x.layout is torch.sparse_csr
     True
     """
-    data_t = torch.as_tensor(x_cupy.data)
-    idices_t = torch.as_tensor(x_cupy.indices)
-    ind_ptr_t = torch.as_tensor(x_cupy.indptr)
+    data_t = _backend_to_torch(x_cupy.data)
+    idices_t = _backend_to_torch(x_cupy.indices)
+    ind_ptr_t = _backend_to_torch(x_cupy.indptr)
     x_torch = torch.sparse_csr_tensor(ind_ptr_t, idices_t, data_t, x_cupy.shape)
     return x_torch
 
@@ -205,8 +219,8 @@ def t2c_coo(x_torch: torch.Tensor) -> Any:
             "Requested a conversion from torch to cupy/numpy on a non-coalesced tensor -> coalescing implicitly"
         )
         x_torch = x_torch.coalesce()
-    data_c = xp.asarray(x_torch.values())
-    idx_cp = xp.asarray(x_torch.indices())
+    data_c = _torch_to_backend(x_torch.values(), xp)
+    idx_cp = _torch_to_backend(x_torch.indices(), xp)
     x_cupy = xsp.coo_matrix((data_c, idx_cp), shape=x_torch.shape)
     return x_cupy
 
@@ -238,8 +252,8 @@ def c2t_coo(x_cupy: Any) -> torch.Tensor:
     >>> x.layout is torch.sparse_coo
     True
     """
-    data_t = torch.as_tensor(x_cupy.data)
-    row_t = torch.as_tensor(x_cupy.row)
-    col_t = torch.as_tensor(x_cupy.col)
+    data_t = _backend_to_torch(x_cupy.data)
+    row_t = _backend_to_torch(x_cupy.row)
+    col_t = _backend_to_torch(x_cupy.col)
     x_torch = torch.sparse_coo_tensor(torch.stack([row_t, col_t], dim=0), data_t, x_cupy.shape)
     return x_torch

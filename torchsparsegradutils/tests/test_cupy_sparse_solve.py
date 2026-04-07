@@ -2,6 +2,12 @@ import pytest
 import torch
 
 import torchsparsegradutils.cupy as tsgucupy
+
+# Skip entire module if CuPy is not available
+pytest.importorskip("cupy")
+if not tsgucupy.have_cupy:
+    pytest.skip("CuPy bindings unavailable, skipping cupy tests", allow_module_level=True)
+
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
 from torchsparsegradutils.utils import convert_coo_to_csr
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse

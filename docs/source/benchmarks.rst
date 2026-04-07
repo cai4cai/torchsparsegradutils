@@ -341,7 +341,7 @@ Matrix: ``Rothberg/cfd2`` (123,440 × 123,440, nnz 3,085,406). Right‑hand side
 
 **Conclusions:**
 
-1. The dense PyTorch solver ``torch.linalg.solve`` fails due to out-of-memory (OOM) errors before the foward pass due to failure of creating a dense tensor which would occupy 57GB of CUDA memory.
+1. The dense PyTorch solver ``torch.linalg.solve`` fails due to out-of-memory (OOM) errors before the forward pass due to failure of creating a dense tensor which would occupy 57GB of CUDA memory.
 2. ``torch.sparse_csr`` with ``float32`` and ``int32`` indices is the most memory efficient format for both forward and backward passes.
 3. Similar to ``tsgu.sparse_mm``, the ``int32`` indices for ``torch.sparse_coo`` format uses marginally less memory than ``int64`` despite ``A.indices()`` returning ``int64`` indices.
 4. All CuPy and JAX solvers use the same amount of memory on the forward and backward pass.

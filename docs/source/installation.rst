@@ -19,11 +19,20 @@ For additional functionality, you can install optional dependencies:
 
 .. code-block:: bash
 
-   # Install with JAX and CuPy support
-   pip install torchsparsegradutils[extras]
+   # Install with CuPy support (GPU acceleration, requires CUDA 12.x)
+   pip install torchsparsegradutils[cupy]
 
-   # Or install them separately
-   pip install jax cupy
+   # Install with JAX support
+   pip install torchsparsegradutils[jax]
+
+   # Install all optional dependencies
+   pip install torchsparsegradutils[all]
+
+.. note::
+
+   The CuPy extra installs ``cupy-cuda12x>=13.0``. If you are using a different
+   CUDA version, install the appropriate CuPy package manually
+   (e.g. ``pip install cupy-cuda11x``).
 
 Requirements
 ------------
@@ -37,8 +46,8 @@ Core Requirements
 Optional Requirements
 ~~~~~~~~~~~~~~~~~~~~~
 
-- JAX (for JAX backend integration)
-- CuPy (for CuPy backend integration)
+- JAX (for JAX backend integration): ``pip install torchsparsegradutils[jax]``
+- CuPy >= 13.0 (for CuPy backend integration): ``pip install torchsparsegradutils[cupy]``
 
 Development Installation
 ------------------------
@@ -55,7 +64,7 @@ To install development dependencies:
 
 .. code-block:: bash
 
-   pip install -e .[extras]
+   pip install -e .[all]
    pip install -r requirements-ci.txt
 
 Verification
@@ -90,7 +99,7 @@ You can also use the package in a Docker container. Here's a simple Dockerfile:
 
    FROM pytorch/pytorch:latest
 
-   RUN pip install torchsparsegradutils[extras]
+   RUN pip install torchsparsegradutils[all]
 
    # Your application code
    COPY . /app

@@ -8,6 +8,11 @@ import torch
 import torchsparsegradutils.cupy as tsgucupy
 from torchsparsegradutils.utils import rand_sparse
 
+# Skip entire module if CuPy is not available
+pytest.importorskip("cupy")
+if not tsgucupy.have_cupy:
+    pytest.skip("CuPy bindings unavailable, skipping cupy tests", allow_module_level=True)
+
 # Device fixture
 DEVICES = [torch.device("cpu")]
 if torch.cuda.is_available():
@@ -40,15 +45,14 @@ def value_dtype(request):
     return request.param
 
 
-# Optional imports for Cupy
-if tsgucupy.have_cupy:
-    import cupy as cp
-    import cupyx.scipy.sparse as csp
+# CuPy imports (guaranteed available due to module-level skip above)
+import cupy as cp
+import cupyx.scipy.sparse as csp
 
 
 # Helper to convert Cupy array to NumPy
 def _c2n(x_cupy):
-    return cp.asnumpy(x_cupy) if tsgucupy.have_cupy else np.asarray(x_cupy)
+    return cp.asnumpy(x_cupy)
 
 
 # I/O setup fixture
