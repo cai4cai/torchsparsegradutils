@@ -1,3 +1,4 @@
+import inspect
 import warnings
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
@@ -6,6 +7,90 @@ import torch
 import torchsparsegradutils.cupy as tsgucupy
 
 # from cupyx.scipy.sparse.linalg import cg, cgs, minres, gmres, spsolve
+
+
+def _wrap_iterative_solver(base_solver, backend_type, solver_name=None):
+    """Wrap an iterative solver to handle parameter mapping and return format."""
+
+    # Introspect the actual solver signature to determine accepted parameter names
+    try:
+        sig_params = set(inspect.signature(base_solver).parameters.keys())
+    except (ValueError, TypeError):
+        sig_params = set()
+
+    def wrapped_solver(A, b, **solver_kwargs):
+        # Create a copy to avoid modifying the original
+        filtered_kwargs = solver_kwargs.copy()
+
+        # Extract tolerance parameter and map to correct name for the backend
+        tolerance = filtered_kwargs.pop("tol", None)
+        atol = filtered_kwargs.pop("atol", None)
+
+        if tolerance is not None:
+            # Use introspection to determine correct tolerance parameter name
+            if "rtol" in sig_params:
+                filtered_kwargs["rtol"] = tolerance
+            elif "tol" in sig_params:
+                filtered_kwargs["tol"] = tolerance
+
+        # Handle atol parameter if the solver accepts it
+        if atol is not None and "atol" in sig_params:
+            filtered_kwargs["atol"] = atol
+
+        # Filter to only parameters the solver actually accepts
+        common_params = {"x0", "M", "callback", "show", "check"}
+        if sig_params:
+            final_kwargs = {k: v for k, v in filtered_kwargs.items() if k in sig_params or k in common_params}
+        else:
+            # Fallback: pass everything if we couldn't introspect
+            final_kwargs = filtered_kwargs
+
+        # Call the base solver
+        result = base_solver(A, b, **final_kwargs)
+
+        # Handle return format - some solvers return (solution, info) tuples
+        if isinstance(result, tuple):
+            return result[0]  # Return just the solution
+        return result
+
+    return wrapped_solver
+
+
+def _wrap_direct_solver(base_solver):
+    """Wrap a direct solver to ignore tolerance parameters."""
+
+    def wrapped_solver(A, b, **solver_kwargs):
+        # Direct solvers don't use iterative solver parameters, so ignore them all
+        filtered_kwargs = {
+            k: v
+            for k, v in solver_kwargs.items()
+            if k not in ["tol", "tolerance", "atol", "rtol", "maxiter", "matvec_max"]
+        }
+        return base_solver(A, b, **filtered_kwargs)
+
+    return wrapped_solver
+
+
+def _get_solver_function(solver_name, xsp, device):
+    """Get the appropriate solver function based on the backend."""
+    if solver_name is None or callable(solver_name):
+        return solver_name
+
+    # Determine backend type
+    backend_type = "scipy" if device.type == "cpu" else "cupy"
+
+    solver_map = {
+        "cg": _wrap_iterative_solver(xsp.linalg.cg, backend_type, "cg"),
+        "cgs": _wrap_iterative_solver(xsp.linalg.cgs, backend_type, "cgs"),
+        "minres": _wrap_iterative_solver(xsp.linalg.minres, backend_type, "minres"),
+        "gmres": _wrap_iterative_solver(xsp.linalg.gmres, backend_type, "gmres"),
+        "spsolve": _wrap_direct_solver(xsp.linalg.spsolve),
+    }
+
+    if solver_name not in solver_map:
+        raise ValueError(f"Unknown solver: {solver_name}. Supported solvers: {list(solver_map.keys())}")
+
+    return solver_map[solver_name]
 
 
 def sparse_solve_c4t(
@@ -154,94 +239,7 @@ def sparse_solve_c4t(
             f"Use transpose_solve='spsolve' or transpose_solve=None for multi-RHS problems."
         )
 
-    # Convert string solver names to actual solver functions
-    def _get_solver_function(solver_name, xsp):
-        """Get the appropriate solver function based on the backend."""
-        if solver_name is None or callable(solver_name):
-            return solver_name
-
-        def _wrap_iterative_solver(base_solver, backend_type, solver_name=None):
-            """Wrap an iterative solver to handle parameter mapping and return format."""
-
-            def wrapped_solver(A, b, **solver_kwargs):
-                # Create a copy to avoid modifying the original
-                filtered_kwargs = solver_kwargs.copy()
-
-                # Extract tolerance parameter and map to correct name for the backend
-                tolerance = filtered_kwargs.pop("tol", None)
-                atol = filtered_kwargs.pop("atol", None)
-
-                # Define solver-specific parameter support
-                solver_params = {
-                    "cg": {"rtol", "maxiter", "atol"} if backend_type == "scipy" else {"tol", "maxiter", "atol"},
-                    "cgs": {"rtol", "maxiter", "atol"} if backend_type == "scipy" else {"tol", "maxiter", "atol"},
-                    "minres": {"rtol", "maxiter", "shift"} if backend_type == "scipy" else {"tol", "maxiter"},
-                    "gmres": {"rtol", "maxiter", "atol"} if backend_type == "scipy" else {"tol", "maxiter", "atol"},
-                }
-
-                # Get supported parameters for this solver
-                supported_params = solver_params.get(solver_name, set())
-
-                if tolerance is not None:
-                    # Map tolerance parameter based on backend and solver support
-                    if backend_type == "scipy" and "rtol" in supported_params:
-                        filtered_kwargs["rtol"] = tolerance
-                    elif backend_type == "cupy" and "tol" in supported_params:
-                        filtered_kwargs["tol"] = tolerance
-
-                # Handle atol parameter if supported
-                if atol is not None and "atol" in supported_params:
-                    filtered_kwargs["atol"] = atol
-
-                # Filter out unsupported parameters
-                final_kwargs = {
-                    k: v
-                    for k, v in filtered_kwargs.items()
-                    if k in supported_params
-                    or k in {"x0", "M", "callback", "show", "check"}  # Always allow common parameters
-                }
-
-                # Call the base solver
-                result = base_solver(A, b, **final_kwargs)
-
-                # Handle return format - some solvers return (solution, info) tuples
-                if isinstance(result, tuple):
-                    return result[0]  # Return just the solution
-                return result
-
-            return wrapped_solver
-
-        def _wrap_direct_solver(base_solver):
-            """Wrap a direct solver to ignore tolerance parameters."""
-
-            def wrapped_solver(A, b, **solver_kwargs):
-                # Direct solvers don't use iterative solver parameters, so ignore them all
-                filtered_kwargs = {
-                    k: v
-                    for k, v in solver_kwargs.items()
-                    if k not in ["tol", "tolerance", "atol", "rtol", "maxiter", "matvec_max"]
-                }
-                return base_solver(A, b, **filtered_kwargs)
-
-            return wrapped_solver
-
-        # Determine backend type
-        backend_type = "scipy" if A.device.type == "cpu" else "cupy"
-
-        solver_map = {
-            "cg": _wrap_iterative_solver(xsp.linalg.cg, backend_type, "cg"),
-            "cgs": _wrap_iterative_solver(xsp.linalg.cgs, backend_type, "cgs"),
-            "minres": _wrap_iterative_solver(xsp.linalg.minres, backend_type, "minres"),
-            "gmres": _wrap_iterative_solver(xsp.linalg.gmres, backend_type, "gmres"),
-            "spsolve": _wrap_direct_solver(xsp.linalg.spsolve),
-        }
-
-        if solver_name not in solver_map:
-            raise ValueError(f"Unknown solver: {solver_name}. Supported solvers: {list(solver_map.keys())}")
-
-        return solver_map[solver_name]
-
-    # Get the appropriate backend modules
+    # Convert string solver names to functions
     xp, xsp = tsgucupy._get_array_modules(A.data)
 
     # Warn about dtype issues with minres on CPU
@@ -262,9 +260,8 @@ def sparse_solve_c4t(
             stacklevel=2,
         )
 
-    # Convert string solver names to functions
-    solve_func = _get_solver_function(solve, xsp)
-    transpose_solve_func = _get_solver_function(transpose_solve, xsp)
+    solve_func = _get_solver_function(solve, xsp, A.device)
+    transpose_solve_func = _get_solver_function(transpose_solve, xsp, A.device)
 
     return SparseSolveC4T.apply(A, B, solve_func, transpose_solve_func, kwargs)
 
@@ -307,7 +304,7 @@ class SparseSolveC4T(torch.autograd.Function):
             A_c = tsgucupy.t2c_csr(A.detach())
         else:
             raise TypeError(f"Unsupported layout type: {A.layout}")
-        B_c = xp.asarray(B.detach())
+        B_c = tsgucupy._torch_to_backend(B.detach(), xp)
 
         # Solve the sparse system
         ctx.factorisedsolver = None
@@ -329,7 +326,7 @@ class SparseSolveC4T(torch.autograd.Function):
             # If the solver returns a tuple, we assume the first element is the solution
             x_c = x_c[0]
 
-        x = torch.as_tensor(x_c, device=A.device)
+        x = tsgucupy._backend_to_torch(x_c)
 
         # Ensure output dtype matches input dtype
         if x.dtype != A.dtype:
@@ -354,7 +351,7 @@ class SparseSolveC4T(torch.autograd.Function):
             x = x.unsqueeze(-1)
             grad = grad.unsqueeze(-1)
 
-        grad_c = xp.asarray(grad.detach())
+        grad_c = tsgucupy._torch_to_backend(grad.detach(), xp)
 
         # Backprop rule: gradB = A^{-T} grad
         if ctx.transpose_solve is not None:
@@ -369,7 +366,7 @@ class SparseSolveC4T(torch.autograd.Function):
             # If the solver returns a tuple, we assume the first element is the gradient
             gradB_c = gradB_c[0]
 
-        gradB = torch.as_tensor(gradB_c, device=A.device)
+        gradB = tsgucupy._backend_to_torch(gradB_c)
 
         # Ensure gradient dtype matches input dtype
         if gradB.dtype != A.dtype:

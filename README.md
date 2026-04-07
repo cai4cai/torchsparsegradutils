@@ -91,16 +91,20 @@ pip install git+https://github.com/cai4cai/torchsparsegradutils
 For full functionality, install optional dependencies:
 
 ```bash
-# For CuPy sparse solver support (GPU acceleration)
-pip install cupy-cuda12x  # Replace with your CUDA version
+# For CuPy sparse solver support (GPU acceleration, requires CUDA 12.x)
+pip install torchsparsegradutils[cupy]
 
 # For JAX sparse solver support
-pip install "jax[cpu]"     # CPU version
-pip install "jax[cuda12]"  # GPU version (replace with your CUDA version)
+pip install torchsparsegradutils[jax]
+
+# Install all optional dependencies
+pip install torchsparsegradutils[all]
 
 # For benchmarking and testing
 pip install scipy matplotlib pandas tqdm pytest
 ```
+
+> **Note:** The CuPy extra installs `cupy-cuda12x>=13.0`. If you are using a different CUDA version, install the appropriate CuPy package manually (e.g. `pip install cupy-cuda11x`).
 
 ### Requirements
 
@@ -118,7 +122,7 @@ Our comprehensive benchmark suite demonstrates significant performance improveme
 
 ![Sparse Triangular Solve Suite Performance (int32/float32 COO)](torchsparsegradutils/benchmarks/benchmark_visualizations/triangular_solve_suitesparse_performance_int32_float32_coo.png)
 
-![Sparse Genertic Solve Suite Performance (int32/float32 COO)](torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int32_float32_coo.png)
+![Sparse Generic Solve Suite Performance (int32/float32 COO)](torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int32_float32_coo.png)
 
 ## 🚀 Quick Start
 

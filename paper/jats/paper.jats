@@ -92,34 +92,31 @@ a Creative Commons Attribution 4.0 International License (CC BY
   <p>The <monospace>torchsparsegradutils</monospace> package provides
   differentiable sparse linear-algebra utilities for PyTorch
   (<xref alt="Paszke et al., 2019" rid="ref-pytorch" ref-type="bibr">Paszke
-  et al., 2019</xref>) that preserve sparsity for returned gradients
-  during backpropagation. While PyTorch directly supports sparse
-  tensors, its default semantics treat sparse layouts as storage
-  optimisations rather than a mathematical structure that results in
-  optimising directly for that sparse subspace. Gradients resulting from
-  PyTorch native functions are often dense and incompatible with
-  end-to-end training of models that require fixed sparsity patterns
-  (e.g., sparse covariance/precision structures).</p>
-  <p>To address this limitation, we introduce
-  <monospace>torchsparsegradutils</monospace>. Key features include: (1)
-  memory-efficient sparse-dense matrix multiplication with sparse
-  gradient preservation, (2) sparse triangular and generic linear system
-  solvers, enabling sparse gradients during backpropagation, and
-  multiple algorithmic backends (BICGSTAB, CG, LSMR, MINRES), (3)
-  cross-platform sparse solver wrappers for CuPy
+  et al., 2019</xref>) that preserve sparsity in returned gradients
+  during backpropagation. While PyTorch supports sparse tensors, its
+  default dense-equivalent backward semantics can densify gradients and
+  make it difficult to optimise models with fixed sparsity patterns,
+  such as sparse covariance or precision parameterisations.</p>
+  <p>The package provides sparse-dense matrix multiplication with
+  sparse-gradient preservation, sparse triangular and generic linear
+  system solvers (including BICGSTAB, CG, LSMR, and MINRES backends),
+  optional CuPy
   (<xref alt="Okuta et al., 2017" rid="ref-cupy" ref-type="bibr">Okuta
   et al., 2017</xref>) and JAX
   (<xref alt="Bradbury et al., 2018" rid="ref-jax" ref-type="bibr">Bradbury
-  et al., 2018</xref>), (4) sparse multivariate normal distributions
-  with <inline-formula><alternatives>
+  et al., 2018</xref>) solver wrappers, sparse multivariate normal
+  distributions with <inline-formula><alternatives>
   <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{L}^T]]></tex-math>
   <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>T</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
   and <inline-formula><alternatives>
   <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^T]]></tex-math>
   <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:mi>𝐃</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>T</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
-  sparse covariance and precision matrix parameterisations with
-  reparameterised sampling methods, and (5) specialised encoders for
-  spatial neighbourhood relationships in N-dimensional data.</p>
+  parameterisations, and specialised encoders for spatial neighbourhood
+  relationships in N-dimensional data.</p>
+  <p>The source code is available on GitHub at
+  <ext-link ext-link-type="uri" xlink:href="https://github.com/cai4cai/torchsparsegradutils">https://github.com/cai4cai/torchsparsegradutils</ext-link>,
+  with full documentation hosted at
+  <ext-link ext-link-type="uri" xlink:href="https://torchsparsegradutils.readthedocs.io">https://torchsparsegradutils.readthedocs.io</ext-link>.</p>
 </sec>
 <sec id="statement-of-need">
   <title>Statement of need</title>
@@ -134,15 +131,14 @@ a Creative Commons Attribution 4.0 International License (CC BY
   requires backpropagation through sparse linear algebra (matrix
   products, triangular solves, and linear system solves). PyTorch’s
   default sparse semantics are not designed to preserve user-imposed
-  sparsity structure during differentiation (PyTorch issue #87448),
-  which can lead to memory blow-ups and prevent end-to-end optimisation
-  of sparse probabilistic models.</p>
+  sparsity structure during differentiation
+  (<ext-link ext-link-type="uri" xlink:href="https://github.com/pytorch/pytorch/issues/87448">PyTorch
+  issue #87448</ext-link>), which can lead to memory blow-ups and
+  prevent end-to-end optimisation of sparse probabilistic models.</p>
   <p><monospace>torchsparsegradutils</monospace> addresses this gap by
   implementing custom autograd functions for key sparse operators that
   return gradients only for stored nonzeros, enabling practical
-  optimisation of models that rely on fixed sparse structure, such as
-  sparse multivariate normal distributions with sparse
-  covariance/precision factors.</p>
+  optimisation of models that rely on fixed sparse structure.</p>
 </sec>
 <sec id="state-of-the-field">
   <title>State of the field</title>
@@ -153,18 +149,20 @@ a Creative Commons Attribution 4.0 International License (CC BY
   PyTorch’s design goal is <italic>dense-equivalent semantics</italic>
   for sparse layouts: a guiding invariant is that applying an operation
   in sparse form should match applying it in dense form after
-  conversion, including the backward function (PyTorch issue #87448).
-  This makes it difficult to learn parameters that are intended to
-  remain structurally sparse, because gradients may be produced for
-  implicit zeros, or intermediate computations may densify.</p>
-  <p>PyTorch also provides <monospace>MaskedTensor</monospace>,
-  distringuishing specified and unspecified elements in tensors and is
-  conceptually closer to the constrained-subspace interpretation of
-  sparsity. However, <monospace>MaskedTensor</monospace> remains at
-  prototype stage with incomplete operator coverage, and storing a full
-  boolean mask incurs a significant memory overhead, partially negating
-  the memory benefits of sparse index-based representations for
-  large-scale problems.</p>
+  conversion, including the backward function
+  (<ext-link ext-link-type="uri" xlink:href="https://github.com/pytorch/pytorch/issues/87448">PyTorch
+  issue #87448</ext-link>). This makes it difficult to learn parameters
+  that are intended to remain structurally sparse, because gradients may
+  be produced for implicit zeros, or intermediate computations may
+  densify.</p>
+  <p>PyTorch also provides <monospace>MaskedTensor</monospace>, which
+  distinguishes specified and unspecified elements and is conceptually
+  closer to the constrained-subspace interpretation of sparsity.
+  However, <monospace>MaskedTensor</monospace> remains at prototype
+  stage with incomplete operator coverage, and storing a full boolean
+  mask incurs a significant memory overhead, partially negating the
+  memory benefits of sparse index-based representations for large-scale
+  problems.</p>
   <p>Other libraries provide efficient sparse kernels but do not
   directly solve “sparsity-preserving gradients in PyTorch”: SciPy
   (<xref alt="Virtanen et al., 2020" rid="ref-scipy" ref-type="bibr">Virtanen
@@ -191,53 +189,35 @@ a Creative Commons Attribution 4.0 International License (CC BY
   <p><monospace>torchsparsegradutils</monospace> is built around
   <monospace>torch.autograd.Function</monospace> operators that wrap
   PyTorch’s forward sparse kernels but override the backward pass to
-  preserve sparsity for selected inputs. This design keeps the
-  user-facing API close to standard PyTorch code while making sparsity
-  preservation an explicit, opt-in choice.</p>
+  preserve sparsity for selected inputs. This keeps the API close to
+  standard PyTorch code while making sparsity preservation an explicit,
+  opt-in choice.</p>
   <p>Two design trade-offs shaped the implementation. First, the package
   targets <italic>structure-preserving learning</italic> over maximal
-  operator coverage, as only a focused set of operations (sparse matrix
-  products, triangular solves, generic sparse solvers) are implemented,
-  but these are sufficient to support sparse multivariate normal
-  sampling and sparse solver-based models. Second, for broad
-  device/backend compatibility, the package combines native PyTorch
-  implementations (iterative Krylov solvers: CG, BiCGSTAB, LSMR, MINRES)
-  with optional wrappers to external libraries (CuPy, JAX), allowing
-  users to trade off portability versus performance.</p>
+  operator coverage, focusing on sparse matrix products and sparse
+  solves that support sparse multivariate normal sampling and related
+  models. Second, it combines native PyTorch implementations (CG,
+  BiCGSTAB, LSMR, MINRES) with optional CuPy and JAX wrappers so users
+  can trade off portability and performance.</p>
   <p><bold>Build vs. contribute justification.</bold> PyTorch’s current
-  semantics treat sparse layouts as performance optimisations and
-  prioritise the dense-equivalence invariant (PyTorch issue #87448). In
-  contrast, this package intentionally provides
-  <italic>structure-preserving</italic> backward passes for specific
-  operators to enable learning with fixed sparsity patterns (e.g.,
-  sparse triangular factors for covariance/precision). This difference
-  is semantic (not just implementation), so the functionality is better
-  delivered as an opt-in external library rather than changing PyTorch’s
-  default behaviour.</p>
+  sparse semantics prioritise dense-equivalent behaviour
+  (<ext-link ext-link-type="uri" xlink:href="https://github.com/pytorch/pytorch/issues/87448">PyTorch
+  issue #87448</ext-link>). In contrast, this package intentionally
+  provides structure-preserving backward passes for specific operators
+  to enable learning with fixed sparsity patterns. Because that is a
+  semantic choice rather than just an implementation detail, the
+  functionality is better delivered as an opt-in external library than
+  as a change to PyTorch defaults.</p>
 </sec>
 <sec id="research-impact-statement">
   <title>Research impact statement</title>
   <p>This software provides an opt-in path to sparsity-preserving
   gradients for sparse linear algebra in PyTorch, enabling research
   prototypes that would otherwise be limited by dense gradients or
-  densification. The package is currently being used in active research
-  projects for medical image segmentation, though publications resulting
-  from this work are still in preparation.</p>
-  <p>The codebase demonstrates community-readiness through comprehensive
-  infrastructure: documentation with quickstart guides and API
-  references, extensive test coverage across all modules, CI/CD
-  pipelines for automated testing, and an open contribution process via
-  GitHub issues and pull requests. The codebase has been developed
-  openly over multiple years with public commit history, releases, and
-  issue tracking. Benchmark suites comparing solver performance across
-  problem sizes and sparsity patterns provide reproducible reference
-  materials.</p>
-  <p>Given the broad applicability of sparse structured
-  Gaussians—spanning medical imaging, spatial statistics, geostatistics,
-  and large-scale probabilistic modelling, we anticipate growing
-  adoption as the research community increasingly requires
-  memory-efficient optimisation of high-dimensional probabilistic
-  models.</p>
+  densification. The package is already being used in ongoing
+  medical-image segmentation projects, and the public repository
+  provides tests, documentation, benchmarks, and issue tracking to
+  support reuse and extension.</p>
 </sec>
 <sec id="mathematics">
   <title>Mathematics</title>
@@ -374,6 +354,58 @@ a Creative Commons Attribution 4.0 International License (CC BY
     matrices by avoiding strict positive definiteness constraints.</p>
   </sec>
 </sec>
+<sec id="usage-examples">
+  <title>Usage Examples</title>
+  <p>Short examples are shown below; fuller worked examples are
+  available in the ReadTheDocs quickstart.</p>
+  <code language="python">import torch
+from torchsparsegradutils import sparse_mm, sparse_generic_solve
+from torchsparsegradutils.distributions import SparseMultivariateNormal
+from torchsparsegradutils.utils import (
+    linear_cg,
+    make_spd_sparse,
+    rand_sparse,
+    rand_sparse_tri,
+)
+
+n = 100
+A = rand_sparse((n, n), nnz=500).requires_grad_(True)
+sparse_mm(A, torch.randn(n, 8, requires_grad=True)).sum().backward()
+
+A_spd, _ = make_spd_sparse(n, torch.sparse_coo, torch.float32, torch.int64, &quot;cpu&quot;)
+sparse_generic_solve(
+    A_spd.requires_grad_(True),
+    torch.randn(n),
+    solve=linear_cg,
+).sum().backward()
+
+L = rand_sparse_tri(
+    (n, n), nnz=300, upper=False, strict=True
+).requires_grad_(True)
+SparseMultivariateNormal(
+    torch.zeros(n), diagonal=torch.rand(n), scale_tril=L
+).rsample((10,)).sum().backward()</code>
+</sec>
+<sec id="benchmarks">
+  <title>Benchmarks</title>
+  <p>On the SuiteSparse Rothberg/cfd2 matrix
+  (<inline-formula><alternatives>
+  <tex-math><![CDATA[123{,}440 \times 123{,}440]]></tex-math>
+  <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mn>123</mml:mn><mml:mo>,</mml:mo><mml:mn>440</mml:mn><mml:mo>×</mml:mo><mml:mn>123</mml:mn><mml:mo>,</mml:mo><mml:mn>440</mml:mn></mml:mrow></mml:math></alternatives></inline-formula>,
+  3.1M non-zeros), dense baselines and PyTorch’s native COO backward
+  pass ran out of memory, whereas
+  <monospace>torchsparsegradutils</monospace> completed sparse
+  matrix-multiplication backward in about 75 ms using 5.1 GB on one
+  tested RTX 4090 setup (results vary by hardware). On the same setup,
+  native COO iterative solvers were up to about
+  40<inline-formula><alternatives>
+  <tex-math><![CDATA[\times]]></tex-math>
+  <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>×</mml:mi></mml:math></alternatives></inline-formula>
+  faster than CuPy wrappers because they avoid sparse-format conversion
+  overhead; full benchmark scripts and hardware-specific results are
+  available in the repository and ReadTheDocs benchmark
+  documentation.</p>
+</sec>
 <sec id="ai-usage-disclosure">
   <title>AI usage disclosure</title>
   <p>Generative AI tools were used during development of this software
@@ -391,7 +423,9 @@ a Creative Commons Attribution 4.0 International License (CC BY
   <p>We thank the PyTorch development team for foundational sparse
   tensor support. We also acknowledge upstream solver implementations
   and references used as starting points for iterative methods
-  (pykrylov, cornellius-gp/linear_operator, pytorch-minimize)
+  (<ext-link ext-link-type="uri" xlink:href="https://github.com/PythonOptimizers/pykrylov">pykrylov</ext-link>,
+  <ext-link ext-link-type="uri" xlink:href="https://github.com/cornellius-gp/linear_operator">cornellius-gp/linear_operator</ext-link>,
+  <ext-link ext-link-type="uri" xlink:href="https://github.com/rfeinman/pytorch-minimize">pytorch-minimize</ext-link>)
   (<xref alt="Saad, 2003" rid="ref-saad2003iterative" ref-type="bibr">Saad,
   2003</xref>). We thank Floris Laporte for his excellent tutorial on
   implementing sparse linear system solvers in PyTorch
@@ -531,7 +565,6 @@ a Creative Commons Attribution 4.0 International License (CC BY
       <year iso-8601-date="2018">2018</year>
       <volume>31</volume>
       <uri>https://arxiv.org/abs/1809.11165</uri>
-      <pub-id pub-id-type="doi">10.5555/3327757.3327857</pub-id>
     </element-citation>
   </ref>
   <ref id="ref-flaport2020sparse">
@@ -540,8 +573,8 @@ a Creative Commons Attribution 4.0 International License (CC BY
         <name><surname>Laporte</surname><given-names>Floris</given-names></name>
       </person-group>
       <article-title>Solving sparse linear systems in PyTorch</article-title>
-      <publisher-name>https://blog.flaport.net/solving-sparse-linear-systems-in-pytorch.html</publisher-name>
       <year iso-8601-date="2020">2020</year>
+      <uri>https://blog.flaport.net/solving-sparse-linear-systems-in-pytorch.html</uri>
     </element-citation>
   </ref>
 </ref-list>
