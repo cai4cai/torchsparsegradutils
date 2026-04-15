@@ -28,8 +28,12 @@ import torch
 from torchsparsegradutils.distributions import SparseMultivariateNormal
 from torchsparsegradutils.encoders import PairwiseEncoder
 
-# Skip entire test module if CUDA is not available
-pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="Integration tests require CUDA")
+# Skip entire test module if CUDA is not available, and require explicit opt-in
+# because these tests exercise CUDA memory/performance behavior.
+pytestmark = [
+    pytest.mark.manual_cuda,
+    pytest.mark.skipif(not torch.cuda.is_available(), reason="Integration tests require CUDA"),
+]
 
 # Testing Parameters - Focus on CUDA with large tensors
 DEVICES = [torch.device("cuda")]  # Only CUDA devices

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "torchsparsegradutils"
-version = "0.2.1"
+version = "0.2.2"
 description = "A collection of utility functions to work with PyTorch sparse tensors"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,7 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 cupy = ["cupy-cuda12x>=13.0"]
 jax = ["jax[cuda12]"]
-all = ["torchsparsegradutils[cupy,jax]"]
+all = ["cupy-cuda12x>=13.0", "jax[cuda12]"]
 docs = [
     "sphinx>=7.0.0",
     "sphinx-rtd-theme>=1.3.0",
@@ -102,6 +102,9 @@ addopts = ["-v"]
 testpaths = [
     "torchsparsegradutils/tests",
 ]
+pythonpath = [
+    "torchsparsegradutils/tests",
+]
 doctest_optionflags = [
     "NORMALIZE_WHITESPACE",
     "IGNORE_EXCEPTION_DETAIL",
@@ -109,5 +112,6 @@ doctest_optionflags = [
 ]
 # Separate command for doctests due to potential issues
 markers = [
+    "manual_cuda: marks CUDA memory/performance/OOM tests that require explicit opt-in with --run-manual-cuda",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]

@@ -2,6 +2,7 @@ import jax
 import numpy as np
 import pytest
 import torch
+from test_config import DEVICES
 
 import torchsparsegradutils as tsgu
 import torchsparsegradutils.jax as tsgujax
@@ -12,11 +13,6 @@ if not tsgujax.have_jax:
     pytest.skip("JAX bindings unavailable, skipping jax tests", allow_module_level=True)
 
 import jax.numpy as jnp
-
-# Device fixture
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda:0"))
 
 
 def _id_device(d):

@@ -57,11 +57,10 @@ def stack_csr(
     >>> stacked.shape
     torch.Size([2, 2, 2])
 
-    Stack along a different dimension:
+    The new dimension is a CSR batch dimension:
 
-    >>> stacked_dim1 = stack_csr([A, B], dim=1)
-    >>> stacked_dim1.shape
-    torch.Size([2, 2, 2])
+    >>> stacked.crow_indices().shape
+    torch.Size([2, 3])
     """
     if not isinstance(tensors, (list, tuple)):
         raise TypeError("Expected a list of tensors, but got {}.".format(type(tensors)))

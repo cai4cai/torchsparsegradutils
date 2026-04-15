@@ -2,6 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from test_config import DEVICES, devices_match
 
 from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_coo_matrix,
@@ -18,11 +19,6 @@ from torchsparsegradutils.utils.utils import (
     stack_csr,
 )
 
-# Device fixture
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda:0"))
-
 
 def _id_device(d):
     return str(d)
@@ -30,7 +26,6 @@ def _id_device(d):
 
 @pytest.fixture(params=DEVICES, ids=_id_device)
 def device(request):
-    return request.param
     return request.param
 
 
@@ -278,7 +273,7 @@ def test_sparse_eye(shapes, layout, values_dtype, indices_dtype, device):
     )
     assert Id.shape == size
     assert Id.layout == layout
-    assert Id.device == device
+    assert devices_match(Id.device, device)
     assert Id.values().dtype == values_dtype
     if layout is torch.sparse_coo:
         assert Id.indices().dtype == indices_dtype

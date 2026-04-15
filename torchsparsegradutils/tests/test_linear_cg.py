@@ -1,26 +1,7 @@
-import os
-import random
-
 import pytest
 import torch
 
 from torchsparsegradutils.utils.linear_cg import linear_cg
-
-
-# Autouse fixture to seed RNG and restore state after each test
-@pytest.fixture(autouse=True)
-def seed_restore():
-    unlock = os.getenv("UNLOCK_SEED")
-    if unlock is None or unlock.lower() == "false":
-        rng = torch.get_rng_state()
-        torch.manual_seed(0)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(0)
-        random.seed(0)
-        yield
-        torch.set_rng_state(rng)
-    else:
-        yield
 
 
 # Test basic CG solve for vectors and matrices
