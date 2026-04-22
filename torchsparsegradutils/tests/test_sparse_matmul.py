@@ -229,7 +229,6 @@ MEM_USAGE_TEST_DATA = [
         for d in itertools.product(MEM_USAGE_TEST_DATA, [torch.sparse_coo, torch.sparse_csr])
     ],
 )
-@pytest.mark.manual_cuda
 def test_sparse_mm_memory_advantage(device, value_dtype, index_dtype, mem_shapes, layout):
     name, A_shape, B_shape, A_nnz = mem_shapes
 
@@ -339,7 +338,6 @@ def test_sparse_mm_optimize_A_multiple_steps(layout, device, value_dtype, index_
         assert not torch.allclose(old, new), f"Step {step}: A.values did not update"
 
 
-@pytest.mark.manual_cuda
 def test_sparse_mm_memory_stability(layout, device):
     if device.type != "cuda":
         pytest.skip("requires CUDA for this test")

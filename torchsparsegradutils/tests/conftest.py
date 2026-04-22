@@ -21,29 +21,9 @@ def _seed_all(seed: int = SEED) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def pytest_addoption(parser):
-    parser.addoption(
-        "--run-manual-cuda",
-        action="store_true",
-        default=False,
-        help="Run CUDA memory/performance/OOM tests marked manual_cuda.",
-    )
-
-
 def pytest_configure(config):
-    config.addinivalue_line("markers", "manual_cuda: CUDA memory/performance/OOM tests excluded by default")
     if not _seed_unlocked():
         _seed_all()
-
-
-def pytest_collection_modifyitems(config, items):
-    if config.getoption("--run-manual-cuda"):
-        return
-
-    skip_manual_cuda = pytest.mark.skip(reason="manual CUDA test; use --run-manual-cuda to run")
-    for item in items:
-        if "manual_cuda" in item.keywords:
-            item.add_marker(skip_manual_cuda)
 
 
 @pytest.fixture(autouse=True)

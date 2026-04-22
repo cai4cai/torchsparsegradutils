@@ -144,9 +144,6 @@ We use pytest for testing. Tests are organized by module:
    # Run with coverage
    pytest --cov=torchsparsegradutils
 
-   # Run CUDA memory/performance experiments manually
-   pytest --run-manual-cuda -m manual_cuda -s
-
 **Writing Tests**
 
 Follow these guidelines:

@@ -106,22 +106,6 @@ pip install scipy matplotlib pandas tqdm pytest
 
 > **Note:** The CuPy extra installs `cupy-cuda12x>=13.0`. If you are using a different CUDA version, install the appropriate CuPy package manually (e.g. `pip install cupy-cuda11x`).
 
-### Reviewer Test Environment
-
-For a clean Python 3.12 environment with all optional dependencies after the 0.2.2 release:
-
-```bash
-uv venv --python 3.12 --seed --managed-python
-pip install "torchsparsegradutils[all]==0.2.2"
-python -m pytest
-```
-
-The default pytest suite includes CPU tests and lightweight CUDA functional tests when CUDA is available. CUDA memory, performance, and OOM experiments are preserved for manual validation and can be run explicitly:
-
-```bash
-python -m pytest --run-manual-cuda -m manual_cuda -s
-```
-
 ### Requirements
 
 - **Python**: ≥ 3.10
@@ -412,9 +396,6 @@ python -m pytest torchsparsegradutils/tests/test_distributions.py
 
 # Run with coverage
 python -m pytest --cov=torchsparsegradutils
-
-# Run CUDA memory/performance experiments manually
-python -m pytest --run-manual-cuda -m manual_cuda -s
 ```
 
 ### Running Benchmarks

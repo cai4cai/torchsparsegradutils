@@ -112,6 +112,5 @@ doctest_optionflags = [
 ]
 # Separate command for doctests due to potential issues
 markers = [
-    "manual_cuda: marks CUDA memory/performance/OOM tests that require explicit opt-in with --run-manual-cuda",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
