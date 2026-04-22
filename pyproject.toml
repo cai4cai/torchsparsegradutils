@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "torchsparsegradutils"
-version = "0.2.1"
+version = "0.2.2"
 description = "A collection of utility functions to work with PyTorch sparse tensors"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,7 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 cupy = ["cupy-cuda12x>=13.0"]
 jax = ["jax[cuda12]"]
-all = ["torchsparsegradutils[cupy,jax]"]
+all = ["cupy-cuda12x>=13.0", "jax[cuda12]"]
 docs = [
     "sphinx>=7.0.0",
     "sphinx-rtd-theme>=1.3.0",
@@ -100,6 +100,9 @@ include_trailing_comma = true
 minversion = "6.0"
 addopts = ["-v"]
 testpaths = [
+    "torchsparsegradutils/tests",
+]
+pythonpath = [
     "torchsparsegradutils/tests",
 ]
 doctest_optionflags = [

@@ -1,12 +1,10 @@
 import pytest
 import torch
+from test_config import DEVICES, Tolerances
 
 from torchsparsegradutils.utils import bicgstab
 
-# Device fixture
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda:0"))
+ATOL, RTOL = Tolerances.iterative(torch.float64)
 
 
 def _id_device(d):
@@ -28,16 +26,15 @@ def test_bicgstab(device):
     actual = torch.linalg.solve(matrix_dense, rhs)
     # test various bicgstab call signatures
     solves = bicgstab(matrix_dense, rhs=rhs)
-    assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(solves, actual, atol=ATOL, rtol=RTOL)
     solves = bicgstab(matrix_dense.matmul, rhs=rhs)
-    assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(solves, actual, atol=ATOL, rtol=RTOL)
     solves = bicgstab(matrix_sparse.matmul, rhs=rhs)
-    assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(solves, actual, atol=ATOL, rtol=RTOL)
     solves = bicgstab(matrix_sparse, rhs=rhs)
-    assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(solves, actual, atol=ATOL, rtol=RTOL)
 
 
-@pytest.mark.flaky(reruns=5)
 def test_bicgstab_2d_rhs(device):
     size = 100
     # build SPD test problem
@@ -54,8 +51,8 @@ def test_bicgstab_2d_rhs(device):
 
     # dense-matrix API
     solves = bicgstab(matrix_dense, rhs=rhs2d)
-    assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(solves, actual, atol=ATOL, rtol=RTOL)
 
     # sparse-matrix API
     solves = bicgstab(matrix_sparse, rhs=rhs2d)
-    assert torch.allclose(solves, actual, atol=1e-3, rtol=1e-4)
+    assert torch.allclose(solves, actual, atol=ATOL, rtol=RTOL)

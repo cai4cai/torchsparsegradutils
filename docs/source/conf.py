@@ -13,10 +13,10 @@ import sys
 sys.path.insert(0, os.path.abspath("../../"))
 
 project = "torchsparsegradutils"
-copyright = "2025, CAI4CAI research group"
+copyright = "2026, CAI4CAI research group"
 author = "CAI4CAI research group"
-release = "0.2.1"
-version = "0.2.1"
+release = "0.2.2"
+version = "0.2.2"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

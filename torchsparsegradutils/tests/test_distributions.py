@@ -1,5 +1,6 @@
 import pytest
 import torch
+from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, get_confidence_level
 from torch.distributions.multivariate_normal import _batch_mv
 
 from torchsparsegradutils import sparse_mm
@@ -8,11 +9,6 @@ from torchsparsegradutils.distributions.sparse_multivariate_normal import _batch
 from torchsparsegradutils.utils import rand_sparse_tri
 from torchsparsegradutils.utils.dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
 
-# Identify Testing Parameters
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda"))
-
 TEST_DATA = [
     # name, batch size, event size, spartsity
     ("unbat", None, 4, 0.5),
@@ -20,8 +16,6 @@ TEST_DATA = [
     # ("bat2", 4, 64, 0.01),
 ]
 
-INDEX_DTYPES = [torch.int32, torch.int64]
-VALUE_DTYPES = [torch.float32, torch.float64]
 SPASRE_LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 PARAMETERIZATIONS = ["ldlt", "llt"]  # LDL^T vs LL^T
 
@@ -85,18 +79,6 @@ def parameterization(request):
 # @pytest.fixture(params=DISTRIBUTIONS, ids=[dist_id(d) for d in DISTRIBUTIONS])
 # def distribution(request):
 #     return request.param
-
-
-# Set random seed for reproducibility
-# using instead of @pytest.mark.flaky(reruns=5)
-@pytest.fixture(autouse=True)
-def set_seed():
-    seed = 42
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    # np.random.seed(seed)
-    # random.seed(seed)
 
 
 # Convenience functions:
@@ -199,7 +181,6 @@ def compute_sample_statistics(samples):
 # Define Tests
 
 
-@pytest.mark.flaky(reruns=5)
 def test_rsample_forward_cov(device, layout, sizes, parameterization, value_dtype, index_dtype):
     """Test sampling from covariance parameterization using proper statistical tests."""
 
@@ -209,48 +190,46 @@ def test_rsample_forward_cov(device, layout, sizes, parameterization, value_dtyp
 
     covariance_ref = compute_reference_covariance(dist, "cov")
     sample_mean, sample_cov = compute_sample_statistics(samples)
+    is_batched = len(samples.shape) != 2
+    mean_conf = get_confidence_level(device, value_dtype, is_batched, is_covariance_test=False)
+    cov_conf = get_confidence_level(device, value_dtype, is_batched, is_covariance_test=True)
 
     # Test mean using Hotelling's T² test
-    if len(samples.shape) == 2:
+    if not is_batched:
         # Unbatched case
-        confidence_level = 0.99 if value_dtype == torch.float32 else 0.90
-
         mean_test_result, t2_stat, t2_threshold = mean_hotelling_t2_test(
             sample_mean.unsqueeze(0),
             dist.loc.unsqueeze(0),
             sample_cov.unsqueeze(0),
             n_samples,
-            confidence_level=confidence_level,
+            confidence_level=mean_conf,
         )
         assert mean_test_result.item(), f"Mean test failed: T²={t2_stat.item():.6f} > threshold={t2_threshold:.6f}"
 
         # Test covariance using Nagao test
         cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
-            sample_cov.unsqueeze(0), covariance_ref.unsqueeze(0), n_samples, confidence_level=confidence_level
+            sample_cov.unsqueeze(0), covariance_ref.unsqueeze(0), n_samples, confidence_level=cov_conf
         )
         assert (
             cov_test_result.item()
         ), f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
     else:
         # Batched case
-        confidence_level = 0.99 if value_dtype == torch.float32 else 0.95
-
         mean_test_result, t2_stat, t2_threshold = mean_hotelling_t2_test(
-            sample_mean, dist.loc, sample_cov, n_samples, confidence_level=confidence_level
+            sample_mean, dist.loc, sample_cov, n_samples, confidence_level=mean_conf
         )
         assert (
             mean_test_result.all()
         ), f"Mean test failed for some batch elements: max T²={t2_stat.max().item():.6f} > threshold={t2_threshold:.6f}"
 
         cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
-            sample_cov, covariance_ref, n_samples, confidence_level=confidence_level
+            sample_cov, covariance_ref, n_samples, confidence_level=cov_conf
         )
         assert (
             cov_test_result.all()
         ), f"Covariance test failed for some batch elements: max T_N={T_N_stat.max().item():.6f} > threshold={chi2_threshold:.6f}"
 
 
-@pytest.mark.flaky(reruns=5)
 def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dtype, index_dtype):
     """Test sampling from precision parameterization using proper statistical tests."""
 
@@ -260,18 +239,19 @@ def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dty
 
     covariance_ref = compute_reference_covariance(dist, "prec")
     sample_mean, sample_cov = compute_sample_statistics(samples)
+    is_batched = len(samples.shape) != 2
+    mean_conf = get_confidence_level(device, value_dtype, is_batched, is_covariance_test=False)
+    cov_conf = get_confidence_level(device, value_dtype, is_batched, is_covariance_test=True)
 
     # Test mean using Hotelling's T² test
-    if len(samples.shape) == 2:
+    if not is_batched:
         # Unbatched case
-        confidence_level = 0.99 if value_dtype == torch.float32 else 0.95
-
         mean_test_result, t2_stat, t2_threshold = mean_hotelling_t2_test(
             sample_mean.unsqueeze(0),
             dist.loc.unsqueeze(0),
             sample_cov.unsqueeze(0),
             n_samples,
-            confidence_level=confidence_level,
+            confidence_level=mean_conf,
         )
         assert mean_test_result.item(), f"Mean test failed: T²={t2_stat.item():.6f} > threshold={t2_threshold:.6f}"
 
@@ -280,17 +260,15 @@ def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dty
             sample_cov.unsqueeze(0),
             covariance_ref.unsqueeze(0),
             n_samples,
-            confidence_level=confidence_level,
+            confidence_level=cov_conf,
         )
         assert (
             cov_test_result.item()
         ), f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
     else:
         # Batched case
-        confidence_level = 0.99 if value_dtype == torch.float32 else 0.95
-
         mean_test_result, t2_stat, t2_threshold = mean_hotelling_t2_test(
-            sample_mean, dist.loc, sample_cov, n_samples, confidence_level=confidence_level
+            sample_mean, dist.loc, sample_cov, n_samples, confidence_level=mean_conf
         )
         assert (
             mean_test_result.all()
@@ -300,7 +278,7 @@ def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dty
             sample_cov,
             covariance_ref,
             n_samples,
-            confidence_level=confidence_level,
+            confidence_level=cov_conf,
         )
         assert (
             cov_test_result.all()
@@ -425,7 +403,6 @@ def compute_native_sample_statistics(samples):
 
 
 # Tests for SparseMultivariateNormalNative
-@pytest.mark.flaky(reruns=5)
 def test_native_rsample_forward(device, native_sizes, value_dtype, index_dtype):
     """Test sampling from SparseMultivariateNormalNative using statistical tests."""
 
@@ -438,7 +415,10 @@ def test_native_rsample_forward(device, native_sizes, value_dtype, index_dtype):
     sample_mean, sample_cov = compute_native_sample_statistics(samples)
 
     # Test mean using Hotelling's T² test
-    confidence_level = 0.99 if value_dtype == torch.float32 else 0.95
+    confidence_level = max(
+        get_confidence_level(device, value_dtype, is_batched=False, is_covariance_test=False),
+        0.95,
+    )
 
     mean_test_result, t2_stat, t2_threshold = mean_hotelling_t2_test(
         sample_mean.unsqueeze(0),
@@ -451,7 +431,7 @@ def test_native_rsample_forward(device, native_sizes, value_dtype, index_dtype):
 
     # Test covariance using Nagao test with more lenient confidence for native implementation
     # Due to numerical differences in torch.sparse.mm, be more forgiving
-    cov_confidence = 0.90 if "native" in construct_native_distribution.__name__ else confidence_level
+    cov_confidence = get_confidence_level(device, value_dtype, is_batched=False, is_covariance_test=True)
     cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
         sample_cov.unsqueeze(0), covariance_ref.unsqueeze(0), n_samples, confidence_level=cov_confidence
     )

@@ -2,14 +2,10 @@ import sys
 
 import pytest
 import torch
+from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
 from torchsparsegradutils import sparse_triangular_solve
 from torchsparsegradutils.utils import rand_sparse_tri
-
-# Identify Testing Parameters
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda"))
 
 TEST_DATA = [
     # name  A_shape, B_shape, A_nnz
@@ -19,16 +15,11 @@ TEST_DATA = [
     ("bat", (4, 12, 12), (4, 12, 6), 32),
 ]
 
-INDEX_DTYPES = [torch.int32, torch.int64]
-VALUE_DTYPES = [torch.float32, torch.float64]
 LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
 UPPER = [True, False]
 UNITRIANGULAR = [True, False]
 TRANSPOSE = [True, False]
-
-ATOL = 1e-6  # relaxed tolerance to allow for float32
-RTOL = 1e-4
 
 
 # Define Test Names:
@@ -106,7 +97,6 @@ def layout(request):
 # Define Tests
 
 
-@pytest.mark.flaky(reruns=5)
 def test_tri_solve_forward_routine(layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
     if sys.platform == "win32" and device == torch.device("cpu"):
         pytest.skip("Skipping triangular solve CPU tests as solver not implemented for Windows OS")
@@ -128,10 +118,10 @@ def test_tri_solve_forward_routine(layout, device, value_dtype, index_dtype, sha
     res_ref = torch.triangular_solve(B, Ad, upper=upper, unitriangular=unitriangular, transpose=transpose).solution
     res_test = sparse_triangular_solve(A, B, upper=upper, unitriangular=unitriangular, transpose=transpose)
 
-    assert torch.allclose(res_test, res_ref, atol=ATOL, rtol=RTOL)
+    atol, rtol = Tolerances.direct(value_dtype)
+    assert torch.allclose(res_test, res_ref, atol=atol, rtol=rtol)
 
 
-@pytest.mark.flaky(reruns=10)
 def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose):
     if sys.platform == "win32" and device == torch.device("cpu"):
         pytest.skip("Skipping triangular solve CPU tests as solver not implemented for Windows OS")
@@ -183,11 +173,12 @@ def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, sh
 
     nz_mask = As1.grad.to_dense() != 0.0
 
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=ATOL, rtol=RTOL)
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad3.grad[nz_mask], atol=ATOL, rtol=RTOL)
+    atol, rtol = Tolerances.direct(value_dtype)
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=atol, rtol=rtol)
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad3.grad[nz_mask], atol=atol, rtol=rtol)
 
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=ATOL, rtol=RTOL)
-    assert torch.allclose(Bd1.grad, Bd3.grad, atol=ATOL, rtol=RTOL)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1.grad, Bd3.grad, atol=atol, rtol=rtol)
 
 
 def test_torch_triangular_solve_backward_fail(

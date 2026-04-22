@@ -62,7 +62,8 @@
                 "ms-python.flake8",
                 "ms-python.isort",
                 "ReprEng.csv",
-                "peakchen90.open-html-in-browser"
+                "peakchen90.open-html-in-browser",
+                "openai.chatgpt"
             ]
         }
     },

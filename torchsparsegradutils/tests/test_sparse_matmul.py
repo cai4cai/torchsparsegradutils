@@ -2,6 +2,7 @@ import itertools
 
 import pytest
 import torch
+from test_config import DEVICES, INDEX_DTYPES, SPARSE_LAYOUTS, VALUE_DTYPES, Tolerances
 
 from torchsparsegradutils import sparse_mm
 from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
@@ -10,12 +11,7 @@ from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
 # from torch.sparse import mm as sparse_mm
 
 
-# Identify Testing Parameters
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda"))
-
-LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
+LAYOUTS = SPARSE_LAYOUTS
 
 TEST_DATA = [
     # name  A_shape, B_shape, A_nnz
@@ -27,13 +23,8 @@ TEST_DATA = [
     ("bat", (11, 7, 4), (11, 4, 9), 14),  # -
 ]
 
-INDEX_DTYPES = [torch.int32, torch.int64]
-VALUE_DTYPES = [torch.float32, torch.float64]
 # NOTE: torch.float16  - Only works for COO on CPU
 # RuntimeError: "addmm_sparse_cuda" not implemented for 'Half'
-
-
-RTOL = 1e-6
 
 
 # Define Test Names:
@@ -93,7 +84,8 @@ def test_sparse_mm_forward(layout, device, value_dtype, index_dtype, shapes):
     res_sparse = sparse_mm(A, B)  # both results are dense
     res_dense = torch.matmul(Ad, B)
 
-    assert torch.allclose(res_sparse, res_dense, rtol=RTOL)
+    atol, rtol = Tolerances.direct(value_dtype)
+    assert torch.allclose(res_sparse, res_dense, atol=atol, rtol=rtol)
 
 
 def test_sprase_mm_backward(layout, device, value_dtype, index_dtype, shapes, is_backward=False):
@@ -131,8 +123,9 @@ def test_sprase_mm_backward(layout, device, value_dtype, index_dtype, shapes, is
         raise ValueError(f"Unsupported layout: {layout} or shape: {As1.shape}")
 
     # Check gradient values
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=RTOL)
-    assert torch.allclose(Bd1.grad, Bd2.grad, rtol=RTOL)
+    atol, rtol = Tolerances.direct(value_dtype)
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=atol, rtol=rtol)
 
 
 ################################## Conditional Gradient Tests: #####################################
