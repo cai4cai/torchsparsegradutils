@@ -37,13 +37,13 @@ The source code is available on GitHub at [https://github.com/cai4cai/torchspars
 
 Many scientific machine learning models benefit from representing large linear operators (e.g., neighbourhood couplings, precision matrices, sparse Jacobians) using sparse tensors to reduce memory and compute complexity. In high-dimensional settings, such as volumetric medical imaging, dense covariance or precision parameterisations are typically intractable, motivating sparse end-to-end parameterisations.
 
-However, learning these models with gradient-based optimisation requires backpropagation through sparse linear algebra (matrix products, triangular solves, and linear system solves). PyTorch's default sparse semantics are not designed to preserve user-imposed sparsity structure during differentiation ([PyTorch issue #87448](https://github.com/pytorch/pytorch/issues/87448)), which can lead to memory blow-ups and prevent end-to-end optimisation of sparse probabilistic models.
+However, learning these models with gradient-based optimisation requires backpropagation through sparse linear algebra (matrix products, triangular solves, and linear system solves). PyTorch's default sparse semantics are not designed to preserve user-imposed sparsity structure during differentiation [@pytorch_sparse_issue_87448], which can lead to memory blow-ups and prevent end-to-end optimisation of sparse probabilistic models.
 
 `torchsparsegradutils` addresses this gap by implementing custom autograd functions for key sparse operators that return gradients only for stored nonzeros, enabling practical optimisation of models that rely on fixed sparse structure.
 
 # State of the field
 
-PyTorch [@pytorch] exposes sparse layouts (COO, CSR, and related formats) and implements a growing set of sparse operations. However, PyTorch's design goal is *dense-equivalent semantics* for sparse layouts: a guiding invariant is that applying an operation in sparse form should match applying it in dense form after conversion, including the backward function ([PyTorch issue #87448](https://github.com/pytorch/pytorch/issues/87448)). This makes it difficult to learn parameters that are intended to remain structurally sparse, because gradients may be produced for implicit zeros, or intermediate computations may densify.
+PyTorch [@pytorch] exposes sparse layouts (COO, CSR, and related formats) and implements a growing set of sparse operations. However, PyTorch's design goal is *dense-equivalent semantics* for sparse layouts: a guiding invariant is that applying an operation in sparse form should match applying it in dense form after conversion, including the backward function [@pytorch_sparse_issue_87448]. This makes it difficult to learn parameters that are intended to remain structurally sparse, because gradients may be produced for implicit zeros, or intermediate computations may densify.
 
 PyTorch also provides `MaskedTensor`, which distinguishes specified and unspecified elements and is conceptually closer to the constrained-subspace interpretation of sparsity. However, `MaskedTensor` remains at prototype stage with incomplete operator coverage, and storing a full boolean mask incurs a significant memory overhead, partially negating the memory benefits of sparse index-based representations for large-scale problems.
 
@@ -55,7 +55,7 @@ Other libraries provide efficient sparse kernels but do not directly solve "spar
 
 Two design trade-offs shaped the implementation. First, the package targets *structure-preserving learning* over maximal operator coverage, focusing on sparse matrix products and sparse solves that support sparse multivariate normal sampling and related models. Second, it combines native PyTorch implementations (CG, BiCGSTAB, LSMR, MINRES) with optional CuPy and JAX wrappers so users can trade off portability and performance.
 
-**Build vs. contribute justification.** PyTorch's current sparse semantics prioritise dense-equivalent behaviour ([PyTorch issue #87448](https://github.com/pytorch/pytorch/issues/87448)). In contrast, this package intentionally provides structure-preserving backward passes for specific operators to enable learning with fixed sparsity patterns. Because that is a semantic choice rather than just an implementation detail, the functionality is better delivered as an opt-in external library than as a change to PyTorch defaults.
+**Build vs. contribute justification.** PyTorch's current sparse semantics prioritise dense-equivalent behaviour [@pytorch_sparse_issue_87448]. In contrast, this package intentionally provides structure-preserving backward passes for specific operators to enable learning with fixed sparsity patterns. Because that is a semantic choice rather than just an implementation detail, the functionality is better delivered as an opt-in external library than as a change to PyTorch defaults.
 
 # Research impact statement
 
@@ -117,36 +117,23 @@ Short examples are shown below; fuller worked examples are available in the Read
 ```python
 import torch
 from torchsparsegradutils import sparse_mm, sparse_generic_solve
-from torchsparsegradutils.distributions import SparseMultivariateNormal
-from torchsparsegradutils.utils import (
-    linear_cg,
-    make_spd_sparse,
-    rand_sparse,
-    rand_sparse_tri,
-)
+from torchsparsegradutils.distributions import SparseMultivariateNormal as SMVN
+from torchsparsegradutils.utils import linear_cg, rand_sparse, rand_sparse_tri
 
 n = 100
-A = rand_sparse((n, n), nnz=500).requires_grad_(True)
+A = rand_sparse((n, n), 500).requires_grad_()
 sparse_mm(A, torch.randn(n, 8, requires_grad=True)).sum().backward()
 
-A_spd, _ = make_spd_sparse(n, torch.sparse_coo, torch.float32, torch.int64, "cpu")
-sparse_generic_solve(
-    A_spd.requires_grad_(True),
-    torch.randn(n),
-    solve=linear_cg,
-).sum().backward()
+A = torch.eye(n).to_sparse().requires_grad_()
+sparse_generic_solve(A, torch.randn(n), solve=linear_cg).sum().backward()
 
-L = rand_sparse_tri(
-    (n, n), nnz=300, upper=False, strict=True
-).requires_grad_(True)
-SparseMultivariateNormal(
-    torch.zeros(n), diagonal=torch.rand(n), scale_tril=L
-).rsample((10,)).sum().backward()
+L = rand_sparse_tri((n, n), 300, upper=False, strict=True).requires_grad_()
+SMVN(torch.zeros(n), torch.ones(n), scale_tril=L).rsample().sum().backward()
 ```
 
 # Benchmarks
 
-On the SuiteSparse Rothberg/cfd2 matrix ($123{,}440 \times 123{,}440$, 3.1M non-zeros), dense baselines and PyTorch's native COO backward pass ran out of memory, whereas `torchsparsegradutils` completed sparse matrix-multiplication backward in about 75 ms using 5.1 GB on one tested RTX 4090 setup (results vary by hardware). On the same setup, native COO iterative solvers were up to about 40$\times$ faster than CuPy wrappers because they avoid sparse-format conversion overhead; full benchmark scripts and hardware-specific results are available in the repository and ReadTheDocs benchmark documentation.
+On the SuiteSparse Rothberg/cfd2 matrix [@davis2011university; @rothberg1997cfd2] ($123{,}440 \times 123{,}440$, 3.1M non-zeros), dense baselines and PyTorch's native COO backward pass ran out of memory, whereas `torchsparsegradutils` completed sparse matrix-multiplication backward in about 75 ms using 5.1 GB on one tested RTX 4090 setup (results vary by hardware). On the same setup, native COO iterative solvers were up to about 40$\times$ faster than CuPy wrappers because they avoid sparse-format conversion overhead; full benchmark scripts and hardware-specific results are available in the repository and ReadTheDocs benchmark documentation.
 
 # AI usage disclosure
 
@@ -154,6 +141,6 @@ Generative AI tools were used during development of this software and manuscript
 
 # Acknowledgements
 
-We thank the PyTorch development team for foundational sparse tensor support. We also acknowledge upstream solver implementations and references used as starting points for iterative methods ([pykrylov](https://github.com/PythonOptimizers/pykrylov), [cornellius-gp/linear_operator](https://github.com/cornellius-gp/linear_operator), [pytorch-minimize](https://github.com/rfeinman/pytorch-minimize)) [@saad2003iterative]. We thank Floris Laporte for his excellent tutorial on implementing sparse linear system solvers in PyTorch [@flaport2020sparse], which provided valuable insights for gradient computation strategies. This work was supported by the Wellcome/EPSRC Centre for Interventional and Surgical Sciences and the School of Biomedical Engineering & Imaging Sciences, King's College London.
+We thank the PyTorch development team for foundational sparse tensor support. We also acknowledge upstream solver implementations and references used as starting points for iterative methods, including PyKrylov [@orban2014pykrylov], cornellius-gp/linear_operator [@gardner2017linearoperator], and pytorch-minimize [@feinman2021pytorchminimize], alongside the iterative-methods literature [@saad2003iterative]. We thank Floris Laporte for his excellent tutorial on implementing sparse linear system solvers in PyTorch [@flaport2020sparse], which provided valuable insights for gradient computation strategies. This work was supported by the Wellcome/EPSRC Centre for Interventional and Surgical Sciences and the School of Biomedical Engineering & Imaging Sciences, King's College London.
 
 # References

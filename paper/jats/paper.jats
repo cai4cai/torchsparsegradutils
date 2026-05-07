@@ -132,9 +132,9 @@ a Creative Commons Attribution 4.0 International License (CC BY
   products, triangular solves, and linear system solves). PyTorch’s
   default sparse semantics are not designed to preserve user-imposed
   sparsity structure during differentiation
-  (<ext-link ext-link-type="uri" xlink:href="https://github.com/pytorch/pytorch/issues/87448">PyTorch
-  issue #87448</ext-link>), which can lead to memory blow-ups and
-  prevent end-to-end optimisation of sparse probabilistic models.</p>
+  (<xref alt="Vercauteren, 2022" rid="ref-pytorch_sparse_issue_87448" ref-type="bibr">Vercauteren,
+  2022</xref>), which can lead to memory blow-ups and prevent end-to-end
+  optimisation of sparse probabilistic models.</p>
   <p><monospace>torchsparsegradutils</monospace> addresses this gap by
   implementing custom autograd functions for key sparse operators that
   return gradients only for stored nonzeros, enabling practical
@@ -150,10 +150,10 @@ a Creative Commons Attribution 4.0 International License (CC BY
   for sparse layouts: a guiding invariant is that applying an operation
   in sparse form should match applying it in dense form after
   conversion, including the backward function
-  (<ext-link ext-link-type="uri" xlink:href="https://github.com/pytorch/pytorch/issues/87448">PyTorch
-  issue #87448</ext-link>). This makes it difficult to learn parameters
-  that are intended to remain structurally sparse, because gradients may
-  be produced for implicit zeros, or intermediate computations may
+  (<xref alt="Vercauteren, 2022" rid="ref-pytorch_sparse_issue_87448" ref-type="bibr">Vercauteren,
+  2022</xref>). This makes it difficult to learn parameters that are
+  intended to remain structurally sparse, because gradients may be
+  produced for implicit zeros, or intermediate computations may
   densify.</p>
   <p>PyTorch also provides <monospace>MaskedTensor</monospace>, which
   distinguishes specified and unspecified elements and is conceptually
@@ -201,13 +201,13 @@ a Creative Commons Attribution 4.0 International License (CC BY
   can trade off portability and performance.</p>
   <p><bold>Build vs. contribute justification.</bold> PyTorch’s current
   sparse semantics prioritise dense-equivalent behaviour
-  (<ext-link ext-link-type="uri" xlink:href="https://github.com/pytorch/pytorch/issues/87448">PyTorch
-  issue #87448</ext-link>). In contrast, this package intentionally
-  provides structure-preserving backward passes for specific operators
-  to enable learning with fixed sparsity patterns. Because that is a
-  semantic choice rather than just an implementation detail, the
-  functionality is better delivered as an opt-in external library than
-  as a change to PyTorch defaults.</p>
+  (<xref alt="Vercauteren, 2022" rid="ref-pytorch_sparse_issue_87448" ref-type="bibr">Vercauteren,
+  2022</xref>). In contrast, this package intentionally provides
+  structure-preserving backward passes for specific operators to enable
+  learning with fixed sparsity patterns. Because that is a semantic
+  choice rather than just an implementation detail, the functionality is
+  better delivered as an opt-in external library than as a change to
+  PyTorch defaults.</p>
 </sec>
 <sec id="research-impact-statement">
   <title>Research impact statement</title>
@@ -360,36 +360,26 @@ a Creative Commons Attribution 4.0 International License (CC BY
   available in the ReadTheDocs quickstart.</p>
   <code language="python">import torch
 from torchsparsegradutils import sparse_mm, sparse_generic_solve
-from torchsparsegradutils.distributions import SparseMultivariateNormal
-from torchsparsegradutils.utils import (
-    linear_cg,
-    make_spd_sparse,
-    rand_sparse,
-    rand_sparse_tri,
-)
+from torchsparsegradutils.distributions import SparseMultivariateNormal as SMVN
+from torchsparsegradutils.utils import linear_cg, rand_sparse, rand_sparse_tri
 
 n = 100
-A = rand_sparse((n, n), nnz=500).requires_grad_(True)
+A = rand_sparse((n, n), 500).requires_grad_()
 sparse_mm(A, torch.randn(n, 8, requires_grad=True)).sum().backward()
 
-A_spd, _ = make_spd_sparse(n, torch.sparse_coo, torch.float32, torch.int64, &quot;cpu&quot;)
-sparse_generic_solve(
-    A_spd.requires_grad_(True),
-    torch.randn(n),
-    solve=linear_cg,
-).sum().backward()
+A = torch.eye(n).to_sparse().requires_grad_()
+sparse_generic_solve(A, torch.randn(n), solve=linear_cg).sum().backward()
 
-L = rand_sparse_tri(
-    (n, n), nnz=300, upper=False, strict=True
-).requires_grad_(True)
-SparseMultivariateNormal(
-    torch.zeros(n), diagonal=torch.rand(n), scale_tril=L
-).rsample((10,)).sum().backward()</code>
+L = rand_sparse_tri((n, n), 300, upper=False, strict=True).requires_grad_()
+SMVN(torch.zeros(n), torch.ones(n), scale_tril=L).rsample().sum().backward()</code>
 </sec>
 <sec id="benchmarks">
   <title>Benchmarks</title>
   <p>On the SuiteSparse Rothberg/cfd2 matrix
-  (<inline-formula><alternatives>
+  (<xref alt="Davis &amp; Hu, 2011" rid="ref-davis2011university" ref-type="bibr">Davis
+  &amp; Hu, 2011</xref>;
+  <xref alt="Rothberg, 1997" rid="ref-rothberg1997cfd2" ref-type="bibr">Rothberg,
+  1997</xref>) (<inline-formula><alternatives>
   <tex-math><![CDATA[123{,}440 \times 123{,}440]]></tex-math>
   <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mn>123</mml:mn><mml:mo>,</mml:mo><mml:mn>440</mml:mn><mml:mo>×</mml:mo><mml:mn>123</mml:mn><mml:mo>,</mml:mo><mml:mn>440</mml:mn></mml:mrow></mml:math></alternatives></inline-formula>,
   3.1M non-zeros), dense baselines and PyTorch’s native COO backward
@@ -422,10 +412,14 @@ SparseMultivariateNormal(
   <title>Acknowledgements</title>
   <p>We thank the PyTorch development team for foundational sparse
   tensor support. We also acknowledge upstream solver implementations
-  and references used as starting points for iterative methods
-  (<ext-link ext-link-type="uri" xlink:href="https://github.com/PythonOptimizers/pykrylov">pykrylov</ext-link>,
-  <ext-link ext-link-type="uri" xlink:href="https://github.com/cornellius-gp/linear_operator">cornellius-gp/linear_operator</ext-link>,
-  <ext-link ext-link-type="uri" xlink:href="https://github.com/rfeinman/pytorch-minimize">pytorch-minimize</ext-link>)
+  and references used as starting points for iterative methods,
+  including PyKrylov
+  (<xref alt="Orban &amp; Developers, 2014" rid="ref-orban2014pykrylov" ref-type="bibr">Orban
+  &amp; Developers, 2014</xref>), cornellius-gp/linear_operator
+  (<xref alt="Gardner et al., 2017" rid="ref-gardner2017linearoperator" ref-type="bibr">Gardner
+  et al., 2017</xref>), and pytorch-minimize
+  (<xref alt="Feinman, 2021" rid="ref-feinman2021pytorchminimize" ref-type="bibr">Feinman,
+  2021</xref>), alongside the iterative-methods literature
   (<xref alt="Saad, 2003" rid="ref-saad2003iterative" ref-type="bibr">Saad,
   2003</xref>). We thank Floris Laporte for his excellent tutorial on
   implementing sparse linear system solvers in PyTorch
@@ -526,6 +520,37 @@ SparseMultivariateNormal(
       <lpage>272</lpage>
     </element-citation>
   </ref>
+  <ref id="ref-davis2011university">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Davis</surname><given-names>Timothy A.</given-names></name>
+        <name><surname>Hu</surname><given-names>Yifan</given-names></name>
+      </person-group>
+      <article-title>The university of florida sparse matrix collection</article-title>
+      <source>ACM Transactions on Mathematical Software</source>
+      <year iso-8601-date="2011">2011</year>
+      <volume>38</volume>
+      <issue>1</issue>
+      <uri>https://dl.acm.org/doi/10.1145/2049662.2049663</uri>
+      <pub-id pub-id-type="doi">10.1145/2049662.2049663</pub-id>
+      <fpage>1:1</fpage>
+      <lpage>1:25</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-rothberg1997cfd2">
+    <element-citation>
+      <person-group person-group-type="author">
+        <name><surname>Rothberg</surname><given-names>Edward</given-names></name>
+      </person-group>
+      <article-title>Rothberg/cfd2: CFD, symmetric pressure matrix</article-title>
+      <person-group person-group-type="editor">
+        <name><surname>Davis</surname><given-names>Timothy A.</given-names></name>
+      </person-group>
+      <publisher-name>SuiteSparse Matrix Collection</publisher-name>
+      <year iso-8601-date="1997">1997</year>
+      <uri>https://sparse.tamu.edu/Rothberg/cfd2</uri>
+    </element-citation>
+  </ref>
   <ref id="ref-saad2003iterative">
     <element-citation publication-type="book">
       <person-group person-group-type="author">
@@ -565,6 +590,53 @@ SparseMultivariateNormal(
       <year iso-8601-date="2018">2018</year>
       <volume>31</volume>
       <uri>https://arxiv.org/abs/1809.11165</uri>
+    </element-citation>
+  </ref>
+  <ref id="ref-gardner2017linearoperator">
+    <element-citation>
+      <person-group person-group-type="author">
+        <name><surname>Gardner</surname><given-names>Jacob R.</given-names></name>
+        <name><surname>Pleiss</surname><given-names>Geoff</given-names></name>
+        <name><surname>Contributors</surname><given-names>GPyTorch</given-names></name>
+      </person-group>
+      <article-title>LinearOperator: Structured linear algebra for PyTorch</article-title>
+      <publisher-name>GitHub repository; GitHub</publisher-name>
+      <year iso-8601-date="2017">2017</year>
+      <uri>https://github.com/cornellius-gp/linear_operator</uri>
+    </element-citation>
+  </ref>
+  <ref id="ref-orban2014pykrylov">
+    <element-citation>
+      <person-group person-group-type="author">
+        <name><surname>Orban</surname><given-names>Dominique</given-names></name>
+        <name><surname>Developers</surname><given-names>PyKrylov</given-names></name>
+      </person-group>
+      <article-title>PyKrylov: Krylov methods in pure Python</article-title>
+      <publisher-name>GitHub repository; GitHub</publisher-name>
+      <year iso-8601-date="2014">2014</year>
+      <uri>https://github.com/PythonOptimizers/pykrylov</uri>
+    </element-citation>
+  </ref>
+  <ref id="ref-feinman2021pytorchminimize">
+    <element-citation>
+      <person-group person-group-type="author">
+        <name><surname>Feinman</surname><given-names>Reuben</given-names></name>
+      </person-group>
+      <article-title>Pytorch-minimize: A library for numerical optimization with autograd</article-title>
+      <publisher-name>GitHub</publisher-name>
+      <year iso-8601-date="2021">2021</year>
+      <uri>https://github.com/rfeinman/pytorch-minimize</uri>
+    </element-citation>
+  </ref>
+  <ref id="ref-pytorch_sparse_issue_87448">
+    <element-citation>
+      <person-group person-group-type="author">
+        <name><surname>Vercauteren</surname><given-names>Tom</given-names></name>
+      </person-group>
+      <article-title>Semantics of sparse operations clarification: Sparsity of the gradient with respect to a sparse tensor input</article-title>
+      <publisher-name>PyTorch GitHub issue #87448</publisher-name>
+      <year iso-8601-date="2022">2022</year>
+      <uri>https://github.com/pytorch/pytorch/issues/87448</uri>
     </element-citation>
   </ref>
   <ref id="ref-flaport2020sparse">
