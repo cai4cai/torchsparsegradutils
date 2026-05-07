@@ -1,6 +1,6 @@
 ---
 name: torchsparsegradutils-release
-description: Use when preparing torchsparsegradutils PRs, releases, packaging metadata, test-stability changes, JOSS reviewer follow-up, or devcontainer-aware validation commands.
+description: Use when preparing torchsparsegradutils PRs, releases, packaging metadata, test-stability changes, reviewer follow-up, or devcontainer-aware validation commands.
 ---
 
 # torchsparsegradutils Release Workflow
@@ -42,6 +42,24 @@ python -m flake8 . --count --show-source --statistics
 python -m pytest -q
 python -m build
 ```
+
+## Installed Wheel Validation
+
+- After publishing or when validating package metadata, test the published artifact in a clean Docker image in addition to local CI.
+- Use `Dockerfile.pip-install` to install the exact published package spec and run the local test suite against the installed wheel:
+
+```bash
+docker build --no-cache \
+  -f Dockerfile.pip-install \
+  -t torchsparsegradutils-pip-install:<version> \
+  --build-arg PACKAGE_SPEC='torchsparsegradutils[all]==<version>' \
+  .
+docker run --rm torchsparsegradutils-pip-install:<version>
+```
+
+- The Dockerfile should install the exact `torchsparsegradutils[all]==<version>` package from PyPI, run `python -m pip check`, verify the `all` extra metadata, import the optional JAX and CuPy modules, copy `torchsparsegradutils/tests` into an isolated directory, confirm imports resolve from `site-packages`, and run `python -m pytest -q` from that isolated test directory.
+- Keep CPU-only validation explicit with `CUDA_VISIBLE_DEVICES=""` and `JAX_PLATFORMS=cpu` unless intentionally validating with a GPU.
+- This Docker workflow can be promoted into a local CI CUDA runner in the future so installed published wheels are validated against GPU-visible tests as well as the CPU-only clean-image check.
 
 ## Publish Flow
 

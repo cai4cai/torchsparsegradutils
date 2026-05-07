@@ -1,0 +1,84 @@
+# syntax=docker/dockerfile:1
+
+FROM python:3.12-slim
+
+ARG PACKAGE_SPEC=torchsparsegradutils[all]==0.2.2
+ARG TEST_DEPENDENCIES="pytest pytest-rerunfailures parameterized pyyaml"
+
+ENV CUDA_VISIBLE_DEVICES="" \
+    JAX_PLATFORMS=cpu \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    XLA_PYTHON_CLIENT_PREALLOCATE=false
+
+RUN python -m pip install --upgrade pip setuptools wheel
+
+# Install the published package exactly as users will.
+RUN python -m pip install "${PACKAGE_SPEC}"
+RUN python -m pip install ${TEST_DEPENDENCIES}
+
+RUN python -m pip check
+
+RUN python - <<'PY'
+import importlib.metadata as metadata
+import sys
+
+import cupy
+import jax
+import scipy
+import torch
+import torchsparsegradutils
+import torchsparsegradutils.cupy as tsgu_cupy
+import torchsparsegradutils.jax as tsgu_jax
+from torchsparsegradutils import sparse_mm
+
+dist = metadata.distribution("torchsparsegradutils")
+assert dist.version == "0.2.2", dist.version
+
+requires = [requirement.lower() for requirement in dist.requires or []]
+for dependency in ("cupy-cuda12x", "jax"):
+    if not any(requirement.startswith(dependency) and 'extra == "all"' in requirement for requirement in requires):
+        raise RuntimeError(f"Missing {dependency!r} from the published 'all' extra metadata: {requires}")
+
+assert tsgu_cupy.have_cupy is True
+assert tsgu_jax.have_jax is True
+
+indices = torch.tensor([[0, 1, 1], [0, 0, 1]])
+values = torch.tensor([2.0, 3.0, 4.0])
+matrix = torch.sparse_coo_tensor(indices, values, (2, 2)).coalesce()
+dense = torch.tensor([[5.0], [7.0]])
+result = sparse_mm(matrix, dense)
+torch.testing.assert_close(result, torch.tensor([[10.0], [43.0]]))
+
+print(f"python {sys.version.split()[0]}")
+print(f"torchsparsegradutils {dist.version}")
+print(f"torch {torch.__version__}")
+print(f"scipy {scipy.__version__}")
+print(f"jax {jax.__version__}")
+print(f"cupy {cupy.__version__}")
+print(f"torchsparsegradutils module {torchsparsegradutils.__name__}")
+PY
+
+WORKDIR /opt/installed-wheel-tests
+COPY torchsparsegradutils/tests/ ./
+
+RUN python - <<'PY'
+from pathlib import Path
+
+import torchsparsegradutils
+
+module_path = Path(torchsparsegradutils.__file__).resolve()
+test_root = Path.cwd().resolve()
+
+if test_root in module_path.parents:
+    raise RuntimeError(f"Imported local source instead of installed wheel: {module_path}")
+if "site-packages" not in module_path.parts:
+    raise RuntimeError(f"Expected installed package from site-packages, got: {module_path}")
+
+print(f"testing installed wheel from {module_path}")
+PY
+
+RUN python -m pytest -q
+
+CMD ["python", "-c", "import torchsparsegradutils; print('torchsparsegradutils import OK')"]
