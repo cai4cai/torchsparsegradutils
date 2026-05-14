@@ -17,9 +17,9 @@ authors:
     orcid: 0000-0003-1794-0456
     affiliation: 1
 affiliations:
- - name: King's College London, London, UK
+ - name: King's College London, London, United Kingdom
    index: 1
- - name: Imperial College London, London, UK
+ - name: Imperial College London, London, United Kingdom
    index: 2
 date: 03 February 2026
 bibliography: paper.bib
@@ -29,7 +29,7 @@ bibliography: paper.bib
 
 The `torchsparsegradutils` package provides differentiable sparse linear-algebra utilities for PyTorch [@pytorch] that preserve sparsity in returned gradients during backpropagation. While PyTorch supports sparse tensors, its default dense-equivalent backward semantics can densify gradients and make it difficult to optimise models with fixed sparsity patterns, such as sparse covariance or precision parameterisations.
 
-The package provides sparse-dense matrix multiplication with sparse-gradient preservation, sparse triangular and generic linear system solvers (including BICGSTAB, CG, LSMR, and MINRES backends), optional CuPy [@cupy] and JAX [@jax] solver wrappers, sparse multivariate normal distributions with $\boldsymbol{L}\boldsymbol{L}^T$ and $\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^T$ parameterisations, and specialised encoders for spatial neighbourhood relationships in N-dimensional data.
+The package provides sparse-dense matrix multiplication with sparse-gradient preservation, sparse triangular and generic linear system solvers (including BiCGSTAB, CG, LSMR, and MINRES backends), optional CuPy [@cupy] and JAX [@jax] solver wrappers, sparse multivariate normal distributions with $\boldsymbol{L}\boldsymbol{L}^T$ and $\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^T$ parameterisations, and specialised encoders for spatial neighbourhood relationships in N-dimensional data.
 
 The source code is available on GitHub at [https://github.com/cai4cai/torchsparsegradutils](https://github.com/cai4cai/torchsparsegradutils), with full documentation hosted at [https://torchsparsegradutils.readthedocs.io](https://torchsparsegradutils.readthedocs.io).
 
@@ -53,7 +53,7 @@ Other libraries provide efficient sparse kernels but do not directly solve "spar
 
 `torchsparsegradutils` is built around `torch.autograd.Function` operators that wrap PyTorch's forward sparse kernels but override the backward pass to preserve sparsity for selected inputs. This keeps the API close to standard PyTorch code while making sparsity preservation an explicit, opt-in choice.
 
-Two design trade-offs shaped the implementation. First, the package targets *structure-preserving learning* over maximal operator coverage, focusing on sparse matrix products and sparse solves that support sparse multivariate normal sampling and related models. Second, it combines native PyTorch implementations (CG, BiCGSTAB, LSMR, MINRES) with optional CuPy and JAX wrappers so users can trade off portability and performance.
+Two design trade-offs shaped the implementation. First, the package targets *structure-preserving learning* over maximal operator coverage, focusing on sparse matrix products and sparse solves that support sparse multivariate normal sampling and related models. Second, it combines native PyTorch implementations (including CG, BiCGSTAB, LSMR, and MINRES) with optional CuPy and JAX wrappers so users can trade off portability and performance.
 
 **Build vs. contribute justification.** PyTorch's current sparse semantics prioritise dense-equivalent behaviour [@pytorch_sparse_issue_87448]. In contrast, this package intentionally provides structure-preserving backward passes for specific operators to enable learning with fixed sparsity patterns. Because that is a semantic choice rather than just an implementation detail, the functionality is better delivered as an opt-in external library than as a change to PyTorch defaults.
 
@@ -82,7 +82,7 @@ $$\frac{\partial \mathcal{L}}{\partial \mathbf{A}_{ij}} = \sum_{k=1}^p \Big(\fra
 
 The package provides multiple approaches for solving sparse linear systems
 $$\mathbf{A}\mathbf{x} = \mathbf{B},$$
-where $\mathbf{A}\in\mathbb{R}^{n\times n}$ is sparse, $\mathbf{B}\in\mathbb{R}^{n\times p}$ is dense (with $p=1$ for a single right-hand side), and $\mathbf{x}\in\mathbb{R}^{n\times p}$ is the dense solution. We support both direct triangular solves and iterative solvers (CG, BiCGSTAB, LSMR, MINRES). All are differentiable via the implicit function theorem.
+where $\mathbf{A}\in\mathbb{R}^{n\times n}$ is sparse, $\mathbf{B}\in\mathbb{R}^{n\times p}$ is dense (with $p=1$ for a single right-hand side), and $\mathbf{x}\in\mathbb{R}^{n\times p}$ is the dense solution. We support both direct triangular solves and iterative solvers (including CG, BiCGSTAB, LSMR, and MINRES). All are differentiable via the implicit function theorem.
 
 Given upstream gradient $\frac{\partial \mathcal{L}}{\partial \mathbf{x}} \in \mathbb{R}^{n\times p}$:
 

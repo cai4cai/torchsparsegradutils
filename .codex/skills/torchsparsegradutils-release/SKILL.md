@@ -18,6 +18,8 @@ description: Use when preparing torchsparsegradutils PRs, releases, packaging me
   - `git diff --stat`
   - `git diff`
   - `git log -1 --stat`
+- Do not create commits unless the user explicitly asks for a commit in the current turn.
+- For paper-review and JOSS follow-up edits, leave changes uncommitted so the user can rebuild the paper, inspect the generated artifacts, and commit after review.
 - Keep release notes aligned with actual code changes, not stale planning text.
 - Do not commit reviewer-response or release-draft files unless the user explicitly asks for them to be published.
 - Public docs should contain durable installation and usage information. Put one-off reviewer validation wording in PR, release, or reviewer-response text.

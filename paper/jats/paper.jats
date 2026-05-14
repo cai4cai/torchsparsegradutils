@@ -48,12 +48,13 @@ PyTorch</article-title>
 </contrib>
 <aff id="aff-1">
 <institution-wrap>
-<institution>King’s College London, London, UK</institution>
+<institution>King’s College London, London, United Kingdom</institution>
 </institution-wrap>
 </aff>
 <aff id="aff-2">
 <institution-wrap>
-<institution>Imperial College London, London, UK</institution>
+<institution>Imperial College London, London, United
+Kingdom</institution>
 </institution-wrap>
 </aff>
 </contrib-group>
@@ -99,7 +100,7 @@ a Creative Commons Attribution 4.0 International License (CC BY
   such as sparse covariance or precision parameterisations.</p>
   <p>The package provides sparse-dense matrix multiplication with
   sparse-gradient preservation, sparse triangular and generic linear
-  system solvers (including BICGSTAB, CG, LSMR, and MINRES backends),
+  system solvers (including BiCGSTAB, CG, LSMR, and MINRES backends),
   optional CuPy
   (<xref alt="Okuta et al., 2017" rid="ref-cupy" ref-type="bibr">Okuta
   et al., 2017</xref>) and JAX
@@ -196,9 +197,9 @@ a Creative Commons Attribution 4.0 International License (CC BY
   targets <italic>structure-preserving learning</italic> over maximal
   operator coverage, focusing on sparse matrix products and sparse
   solves that support sparse multivariate normal sampling and related
-  models. Second, it combines native PyTorch implementations (CG,
-  BiCGSTAB, LSMR, MINRES) with optional CuPy and JAX wrappers so users
-  can trade off portability and performance.</p>
+  models. Second, it combines native PyTorch implementations (including
+  CG, BiCGSTAB, LSMR, and MINRES) with optional CuPy and JAX wrappers so
+  users can trade off portability and performance.</p>
   <p><bold>Build vs. contribute justification.</bold> PyTorch’s current
   sparse semantics prioritise dense-equivalent behaviour
   (<xref alt="Vercauteren, 2022" rid="ref-pytorch_sparse_issue_87448" ref-type="bibr">Vercauteren,
@@ -280,8 +281,8 @@ a Creative Commons Attribution 4.0 International License (CC BY
       <tex-math><![CDATA[\mathbf{x}\in\mathbb{R}^{n\times p}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐱</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
       is the dense solution. We support both direct triangular solves
-      and iterative solvers (CG, BiCGSTAB, LSMR, MINRES). All are
-      differentiable via the implicit function theorem.</p>
+      and iterative solvers (including CG, BiCGSTAB, LSMR, and MINRES).
+      All are differentiable via the implicit function theorem.</p>
       <p>Given upstream gradient <inline-formula><alternatives>
       <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{x}} \in \mathbb{R}^{n\times p}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>:</p>
@@ -526,7 +527,7 @@ SMVN(torch.zeros(n), torch.ones(n), scale_tril=L).rsample().sum().backward()</co
         <name><surname>Davis</surname><given-names>Timothy A.</given-names></name>
         <name><surname>Hu</surname><given-names>Yifan</given-names></name>
       </person-group>
-      <article-title>The university of florida sparse matrix collection</article-title>
+      <article-title>The University of Florida Sparse Matrix Collection</article-title>
       <source>ACM Transactions on Mathematical Software</source>
       <year iso-8601-date="2011">2011</year>
       <volume>38</volume>
@@ -585,7 +586,7 @@ SMVN(torch.zeros(n), torch.ones(n), scale_tril=L).rsample().sum().backward()</co
         <name><surname>Weinberger</surname><given-names>Kilian Q.</given-names></name>
         <name><surname>Wilson</surname><given-names>Andrew Gordon</given-names></name>
       </person-group>
-      <article-title>GPyTorch: Blackbox matrix-matrix gaussian process inference with GPU acceleration</article-title>
+      <article-title>GPyTorch: Blackbox matrix-matrix Gaussian Process inference with GPU acceleration</article-title>
       <source>Advances in neural information processing systems</source>
       <year iso-8601-date="2018">2018</year>
       <volume>31</volume>
@@ -622,7 +623,7 @@ SMVN(torch.zeros(n), torch.ones(n), scale_tril=L).rsample().sum().backward()</co
       <person-group person-group-type="author">
         <name><surname>Feinman</surname><given-names>Reuben</given-names></name>
       </person-group>
-      <article-title>Pytorch-minimize: A library for numerical optimization with autograd</article-title>
+      <article-title>PyTorch-minimize: A library for numerical optimization with autograd</article-title>
       <publisher-name>GitHub</publisher-name>
       <year iso-8601-date="2021">2021</year>
       <uri>https://github.com/rfeinman/pytorch-minimize</uri>
