@@ -29,7 +29,7 @@ bibliography: paper.bib
 
 The `torchsparsegradutils` package provides differentiable sparse linear-algebra utilities for PyTorch [@pytorch] that preserve sparsity in returned gradients during backpropagation. While PyTorch supports sparse tensors, its default dense-equivalent backward semantics can densify gradients and make it difficult to optimise models with fixed sparsity patterns, such as sparse covariance or precision parameterisations.
 
-The package provides sparse-dense matrix multiplication with sparse-gradient preservation, sparse triangular and generic linear system solvers (including BiCGSTAB, CG, LSMR, and MINRES backends), optional CuPy [@cupy] and JAX [@jax] solver wrappers, sparse multivariate normal distributions with $\boldsymbol{L}\boldsymbol{L}^T$ and $\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^T$ parameterisations, and specialised encoders for spatial neighbourhood relationships in N-dimensional data.
+The package provides sparse-dense matrix multiplication with sparse-gradient preservation, sparse triangular and generic linear system solvers (including BiCGSTAB, CG, LSMR, and MINRES backends), optional CuPy [@cupy] and JAX [@jax] solver wrappers, sparse multivariate normal distributions with $\boldsymbol{L}\boldsymbol{L}^{\top}$ and $\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^{\top}$ parameterisations, and specialised encoders for spatial neighbourhood relationships in N-dimensional data.
 
 The source code is available on GitHub at [https://github.com/cai4cai/torchsparsegradutils](https://github.com/cai4cai/torchsparsegradutils), with full documentation hosted at [https://torchsparsegradutils.readthedocs.io](https://torchsparsegradutils.readthedocs.io).
 
@@ -68,12 +68,12 @@ This software provides an opt-in path to sparsity-preserving gradients for spars
 ### Sparse Matrix Multiplication
 The package implements sparse-dense matrix multiplication $\mathbf{C} = \mathbf{A}\mathbf{B}$ where $\mathbf{A} \in \mathbb{R}^{m \times n}$ is sparse and $\mathbf{B} \in \mathbb{R}^{n \times p}$ is dense. The forward pass uses PyTorch's native `torch.sparse.mm`, while the backward pass is reimplemented to preserve sparsity patterns in the gradients.
 
-Given upstream gradient $\frac{\partial \mathcal{L}}{\partial \mathbf{C}} \in \mathbb{R}^{m\times p}$ from some scalar objective function $\mathcal{L}$, the chain rule gives:
+Given upstream gradient $\frac{\partial \mathcal{L}}{\partial \mathbf{C}} \in \mathbb{R}^{m \times p}$ from some scalar objective function $\mathcal{L}$, the chain rule gives:
 
-**Gradient wrt $\mathbf{B}$** (dense):
+**Gradient with respect to $\mathbf{B}$** (dense):
 $$\frac{\partial \mathcal{L}}{\partial \mathbf{B}} = \mathbf{A}^\top \frac{\partial \mathcal{L}}{\partial \mathbf{C}}.$$
 
-**Gradient wrt $\mathbf{A}$** (sparse):
+**Gradient with respect to $\mathbf{A}$** (sparse):
 For a nonzero entry $\mathbf{A}_{ij}$,
 $$\frac{\partial \mathcal{L}}{\partial \mathbf{A}_{ij}} = \sum_{k=1}^p \Big(\frac{\partial \mathcal{L}}{\partial \mathbf{C}_{ik}}\Big) \mathbf{B}_{jk}.$$
 
@@ -81,18 +81,18 @@ $$\frac{\partial \mathcal{L}}{\partial \mathbf{A}_{ij}} = \sum_{k=1}^p \Big(\fra
 ### Sparse Linear System Solvers
 
 The package provides multiple approaches for solving sparse linear systems
-$$\mathbf{A}\mathbf{x} = \mathbf{B},$$
-where $\mathbf{A}\in\mathbb{R}^{n\times n}$ is sparse, $\mathbf{B}\in\mathbb{R}^{n\times p}$ is dense (with $p=1$ for a single right-hand side), and $\mathbf{x}\in\mathbb{R}^{n\times p}$ is the dense solution. We support both direct triangular solves and iterative solvers (including CG, BiCGSTAB, LSMR, and MINRES). All are differentiable via the implicit function theorem.
+$$\mathbf{A}\mathbf{X} = \mathbf{B},$$
+where $\mathbf{A} \in \mathbb{R}^{n \times n}$ is sparse, $\mathbf{B} \in \mathbb{R}^{n \times p}$ is dense (with $p=1$ for a single right-hand side), and $\mathbf{X} \in \mathbb{R}^{n \times p}$ is the dense solution. We support both direct triangular solves and iterative solvers (including CG, BiCGSTAB, LSMR, and MINRES). All are differentiable via the implicit function theorem.
 
-Given upstream gradient $\frac{\partial \mathcal{L}}{\partial \mathbf{x}} \in \mathbb{R}^{n\times p}$:
+Given upstream gradient $\frac{\partial \mathcal{L}}{\partial \mathbf{X}} \in \mathbb{R}^{n \times p}$:
 
-**Gradient wrt $\mathbf{b}$** (dense):
-$$\frac{\partial \mathcal{L}}{\partial \mathbf{b}} = \mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{x}}.$$
+**Gradient with respect to $\mathbf{B}$** (dense):
+$$\frac{\partial \mathcal{L}}{\partial \mathbf{B}} = \mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{X}}.$$
 
-**Gradient wrt $\mathbf{A}$** (sparse): The dense form would be
-$$\frac{\partial \mathcal{L}}{\partial \mathbf{A}} = - \left(\mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{x}}\right) \mathbf{x}^\top.$$
+**Gradient with respect to $\mathbf{A}$** (sparse): The dense form would be
+$$\frac{\partial \mathcal{L}}{\partial \mathbf{A}} = - \left(\mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{X}}\right) \mathbf{X}^\top.$$
 For a nonzero entry $\mathbf{A}_{ij}$ this becomes
-$$\frac{\partial \mathcal{L}}{\partial \mathbf{A}_{ij}} = - \sum_{k=1}^p \left(\mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{x}}\right)_{ik} \mathbf{x}_{jk} $$
+$$\frac{\partial \mathcal{L}}{\partial \mathbf{A}_{ij}} = - \sum_{k=1}^p \left(\mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{X}}\right)_{ik} \mathbf{X}_{jk}.$$
 
 ## Sparse Multivariate Normal Distributions
 
@@ -100,19 +100,19 @@ The package implements sparse multivariate normal distributions $\boldsymbol{\et
 
 **$\boldsymbol{L}\boldsymbol{L}^{\top}$ Parameterisation**: Sparse lower triangular matrices $\boldsymbol{L}$ with positive diagonals:
 $$
-\boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Sigma}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Omega}^{-T}\boldsymbol{\epsilon}
+\boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Sigma}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Omega}^{-\top}\boldsymbol{\epsilon}
 $$
 
 **$\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^{\top}$ Parameterisation**: Sparse unit lower triangular matrices $\boldsymbol{L}$ and diagonal $\boldsymbol{D}$:
 $$
-\boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}\boldsymbol{D}^{1/2}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_\Omega^{-\top}\boldsymbol{D}_\Omega^{-1/2}\boldsymbol{\epsilon}
+\boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}\boldsymbol{D}^{1/2}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Omega}^{-\top}\boldsymbol{D}_{\Omega}^{-1/2}\boldsymbol{\epsilon}
 $$
 
-We store $\boldsymbol{L}$ without its diagonal (strictly lower), and treat it as unit lower-triangular at use time. The $\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^{\top}$ parameterisation provides superior numerical stability for precision matrices by avoiding strict positive definiteness constraints.
+We store $\boldsymbol{L}$ without its diagonal (strictly lower), and treat it as unit lower-triangular at use time. The $\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^{\top}$ parameterisation is practically more robust for learned precision matrices because triangular solves use a unit-diagonal factor, avoiding failure modes caused by learned diagonal entries that become zero or nearly zero. The remaining scale is isolated in $\boldsymbol{D}$ and inverted elementwise, avoiding the stricter positive-diagonal and full-rank requirements of a Cholesky-style $\boldsymbol{L}\boldsymbol{L}^{\top}$ factor.
 
 # Usage Examples
 
-Short examples are shown below; fuller worked examples are available in the ReadTheDocs quickstart.
+Short examples are shown below; fuller worked examples are available in the Read the Docs quickstart.
 
 ```python
 import torch
@@ -133,7 +133,7 @@ SMVN(torch.zeros(n), torch.ones(n), scale_tril=L).rsample().sum().backward()
 
 # Benchmarks
 
-On the SuiteSparse Rothberg/cfd2 matrix [@davis2011university; @rothberg1997cfd2] ($123{,}440 \times 123{,}440$, 3.1M non-zeros), dense baselines and PyTorch's native COO backward pass ran out of memory, whereas `torchsparsegradutils` completed sparse matrix-multiplication backward in about 75 ms using 5.1 GB on one tested RTX 4090 setup (results vary by hardware). On the same setup, native COO iterative solvers were up to about 40$\times$ faster than CuPy wrappers because they avoid sparse-format conversion overhead; full benchmark scripts and hardware-specific results are available in the repository and ReadTheDocs benchmark documentation.
+On the SuiteSparse Rothberg/cfd2 matrix [@davis2011university; @rothberg1997cfd2] ($123{,}440 \times 123{,}440$, 3.1 million nonzeros), dense baselines and PyTorch's native COO backward pass ran out of memory, whereas `torchsparsegradutils` completed sparse matrix-multiplication backward in about 75 ms using 5.1 GB on one tested RTX 4090 setup (results vary by hardware). On the same setup, native COO iterative solvers were up to about 40$\times$ faster than CuPy wrappers because they avoid sparse-format conversion overhead; full benchmark scripts and hardware-specific results are available in the repository and Read the Docs benchmark documentation.
 
 # AI usage disclosure
 

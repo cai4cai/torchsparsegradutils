@@ -107,11 +107,11 @@ a Creative Commons Attribution 4.0 International License (CC BY
   (<xref alt="Bradbury et al., 2018" rid="ref-jax" ref-type="bibr">Bradbury
   et al., 2018</xref>) solver wrappers, sparse multivariate normal
   distributions with <inline-formula><alternatives>
-  <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{L}^T]]></tex-math>
-  <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>T</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+  <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{L}^{\top}]]></tex-math>
+  <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>⊤</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
   and <inline-formula><alternatives>
-  <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^T]]></tex-math>
-  <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:mi>𝐃</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>T</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+  <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^{\top}]]></tex-math>
+  <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:mi>𝐃</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>⊤</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
   parameterisations, and specialised encoders for spatial neighbourhood
   relationships in N-dimensional data.</p>
   <p>The source code is available on GitHub at
@@ -240,19 +240,19 @@ a Creative Commons Attribution 4.0 International License (CC BY
       <monospace>torch.sparse.mm</monospace>, while the backward pass is
       reimplemented to preserve sparsity patterns in the gradients.</p>
       <p>Given upstream gradient <inline-formula><alternatives>
-      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{C}} \in \mathbb{R}^{m\times p}]]></tex-math>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{C}} \in \mathbb{R}^{m \times p}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐂</mml:mi></mml:mrow></mml:mfrac><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>m</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
       from some scalar objective function <inline-formula><alternatives>
       <tex-math><![CDATA[\mathcal{L}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>ℒ</mml:mi></mml:math></alternatives></inline-formula>,
       the chain rule gives:</p>
-      <p><bold>Gradient wrt <inline-formula><alternatives>
+      <p><bold>Gradient with respect to <inline-formula><alternatives>
       <tex-math><![CDATA[\mathbf{B}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐁</mml:mi></mml:math></alternatives></inline-formula></bold>
       (dense): <disp-formula><alternatives>
       <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{B}} = \mathbf{A}^\top \frac{\partial \mathcal{L}}{\partial \mathbf{C}}.]]></tex-math>
       <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐁</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mi>⊤</mml:mi></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐂</mml:mi></mml:mrow></mml:mfrac><mml:mi>.</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
-      <p><bold>Gradient wrt <inline-formula><alternatives>
+      <p><bold>Gradient with respect to <inline-formula><alternatives>
       <tex-math><![CDATA[\mathbf{A}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐀</mml:mi></mml:math></alternatives></inline-formula></bold>
       (sparse): For a nonzero entry <inline-formula><alternatives>
@@ -266,44 +266,44 @@ a Creative Commons Attribution 4.0 International License (CC BY
       <title>Sparse Linear System Solvers</title>
       <p>The package provides multiple approaches for solving sparse
       linear systems <disp-formula><alternatives>
-      <tex-math><![CDATA[\mathbf{A}\mathbf{x} = \mathbf{B},]]></tex-math>
-      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mi>𝐱</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐁</mml:mi><mml:mo>,</mml:mo></mml:mrow></mml:math></alternatives></disp-formula>
+      <tex-math><![CDATA[\mathbf{A}\mathbf{X} = \mathbf{B},]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mi>𝐗</mml:mi><mml:mo>=</mml:mo><mml:mi>𝐁</mml:mi><mml:mo>,</mml:mo></mml:mrow></mml:math></alternatives></disp-formula>
       where <inline-formula><alternatives>
-      <tex-math><![CDATA[\mathbf{A}\in\mathbb{R}^{n\times n}]]></tex-math>
+      <tex-math><![CDATA[\mathbf{A} \in \mathbb{R}^{n \times n}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐀</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>n</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
       is sparse, <inline-formula><alternatives>
-      <tex-math><![CDATA[\mathbf{B}\in\mathbb{R}^{n\times p}]]></tex-math>
+      <tex-math><![CDATA[\mathbf{B} \in \mathbb{R}^{n \times p}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐁</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
       is dense (with <inline-formula><alternatives>
       <tex-math><![CDATA[p=1]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>p</mml:mi><mml:mo>=</mml:mo><mml:mn>1</mml:mn></mml:mrow></mml:math></alternatives></inline-formula>
       for a single right-hand side), and <inline-formula><alternatives>
-      <tex-math><![CDATA[\mathbf{x}\in\mathbb{R}^{n\times p}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐱</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+      <tex-math><![CDATA[\mathbf{X} \in \mathbb{R}^{n \times p}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐗</mml:mi><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
       is the dense solution. We support both direct triangular solves
       and iterative solvers (including CG, BiCGSTAB, LSMR, and MINRES).
       All are differentiable via the implicit function theorem.</p>
       <p>Given upstream gradient <inline-formula><alternatives>
-      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{x}} \in \mathbb{R}^{n\times p}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>:</p>
-      <p><bold>Gradient wrt <inline-formula><alternatives>
-      <tex-math><![CDATA[\mathbf{b}]]></tex-math>
-      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐛</mml:mi></mml:math></alternatives></inline-formula></bold>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{X}} \in \mathbb{R}^{n \times p}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐗</mml:mi></mml:mrow></mml:mfrac><mml:mo>∈</mml:mo><mml:msup><mml:mi>ℝ</mml:mi><mml:mrow><mml:mi>n</mml:mi><mml:mo>×</mml:mo><mml:mi>p</mml:mi></mml:mrow></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>:</p>
+      <p><bold>Gradient with respect to <inline-formula><alternatives>
+      <tex-math><![CDATA[\mathbf{B}]]></tex-math>
+      <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐁</mml:mi></mml:math></alternatives></inline-formula></bold>
       (dense): <disp-formula><alternatives>
-      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{b}} = \mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{x}}.]]></tex-math>
-      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐛</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mi>.</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
-      <p><bold>Gradient wrt <inline-formula><alternatives>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{B}} = \mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{X}}.]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐁</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐗</mml:mi></mml:mrow></mml:mfrac><mml:mi>.</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
+      <p><bold>Gradient with respect to <inline-formula><alternatives>
       <tex-math><![CDATA[\mathbf{A}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐀</mml:mi></mml:math></alternatives></inline-formula></bold>
       (sparse): The dense form would be <disp-formula><alternatives>
-      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{A}} = - \left(\mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{x}}\right) \mathbf{x}^\top.]]></tex-math>
-      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐀</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mi>−</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:msup><mml:mi>𝐱</mml:mi><mml:mi>⊤</mml:mi></mml:msup><mml:mi>.</mml:mi></mml:mrow></mml:math></alternatives></disp-formula>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{A}} = - \left(\mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{X}}\right) \mathbf{X}^\top.]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐀</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mi>−</mml:mi><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐗</mml:mi></mml:mrow></mml:mfrac><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:msup><mml:mi>𝐗</mml:mi><mml:mi>⊤</mml:mi></mml:msup><mml:mi>.</mml:mi></mml:mrow></mml:math></alternatives></disp-formula>
       For a nonzero entry <inline-formula><alternatives>
       <tex-math><![CDATA[\mathbf{A}_{ij}]]></tex-math>
       <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:msub><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>j</mml:mi></mml:mrow></mml:msub></mml:math></alternatives></inline-formula>
       this becomes <disp-formula><alternatives>
-      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{A}_{ij}} = - \sum_{k=1}^p \left(\mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{x}}\right)_{ik} \mathbf{x}_{jk} ]]></tex-math>
-      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:msub><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>j</mml:mi></mml:mrow></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mi>−</mml:mi><mml:munderover><mml:mo>∑</mml:mo><mml:mrow><mml:mi>k</mml:mi><mml:mo>=</mml:mo><mml:mn>1</mml:mn></mml:mrow><mml:mi>p</mml:mi></mml:munderover><mml:msub><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐱</mml:mi></mml:mrow></mml:mfrac><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:mrow><mml:mi>i</mml:mi><mml:mi>k</mml:mi></mml:mrow></mml:msub><mml:msub><mml:mi>𝐱</mml:mi><mml:mrow><mml:mi>j</mml:mi><mml:mi>k</mml:mi></mml:mrow></mml:msub></mml:mrow></mml:math></alternatives></disp-formula></p>
+      <tex-math><![CDATA[\frac{\partial \mathcal{L}}{\partial \mathbf{A}_{ij}} = - \sum_{k=1}^p \left(\mathbf{A}^{-\top} \frac{\partial \mathcal{L}}{\partial \mathbf{X}}\right)_{ik} \mathbf{X}_{jk}.]]></tex-math>
+      <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:msub><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>j</mml:mi></mml:mrow></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mi>−</mml:mi><mml:munderover><mml:mo>∑</mml:mo><mml:mrow><mml:mi>k</mml:mi><mml:mo>=</mml:mo><mml:mn>1</mml:mn></mml:mrow><mml:mi>p</mml:mi></mml:munderover><mml:msub><mml:mrow><mml:mo stretchy="true" form="prefix">(</mml:mo><mml:msup><mml:mi>𝐀</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msup><mml:mfrac><mml:mrow><mml:mi>∂</mml:mi><mml:mi>ℒ</mml:mi></mml:mrow><mml:mrow><mml:mi>∂</mml:mi><mml:mi>𝐗</mml:mi></mml:mrow></mml:mfrac><mml:mo stretchy="true" form="postfix">)</mml:mo></mml:mrow><mml:mrow><mml:mi>i</mml:mi><mml:mi>k</mml:mi></mml:mrow></mml:msub><mml:msub><mml:mi>𝐗</mml:mi><mml:mrow><mml:mi>j</mml:mi><mml:mi>k</mml:mi></mml:mrow></mml:msub><mml:mi>.</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
     </sec>
   </sec>
   <sec id="sparse-multivariate-normal-distributions">
@@ -326,9 +326,9 @@ a Creative Commons Attribution 4.0 International License (CC BY
     <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐋</mml:mi></mml:math></alternatives></inline-formula>
     with positive diagonals: <disp-formula><alternatives>
     <tex-math><![CDATA[
-    \boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Sigma}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Omega}^{-T}\boldsymbol{\epsilon}
+    \boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Sigma}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Omega}^{-\top}\boldsymbol{\epsilon}
     ]]></tex-math>
-    <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝚺</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msub><mml:mi>𝐋</mml:mi><mml:mi>Σ</mml:mi></mml:msub><mml:mi>𝛜</mml:mi><mml:mo>,</mml:mo><mml:mspace width="1.0em"></mml:mspace><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝛀</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msubsup><mml:mi>𝐋</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>T</mml:mi></mml:mrow></mml:msubsup><mml:mi>𝛜</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
+    <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝚺</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msub><mml:mi>𝐋</mml:mi><mml:mi>Σ</mml:mi></mml:msub><mml:mi>𝛜</mml:mi><mml:mo>,</mml:mo><mml:mspace width="1.0em"></mml:mspace><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝛀</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msubsup><mml:mi>𝐋</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msubsup><mml:mi>𝛜</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
     <p><bold><inline-formula><alternatives>
     <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^{\top}]]></tex-math>
     <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:mi>𝐃</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>⊤</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
@@ -341,7 +341,7 @@ a Creative Commons Attribution 4.0 International License (CC BY
     <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐃</mml:mi></mml:math></alternatives></inline-formula>:
     <disp-formula><alternatives>
     <tex-math><![CDATA[
-    \boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}\boldsymbol{D}^{1/2}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_\Omega^{-\top}\boldsymbol{D}_\Omega^{-1/2}\boldsymbol{\epsilon}
+    \boldsymbol{\eta}_{\boldsymbol{\Sigma}} = \boldsymbol{\mu} + \boldsymbol{L}\boldsymbol{D}^{1/2}\boldsymbol{\epsilon}, \quad \boldsymbol{\eta}_{\boldsymbol{\Omega}} = \boldsymbol{\mu} + \boldsymbol{L}_{\Omega}^{-\top}\boldsymbol{D}_{\Omega}^{-1/2}\boldsymbol{\epsilon}
     ]]></tex-math>
     <mml:math display="block" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝚺</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:mi>𝐋</mml:mi><mml:msup><mml:mi>𝐃</mml:mi><mml:mrow><mml:mn>1</mml:mn><mml:mi>/</mml:mi><mml:mn>2</mml:mn></mml:mrow></mml:msup><mml:mi>𝛜</mml:mi><mml:mo>,</mml:mo><mml:mspace width="1.0em"></mml:mspace><mml:msub><mml:mi>𝛈</mml:mi><mml:mi>𝛀</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mi>𝛍</mml:mi><mml:mo>+</mml:mo><mml:msubsup><mml:mi>𝐋</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mi>⊤</mml:mi></mml:mrow></mml:msubsup><mml:msubsup><mml:mi>𝐃</mml:mi><mml:mi>Ω</mml:mi><mml:mrow><mml:mi>−</mml:mi><mml:mn>1</mml:mn><mml:mi>/</mml:mi><mml:mn>2</mml:mn></mml:mrow></mml:msubsup><mml:mi>𝛜</mml:mi></mml:mrow></mml:math></alternatives></disp-formula></p>
     <p>We store <inline-formula><alternatives>
@@ -351,14 +351,25 @@ a Creative Commons Attribution 4.0 International License (CC BY
     lower-triangular at use time. The <inline-formula><alternatives>
     <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{D}\boldsymbol{L}^{\top}]]></tex-math>
     <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:mi>𝐃</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>⊤</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
-    parameterisation provides superior numerical stability for precision
-    matrices by avoiding strict positive definiteness constraints.</p>
+    parameterisation is practically more robust for learned precision
+    matrices because triangular solves use a unit-diagonal factor,
+    avoiding failure modes caused by learned diagonal entries that
+    become zero or nearly zero. The remaining scale is isolated in
+    <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{D}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>𝐃</mml:mi></mml:math></alternatives></inline-formula>
+    and inverted elementwise, avoiding the stricter positive-diagonal
+    and full-rank requirements of a Cholesky-style
+    <inline-formula><alternatives>
+    <tex-math><![CDATA[\boldsymbol{L}\boldsymbol{L}^{\top}]]></tex-math>
+    <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mi>𝐋</mml:mi><mml:msup><mml:mi>𝐋</mml:mi><mml:mi>⊤</mml:mi></mml:msup></mml:mrow></mml:math></alternatives></inline-formula>
+    factor.</p>
   </sec>
 </sec>
 <sec id="usage-examples">
   <title>Usage Examples</title>
   <p>Short examples are shown below; fuller worked examples are
-  available in the ReadTheDocs quickstart.</p>
+  available in the Read the Docs quickstart.</p>
   <code language="python">import torch
 from torchsparsegradutils import sparse_mm, sparse_generic_solve
 from torchsparsegradutils.distributions import SparseMultivariateNormal as SMVN
@@ -383,8 +394,8 @@ SMVN(torch.zeros(n), torch.ones(n), scale_tril=L).rsample().sum().backward()</co
   1997</xref>) (<inline-formula><alternatives>
   <tex-math><![CDATA[123{,}440 \times 123{,}440]]></tex-math>
   <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mrow><mml:mn>123</mml:mn><mml:mo>,</mml:mo><mml:mn>440</mml:mn><mml:mo>×</mml:mo><mml:mn>123</mml:mn><mml:mo>,</mml:mo><mml:mn>440</mml:mn></mml:mrow></mml:math></alternatives></inline-formula>,
-  3.1M non-zeros), dense baselines and PyTorch’s native COO backward
-  pass ran out of memory, whereas
+  3.1 million nonzeros), dense baselines and PyTorch’s native COO
+  backward pass ran out of memory, whereas
   <monospace>torchsparsegradutils</monospace> completed sparse
   matrix-multiplication backward in about 75 ms using 5.1 GB on one
   tested RTX 4090 setup (results vary by hardware). On the same setup,
@@ -394,7 +405,7 @@ SMVN(torch.zeros(n), torch.ones(n), scale_tril=L).rsample().sum().backward()</co
   <mml:math display="inline" xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>×</mml:mi></mml:math></alternatives></inline-formula>
   faster than CuPy wrappers because they avoid sparse-format conversion
   overhead; full benchmark scripts and hardware-specific results are
-  available in the repository and ReadTheDocs benchmark
+  available in the repository and Read the Docs benchmark
   documentation.</p>
 </sec>
 <sec id="ai-usage-disclosure">
