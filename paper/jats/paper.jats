@@ -159,11 +159,13 @@ a Creative Commons Attribution 4.0 International License (CC BY
   <p>PyTorch also provides <monospace>MaskedTensor</monospace>, which
   distinguishes specified and unspecified elements and is conceptually
   closer to the constrained-subspace interpretation of sparsity.
-  However, <monospace>MaskedTensor</monospace> remains at prototype
-  stage with incomplete operator coverage, and storing a full boolean
-  mask incurs a significant memory overhead, partially negating the
-  memory benefits of sparse index-based representations for large-scale
-  problems.</p>
+  However, PyTorch classifies the API as prototype stage, operator
+  support is limited, and each <monospace>MaskedTensor</monospace>
+  stores a separate mask tensor matching the data tensor’s size and
+  storage format, introducing additional mask-storage overhead
+  (<xref alt="PyTorch Contributors, 2026b" rid="ref-pytorch_maskedtensor" ref-type="bibr">PyTorch
+  Contributors, 2026b</xref>,
+  <xref alt="2026a" rid="ref-pytorch_maskedtensor_sparsity" ref-type="bibr">2026a</xref>).</p>
   <p>Other libraries provide efficient sparse kernels but do not
   directly solve “sparsity-preserving gradients in PyTorch”: SciPy
   (<xref alt="Virtanen et al., 2020" rid="ref-scipy" ref-type="bibr">Virtanen
@@ -410,15 +412,28 @@ SMVN(torch.zeros(n), torch.ones(n), scale_tril=L).rsample().sum().backward()</co
 </sec>
 <sec id="ai-usage-disclosure">
   <title>AI usage disclosure</title>
-  <p>Generative AI tools were used during development of this software
-  and manuscript. Various large language models were used to assist with
-  code generation, refactoring, and test scaffolding for portions of the
-  codebase, and AI assistance was used to draft and edit parts of the
-  documentation and this manuscript. The repository was initiated prior
-  to widespread AI coding assistant adoption, with AI tools incorporated
-  during later development phases. All AI-assisted outputs were
-  reviewed, edited, and validated by the human authors, who take
-  responsibility for the final software and paper.</p>
+  <p>Generative AI tools were used intermittently during later
+  development and maintainence of the software and preparation of the
+  documentation and manuscript. This is a best-effort retrospective
+  disclosure because exact provider-side model snapshots were not
+  recorded contemporaneously for every historical interaction. Based on
+  the authors’ records and recollection, and on commit dates relative to
+  public model-release dates, OpenAI ChatGPT with GPT-4, GPT-4o, and
+  GPT-5-series models was used for code suggestions, refactoring,
+  debugging, test scaffolding, and documentation drafting when those
+  models were the latest available ChatGPT models. The original
+  unit-test suite and foundational sparse operators were developed
+  before the authors began using generative AI. Later maintenance,
+  tests, and documentation may include AI-assisted contributions, and
+  OpenAI Codex is also used for release-pipeline management.</p>
+  <p>All AI-assisted outputs were reviewed, edited, and validated by the
+  human authors. Software changes were checked using code review,
+  automated tests, continuous integration, and comparisons with
+  reference behaviour where applicable, and all pull requests were
+  reviewed entirely manually by human reviewers. The human authors made
+  the primary mathematical, architectural, scientific, and editorial
+  decisions and take responsibility for the final software and
+  manuscript.</p>
 </sec>
 <sec id="acknowledgements">
   <title>Acknowledgements</title>
@@ -649,6 +664,28 @@ SMVN(torch.zeros(n), torch.ones(n), scale_tril=L).rsample().sum().backward()</co
       <publisher-name>PyTorch GitHub issue #87448</publisher-name>
       <year iso-8601-date="2022">2022</year>
       <uri>https://github.com/pytorch/pytorch/issues/87448</uri>
+    </element-citation>
+  </ref>
+  <ref id="ref-pytorch_maskedtensor">
+    <element-citation>
+      <person-group person-group-type="author">
+        <string-name>PyTorch Contributors</string-name>
+      </person-group>
+      <article-title>torch.masked: MaskedTensor documentation</article-title>
+      <publisher-name>PyTorch documentation</publisher-name>
+      <year iso-8601-date="2026">2026</year>
+      <uri>https://docs.pytorch.org/docs/stable/masked.html</uri>
+    </element-citation>
+  </ref>
+  <ref id="ref-pytorch_maskedtensor_sparsity">
+    <element-citation>
+      <person-group person-group-type="author">
+        <string-name>PyTorch Contributors</string-name>
+      </person-group>
+      <article-title>MaskedTensor sparsity</article-title>
+      <publisher-name>PyTorch tutorial</publisher-name>
+      <year iso-8601-date="2026">2026</year>
+      <uri>https://docs.pytorch.org/tutorials/unstable/maskedtensor_sparsity.html</uri>
     </element-citation>
   </ref>
   <ref id="ref-flaport2020sparse">
