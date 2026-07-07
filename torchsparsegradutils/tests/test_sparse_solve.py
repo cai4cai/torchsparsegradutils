@@ -42,6 +42,48 @@ def solve_id(solve):
     return "default"
 
 
+def _make_differentiable_tridiag_spd(theta, layout):
+    """Create a small sparse SPD matrix with fixed sparsity and differentiable values."""
+    n = theta.numel()
+    device = theta.device
+
+    diag = theta.square() + 2.0
+    off = -0.1 * torch.sigmoid(theta[:-1])
+
+    rows = torch.cat(
+        [
+            torch.arange(n, device=device),
+            torch.arange(n - 1, device=device),
+            torch.arange(1, n, device=device),
+        ]
+    )
+    cols = torch.cat(
+        [
+            torch.arange(n, device=device),
+            torch.arange(1, n, device=device),
+            torch.arange(n - 1, device=device),
+        ]
+    )
+    values = torch.cat([diag, off, off])
+
+    A = torch.sparse_coo_tensor(torch.stack([rows, cols]), values, (n, n)).coalesce()
+    if layout == torch.sparse_csr:
+        A = A.to_sparse_csr()
+    return A, A.to_dense()
+
+
+def _settings_for_higher_order_solve(solve):
+    if solve is linear_cg:
+        from torchsparsegradutils.utils.linear_cg import LinearCGSettings
+
+        return {"settings": LinearCGSettings(cg_tolerance=1e-10, max_cg_iterations=1000)}
+    if solve is minres:
+        from torchsparsegradutils.utils.minres import MINRESSettings
+
+        return {"settings": MINRESSettings(minres_tolerance=1e-10, max_cg_iterations=1000)}
+    return {}
+
+
 # Define Fixtures
 
 
@@ -260,3 +302,59 @@ def test_kwargs_with_different_solvers_same_matrix():
     # All solutions should be close to each other
     assert torch.allclose(X_cg, X_minres, atol=atol, rtol=rtol)
     assert torch.allclose(X_bicgstab, X_minres, atol=atol, rtol=rtol)
+
+
+@pytest.mark.parametrize("layout", LAYOUTS, ids=[layout_id(d) for d in LAYOUTS])
+@pytest.mark.parametrize("solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
+def test_sparse_generic_solve_higher_order_create_graph_no_out_error(layout, solve):
+    device = torch.device("cpu")
+    dtype = torch.float64
+    torch.manual_seed(0)
+
+    theta = torch.randn(8, dtype=dtype, device=device, requires_grad=True)
+    A, _ = _make_differentiable_tridiag_spd(theta, layout)
+    B = torch.randn(8, 2, dtype=dtype, device=device)
+
+    kwargs = _settings_for_higher_order_solve(solve)
+    loss = sparse_generic_solve(A, B, solve=solve, transpose_solve=solve, **kwargs).sum()
+
+    grad_theta = torch.autograd.grad(loss, theta, create_graph=True)[0]
+
+    assert grad_theta.requires_grad
+    assert torch.isfinite(grad_theta).all()
+
+    second = torch.autograd.grad(grad_theta.sum(), theta)[0]
+    assert torch.isfinite(second).all()
+
+
+@pytest.mark.parametrize("layout", LAYOUTS, ids=[layout_id(d) for d in LAYOUTS])
+@pytest.mark.parametrize("solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
+def test_sparse_generic_solve_higher_order_matches_dense_reference(layout, solve):
+    device = torch.device("cpu")
+    dtype = torch.float64
+    torch.manual_seed(1)
+
+    theta_sparse = torch.randn(6, dtype=dtype, device=device, requires_grad=True)
+    theta_dense = theta_sparse.detach().clone().requires_grad_()
+
+    B = torch.randn(6, 2, dtype=dtype, device=device)
+
+    A_sparse, _ = _make_differentiable_tridiag_spd(theta_sparse, layout)
+    _, A_dense = _make_differentiable_tridiag_spd(theta_dense, torch.sparse_coo)
+
+    kwargs = _settings_for_higher_order_solve(solve)
+
+    out_sparse = sparse_generic_solve(A_sparse, B, solve=solve, transpose_solve=solve, **kwargs)
+    out_dense = torch.linalg.solve(A_dense, B)
+
+    loss_sparse = out_sparse.square().sum()
+    loss_dense = out_dense.square().sum()
+
+    grad_sparse = torch.autograd.grad(loss_sparse, theta_sparse, create_graph=True)[0]
+    grad_dense = torch.autograd.grad(loss_dense, theta_dense, create_graph=True)[0]
+
+    hess_vec_sparse = torch.autograd.grad(grad_sparse.sum(), theta_sparse)[0]
+    hess_vec_dense = torch.autograd.grad(grad_dense.sum(), theta_dense)[0]
+
+    assert torch.allclose(grad_sparse, grad_dense, atol=1e-5, rtol=1e-5)
+    assert torch.allclose(hess_vec_sparse, hess_vec_dense, atol=5e-4, rtol=5e-4)
