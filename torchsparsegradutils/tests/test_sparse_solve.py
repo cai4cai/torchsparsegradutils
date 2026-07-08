@@ -111,17 +111,14 @@ def _make_differentiable_nonsymmetric_tridiag(theta, layout):
     return A, A.to_dense()
 
 
-def _transpose_sparse_for_test(A):
-    """Return A.T in the same sparse layout family for test-only transpose solves."""
-    At = A.to_sparse_coo().transpose(0, 1).coalesce()
-    if A.layout == torch.sparse_csr:
-        return At.to_sparse_csr()
-    return At
-
-
 def _bicgstab_transpose(A, B, **kwargs):
     """Solve A.T X = B using BiCGSTAB."""
-    return bicgstab(_transpose_sparse_for_test(A), B, **kwargs)
+    if A.layout == torch.sparse_csr:
+        # A.T currently triggers aten::as_strided for sparse CSR tensors in PyTorch,
+        # so use transpose(...).to_sparse_csr() for the CSR test case.
+        # A.transpose(0, 1) for csr will return csc, hence the to_sparse_csr() call.
+        return bicgstab(A.transpose(0, 1).to_sparse_csr(), B, **kwargs)
+    return bicgstab(A.T, B, **kwargs)
 
 
 def _bicgstab_higher_order_kwargs(value_dtype):
@@ -391,16 +388,16 @@ def test_kwargs_with_different_solvers_same_matrix():
     assert torch.allclose(X_bicgstab, X_minres, atol=atol, rtol=rtol)
 
 
-@pytest.mark.parametrize("higher_order_solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
-def test_sparse_generic_solve_higher_order_create_graph_no_out_error(layout, higher_order_solve, device, value_dtype):
+@pytest.mark.parametrize("base_solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
+def test_sparse_generic_solve_higher_order_create_graph_no_out_error(layout, base_solve, device, value_dtype):
     torch.manual_seed(0)
 
     theta = torch.randn(8, dtype=value_dtype, device=device, requires_grad=True)
     A, _ = _make_differentiable_tridiag_spd(theta, layout)
     B = torch.randn(8, 2, dtype=value_dtype, device=device)
 
-    kwargs = _settings_for_higher_order_solve(higher_order_solve, value_dtype)
-    loss = sparse_generic_solve(A, B, solve=higher_order_solve, transpose_solve=higher_order_solve, **kwargs).sum()
+    kwargs = _settings_for_higher_order_solve(base_solve, value_dtype)
+    loss = sparse_generic_solve(A, B, solve=base_solve, transpose_solve=base_solve, **kwargs).sum()
 
     grad_theta = torch.autograd.grad(loss, theta, create_graph=True)[0]
 
@@ -411,8 +408,8 @@ def test_sparse_generic_solve_higher_order_create_graph_no_out_error(layout, hig
     assert torch.isfinite(second).all()
 
 
-@pytest.mark.parametrize("higher_order_solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
-def test_sparse_generic_solve_higher_order_matches_dense_reference(layout, higher_order_solve, device, value_dtype):
+@pytest.mark.parametrize("base_solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
+def test_sparse_generic_solve_higher_order_matches_dense_reference(layout, base_solve, device, value_dtype):
     torch.manual_seed(1)
 
     theta_sparse = torch.randn(6, dtype=value_dtype, device=device, requires_grad=True)
@@ -423,12 +420,10 @@ def test_sparse_generic_solve_higher_order_matches_dense_reference(layout, highe
     A_sparse, _ = _make_differentiable_tridiag_spd(theta_sparse, layout)
     _, A_dense = _make_differentiable_tridiag_spd(theta_dense, torch.sparse_coo)
 
-    kwargs = _settings_for_higher_order_solve(higher_order_solve, value_dtype)
+    kwargs = _settings_for_higher_order_solve(base_solve, value_dtype)
     tolerances = _higher_order_spd_tolerances(value_dtype)
 
-    out_sparse = sparse_generic_solve(
-        A_sparse, B, solve=higher_order_solve, transpose_solve=higher_order_solve, **kwargs
-    )
+    out_sparse = sparse_generic_solve(A_sparse, B, solve=base_solve, transpose_solve=base_solve, **kwargs)
     out_dense = torch.linalg.solve(A_dense, B)
 
     loss_sparse = out_sparse.square().sum()
