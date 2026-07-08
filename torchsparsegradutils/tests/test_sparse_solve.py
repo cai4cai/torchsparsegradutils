@@ -72,16 +72,103 @@ def _make_differentiable_tridiag_spd(theta, layout):
     return A, A.to_dense()
 
 
-def _settings_for_higher_order_solve(solve):
+def _make_differentiable_nonsymmetric_tridiag(theta, layout):
+    """Create a small fixed-sparsity non-symmetric diagonally dominant matrix."""
+    n = 6
+    device = theta.device
+    dtype = theta.dtype
+
+    if theta.numel() != 3 * n - 2:
+        raise ValueError(f"theta should have length {3 * n - 2}, got {theta.numel()}")
+
+    diag_theta = theta[:n]
+    upper_theta = theta[n : n + n - 1]
+    lower_theta = theta[n + n - 1 :]
+
+    diag = diag_theta.square() + 3.0
+    upper = 0.05 * torch.tanh(upper_theta)
+    lower = -0.08 * torch.sigmoid(lower_theta)
+
+    rows = torch.cat(
+        [
+            torch.arange(n, device=device),
+            torch.arange(n - 1, device=device),
+            torch.arange(1, n, device=device),
+        ]
+    )
+    cols = torch.cat(
+        [
+            torch.arange(n, device=device),
+            torch.arange(1, n, device=device),
+            torch.arange(n - 1, device=device),
+        ]
+    )
+    values = torch.cat([diag, upper, lower]).to(dtype=dtype)
+
+    A = torch.sparse_coo_tensor(torch.stack([rows, cols]), values, (n, n)).coalesce()
+    if layout == torch.sparse_csr:
+        A = A.to_sparse_csr()
+    return A, A.to_dense()
+
+
+def _transpose_sparse_for_test(A):
+    """Return A.T in the same sparse layout family for test-only transpose solves."""
+    At = A.to_sparse_coo().transpose(0, 1).coalesce()
+    if A.layout == torch.sparse_csr:
+        return At.to_sparse_csr()
+    return At
+
+
+def _bicgstab_transpose(A, B, **kwargs):
+    """Solve A.T X = B using BiCGSTAB."""
+    return bicgstab(_transpose_sparse_for_test(A), B, **kwargs)
+
+
+def _bicgstab_higher_order_kwargs(value_dtype):
+    from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
+
+    if value_dtype == torch.float32:
+        return {"settings": BICGSTABSettings(reltol=1e-6, abstol=1e-6, matvec_max=1000)}
+    return {"settings": BICGSTABSettings(reltol=1e-12, abstol=1e-12, matvec_max=1000)}
+
+
+def _higher_order_bicgstab_tolerances(value_dtype):
+    if value_dtype == torch.float32:
+        return {
+            "output": (1e-5, 1e-5),
+            "grad": (5e-5, 5e-5),
+            "hess": (5e-3, 5e-3),
+        }
+    return {
+        "output": (1e-8, 1e-8),
+        "grad": (1e-6, 1e-6),
+        "hess": (5e-5, 5e-5),
+    }
+
+
+def _settings_for_higher_order_solve(solve, value_dtype):
     if solve is linear_cg:
         from torchsparsegradutils.utils.linear_cg import LinearCGSettings
 
-        return {"settings": LinearCGSettings(cg_tolerance=1e-10, max_cg_iterations=1000)}
+        return {"settings": LinearCGSettings(cg_tolerance=1e-5, max_cg_iterations=1000)}
     if solve is minres:
         from torchsparsegradutils.utils.minres import MINRESSettings
 
-        return {"settings": MINRESSettings(minres_tolerance=1e-10, max_cg_iterations=1000)}
+        tolerance = 1e-6 if value_dtype == torch.float32 else 1e-10
+        return {"settings": MINRESSettings(minres_tolerance=tolerance, max_cg_iterations=1000)}
     return {}
+
+
+def _higher_order_spd_tolerances(value_dtype):
+    if value_dtype == torch.float32:
+        return {
+            "grad": (1e-3, 1e-3),
+            "hess": (5e-2, 5e-2),
+        }
+    return {
+        "grad": (1e-5, 1e-5),
+        "hess": (5e-4, 5e-4),
+    }
 
 
 # Define Fixtures
@@ -304,19 +391,16 @@ def test_kwargs_with_different_solvers_same_matrix():
     assert torch.allclose(X_bicgstab, X_minres, atol=atol, rtol=rtol)
 
 
-@pytest.mark.parametrize("layout", LAYOUTS, ids=[layout_id(d) for d in LAYOUTS])
-@pytest.mark.parametrize("solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
-def test_sparse_generic_solve_higher_order_create_graph_no_out_error(layout, solve):
-    device = torch.device("cpu")
-    dtype = torch.float64
+@pytest.mark.parametrize("higher_order_solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
+def test_sparse_generic_solve_higher_order_create_graph_no_out_error(layout, higher_order_solve, device, value_dtype):
     torch.manual_seed(0)
 
-    theta = torch.randn(8, dtype=dtype, device=device, requires_grad=True)
+    theta = torch.randn(8, dtype=value_dtype, device=device, requires_grad=True)
     A, _ = _make_differentiable_tridiag_spd(theta, layout)
-    B = torch.randn(8, 2, dtype=dtype, device=device)
+    B = torch.randn(8, 2, dtype=value_dtype, device=device)
 
-    kwargs = _settings_for_higher_order_solve(solve)
-    loss = sparse_generic_solve(A, B, solve=solve, transpose_solve=solve, **kwargs).sum()
+    kwargs = _settings_for_higher_order_solve(higher_order_solve, value_dtype)
+    loss = sparse_generic_solve(A, B, solve=higher_order_solve, transpose_solve=higher_order_solve, **kwargs).sum()
 
     grad_theta = torch.autograd.grad(loss, theta, create_graph=True)[0]
 
@@ -327,24 +411,24 @@ def test_sparse_generic_solve_higher_order_create_graph_no_out_error(layout, sol
     assert torch.isfinite(second).all()
 
 
-@pytest.mark.parametrize("layout", LAYOUTS, ids=[layout_id(d) for d in LAYOUTS])
-@pytest.mark.parametrize("solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
-def test_sparse_generic_solve_higher_order_matches_dense_reference(layout, solve):
-    device = torch.device("cpu")
-    dtype = torch.float64
+@pytest.mark.parametrize("higher_order_solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
+def test_sparse_generic_solve_higher_order_matches_dense_reference(layout, higher_order_solve, device, value_dtype):
     torch.manual_seed(1)
 
-    theta_sparse = torch.randn(6, dtype=dtype, device=device, requires_grad=True)
+    theta_sparse = torch.randn(6, dtype=value_dtype, device=device, requires_grad=True)
     theta_dense = theta_sparse.detach().clone().requires_grad_()
 
-    B = torch.randn(6, 2, dtype=dtype, device=device)
+    B = torch.randn(6, 2, dtype=value_dtype, device=device)
 
     A_sparse, _ = _make_differentiable_tridiag_spd(theta_sparse, layout)
     _, A_dense = _make_differentiable_tridiag_spd(theta_dense, torch.sparse_coo)
 
-    kwargs = _settings_for_higher_order_solve(solve)
+    kwargs = _settings_for_higher_order_solve(higher_order_solve, value_dtype)
+    tolerances = _higher_order_spd_tolerances(value_dtype)
 
-    out_sparse = sparse_generic_solve(A_sparse, B, solve=solve, transpose_solve=solve, **kwargs)
+    out_sparse = sparse_generic_solve(
+        A_sparse, B, solve=higher_order_solve, transpose_solve=higher_order_solve, **kwargs
+    )
     out_dense = torch.linalg.solve(A_dense, B)
 
     loss_sparse = out_sparse.square().sum()
@@ -356,5 +440,50 @@ def test_sparse_generic_solve_higher_order_matches_dense_reference(layout, solve
     hess_vec_sparse = torch.autograd.grad(grad_sparse.sum(), theta_sparse)[0]
     hess_vec_dense = torch.autograd.grad(grad_dense.sum(), theta_dense)[0]
 
-    assert torch.allclose(grad_sparse, grad_dense, atol=1e-5, rtol=1e-5)
-    assert torch.allclose(hess_vec_sparse, hess_vec_dense, atol=5e-4, rtol=5e-4)
+    grad_atol, grad_rtol = tolerances["grad"]
+    hess_atol, hess_rtol = tolerances["hess"]
+    assert torch.allclose(grad_sparse, grad_dense, atol=grad_atol, rtol=grad_rtol)
+    assert torch.allclose(hess_vec_sparse, hess_vec_dense, atol=hess_atol, rtol=hess_rtol)
+
+
+def test_sparse_generic_solve_higher_order_nonsymmetric_bicgstab_matches_dense_reference(layout, device, value_dtype):
+    torch.manual_seed(2)
+
+    n = 6
+    theta_sparse = torch.randn(3 * n - 2, dtype=value_dtype, device=device, requires_grad=True)
+    theta_dense = theta_sparse.detach().clone().requires_grad_()
+
+    B = torch.randn(n, 2, dtype=value_dtype, device=device)
+
+    A_sparse, _ = _make_differentiable_nonsymmetric_tridiag(theta_sparse, layout)
+    _, A_dense = _make_differentiable_nonsymmetric_tridiag(theta_dense, torch.sparse_coo)
+    assert not torch.allclose(A_dense, A_dense.T)
+
+    kwargs = _bicgstab_higher_order_kwargs(value_dtype)
+    tolerances = _higher_order_bicgstab_tolerances(value_dtype)
+
+    out_sparse = sparse_generic_solve(
+        A_sparse,
+        B,
+        solve=bicgstab,
+        transpose_solve=_bicgstab_transpose,
+        **kwargs,
+    )
+    out_dense = torch.linalg.solve(A_dense, B)
+    output_atol, output_rtol = tolerances["output"]
+    assert torch.allclose(A_dense @ out_sparse, B, atol=output_atol, rtol=output_rtol)
+
+    loss_sparse = out_sparse.square().sum()
+    loss_dense = out_dense.square().sum()
+
+    grad_sparse = torch.autograd.grad(loss_sparse, theta_sparse, create_graph=True)[0]
+    grad_dense = torch.autograd.grad(loss_dense, theta_dense, create_graph=True)[0]
+
+    hess_vec_sparse = torch.autograd.grad(grad_sparse.sum(), theta_sparse)[0]
+    hess_vec_dense = torch.autograd.grad(grad_dense.sum(), theta_dense)[0]
+
+    grad_atol, grad_rtol = tolerances["grad"]
+    hess_atol, hess_rtol = tolerances["hess"]
+    assert torch.allclose(out_sparse, out_dense, atol=output_atol, rtol=output_rtol)
+    assert torch.allclose(grad_sparse, grad_dense, atol=grad_atol, rtol=grad_rtol)
+    assert torch.allclose(hess_vec_sparse, hess_vec_dense, atol=hess_atol, rtol=hess_rtol)
