@@ -438,6 +438,7 @@ class SparseGenericSolve(torch.autograd.Function):
     @staticmethod
     def forward(ctx, A, B, solve, transpose_solve, kwargs):
         grad_flag = A.requires_grad or B.requires_grad
+        ctx.solve = solve
         ctx.transpose_solve = transpose_solve
         ctx.kwargs = kwargs  # Store kwargs for backward pass
 
@@ -449,7 +450,7 @@ class SparseGenericSolve(torch.autograd.Function):
 
         x.requires_grad = grad_flag
 
-        ctx.save_for_backward(A, x.detach())
+        ctx.save_for_backward(A, x)
         return x
 
     @staticmethod
@@ -463,7 +464,13 @@ class SparseGenericSolve(torch.autograd.Function):
             grad = grad.unsqueeze(-1)
 
         # Backprop rule: gradB = A^{-T} grad
-        gradB = ctx.transpose_solve(A, grad, **ctx.kwargs)
+        gradB = sparse_generic_solve(
+            A,
+            grad,
+            solve=ctx.transpose_solve,
+            transpose_solve=ctx.solve,
+            **ctx.kwargs,
+        )
 
         # Ensure gradient dtype matches input dtype
         if gradB.dtype != A.dtype:
