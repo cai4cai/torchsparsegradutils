@@ -129,6 +129,14 @@ def test_all_negative_single_value(device):
     _assert_close(sparse_logsumexp(x, dim=1, include_zeros=True), torch.logsumexp(x.to_dense(), dim=1), torch.float32)
 
 
+def test_positive_inf_value(layout, device, dim, include_zeros):
+    """An explicit +inf must yield +inf, not nan from inf - inf in the shift."""
+    dense = torch.tensor([[float("inf"), 0.0, 1.0], [-2.0, 3.0, 0.0]], device=device, dtype=torch.float64)
+    out = sparse_logsumexp(_to_layout(dense, layout), dim=dim, include_zeros=include_zeros)
+    _assert_close(out, _dense_reference(dense, dim, include_zeros), torch.float64)
+    assert not torch.isnan(out).any()
+
+
 def _make_batched_dense(device, value_dtype, seed):
     """A (3, 5, 4) batched tensor with zeros, incl. an empty row inside one slice."""
     g = torch.Generator().manual_seed(seed)

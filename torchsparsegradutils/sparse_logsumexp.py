@@ -45,7 +45,7 @@ def _scatter_logsumexp(
     if n_zeros_per_group is not None:
         max_val = torch.where(n_zeros_per_group > 0, max_val.clamp(min=0.0), max_val)
     shift = max_val.detach().clone()
-    shift[shift == float("-inf")] = 0.0  # empty groups
+    shift[~shift.isfinite()] = 0.0  # empty groups (-inf) and +inf values (avoid inf - inf)
 
     sum_exp = torch.zeros(n_groups, device=device, dtype=dtype)
     sum_exp.scatter_reduce_(0, scatter_index, (values - shift[scatter_index]).exp(), reduce="sum", include_self=True)
