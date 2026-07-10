@@ -1,6 +1,6 @@
 import pytest
 import torch
-from test_config import DEVICES, SPARSE_LAYOUTS, VALUE_DTYPES, Tolerances
+from test_config import DEVICES, INDEX_DTYPES, SPARSE_LAYOUTS, VALUE_DTYPES, Tolerances
 
 from torchsparsegradutils import sparse_logsumexp
 
@@ -24,13 +24,20 @@ def dim_id(dim):
     return f"dim{dim}"
 
 
-def _to_layout(dense, layout):
+def _to_layout(dense, layout, index_dtype=torch.int64):
     if layout == torch.sparse_coo:
-        return dense.to_sparse_coo()
+        coo = dense.to_sparse_coo().coalesce()
+        return torch.sparse_coo_tensor(coo.indices().to(index_dtype), coo.values(), coo.shape).coalesce()
     if layout == torch.sparse_csr:
-        return dense.to_sparse_csr()
+        csr = dense.to_sparse_csr()
+        return torch.sparse_csr_tensor(
+            csr.crow_indices().to(index_dtype), csr.col_indices().to(index_dtype), csr.values(), csr.shape
+        )
     if layout == torch.sparse_csc:
-        return dense.to_sparse_csc()
+        csc = dense.to_sparse_csc()
+        return torch.sparse_csc_tensor(
+            csc.ccol_indices().to(index_dtype), csc.row_indices().to(index_dtype), csc.values(), csc.shape
+        )
     raise ValueError(layout)
 
 
@@ -64,6 +71,11 @@ def value_dtype(request):
     return request.param
 
 
+@pytest.fixture(params=INDEX_DTYPES, ids=[dtype_id(d) for d in INDEX_DTYPES])
+def index_dtype(request):
+    return request.param
+
+
 @pytest.fixture(params=DIMS, ids=[dim_id(d) for d in DIMS])
 def dim(request):
     return request.param
@@ -84,9 +96,9 @@ def _make_dense(device, value_dtype, seed):
     return dense.to(device=device, dtype=value_dtype)
 
 
-def test_matches_dense_reference(layout, device, value_dtype, dim, include_zeros):
+def test_matches_dense_reference(layout, device, value_dtype, index_dtype, dim, include_zeros):
     dense = _make_dense(device, value_dtype, seed=0)
-    sp = _to_layout(dense, layout)
+    sp = _to_layout(dense, layout, index_dtype)
     out = sparse_logsumexp(sp, dim=dim, include_zeros=include_zeros)
     ref = _dense_reference(dense, dim, include_zeros)
     _assert_close(out, ref, value_dtype)
