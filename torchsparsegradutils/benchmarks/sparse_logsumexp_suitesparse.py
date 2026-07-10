@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Sparse Log-Sum-Exp Benchmark - Random Matrices
+Sparse Log-Sum-Exp Benchmark - SuiteSparse Collection
 
-Benchmarks ``sparse_logsumexp`` against a dense ``torch.logsumexp`` baseline on
-randomly generated sparse matrices of various sizes, sparsity patterns, layouts
-and dtypes. The reduction is over ``dim=1`` (one value per row); forward and
-backward time and peak memory are measured. The dense baseline materialises
-``A.to_dense()`` and is the memory ceiling the sparse path exists to avoid.
+Benchmarks ``sparse_logsumexp`` against a dense ``torch.logsumexp`` baseline on a
+real matrix from the SuiteSparse Matrix Collection (Rothberg/cfd2, ~123k x 123k).
+The reduction is over ``dim=1``; forward and backward time and peak memory are
+measured. The dense baseline materialises ``A.to_dense()`` and is the memory
+ceiling the sparse path exists to avoid -- at this size it OOMs (recorded as NaN).
 """
 
 import os
@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 import torch
 from benchmark_utils import (
+    load_mat_from_suitesparse_collection,
     measure_op,
     print_benchmark_header,
     print_result_row,
@@ -27,7 +28,6 @@ from benchmark_utils import (
 from tqdm import tqdm
 
 from torchsparsegradutils import sparse_logsumexp
-from torchsparsegradutils.utils import rand_sparse
 
 REPEATS = 100
 WARMUP_RUNS = 10
@@ -35,15 +35,6 @@ WARMUP_RUNS = 10
 # Only run on CUDA
 device = torch.device("cuda")
 assert torch.cuda.is_available(), "This benchmark requires a CUDA GPU"
-
-# problem sizes: (label, N, M, nnz)
-SIZES = [
-    ("small", 2**10, 2**10, 2**12),
-    ("medium", 2**12, 2**12, 2**14),
-    ("large", 2**14, 2**14, 2**16),
-    ("xlarge", 2**16, 2**16, 2**18),
-    ("million", 2**20, 2**20, 2**22),
-]
 
 INDEX_DTYPES = [torch.int32, torch.int64]
 VALUE_DTYPES = [torch.float32, torch.float64]
@@ -55,35 +46,46 @@ ALGORITHMS = [
     ("dense.logsumexp", lambda A, B: torch.logsumexp(A.to_dense(), dim=1)),
 ]
 
+MATRICES = [
+    ("Rothberg", "cfd2"),  # 123k x 123k
+    ("Williams", "webbase-1M"),  # 1M x 1M
+]
 
-def run_sparse_logsumexp_benchmark():
-    """Run the sparse log-sum-exp benchmark suite."""
 
-    print_benchmark_header("Sparse Log-Sum-Exp Benchmark - Random Matrices")
+def run_sparse_logsumexp_suitesparse_benchmark():
+    """Run the sparse log-sum-exp benchmark suite with SuiteSparse matrices."""
+
+    print_benchmark_header("Sparse Log-Sum-Exp Benchmark - SuiteSparse Collection")
 
     records = []
+    B = torch.zeros(1, device=device)  # unused placeholder for measure_op's binary signature
 
-    for size_label, N, M, nnz in tqdm(SIZES, desc="Problem sizes"):
-        print(f"\n🔍 Testing size: {size_label} (N={N}, M={M}, nnz={nnz})")
-
-        A_shape = (N, M)
-        B = torch.zeros(1, device=device)  # unused placeholder for measure_op's binary signature
+    for dirname, matname in tqdm(MATRICES, desc="Matrices"):
+        A_np_coo = load_mat_from_suitesparse_collection(dirname, matname)
+        matrix_name = f"{dirname}/{matname}"
+        N, M = A_np_coo.shape
+        nnz = A_np_coo.nnz
+        print(f"📊 Matrix: {matrix_name}, shape={A_np_coo.shape}, nnz={nnz}")
 
         for idx_dt in tqdm(INDEX_DTYPES, desc="Index dtypes", leave=False):
             for val_dt in tqdm(VALUE_DTYPES, desc="Value dtypes", leave=False):
                 for layout in tqdm(LAYOUTS, desc="Layouts", leave=False):
                     layout_name = "coo" if layout == torch.sparse_coo else "csr"
-                    print(f"\n  📊 Configuration: idx_dtype={idx_dt}, val_dtype={val_dt}, layout={layout_name}")
+                    print(f"\n🔍 Testing configuration: idx_dtype={idx_dt}, val_dtype={val_dt}, layout={layout_name}")
+
+                    indices = torch.tensor([A_np_coo.row, A_np_coo.col], dtype=idx_dt, device=device)
+                    values = torch.tensor(A_np_coo.data, dtype=val_dt, device=device)
+                    A_sparse = torch.sparse_coo_tensor(
+                        indices, values, A_np_coo.shape, dtype=val_dt, device=device
+                    ).coalesce()
+                    if layout == torch.sparse_csr:
+                        A_sparse = A_sparse.to_sparse_csr()
 
                     print_results_table_header()
 
                     for alg_name, alg_fn in ALGORITHMS:
                         try:
-                            print(f"    🧮 Testing {alg_name} ({layout_name})...")
-
-                            A_sparse = rand_sparse(
-                                A_shape, nnz, layout, indices_dtype=idx_dt, values_dtype=val_dt, device=device
-                            )
+                            print(f"  🧮 Testing {alg_name} ({layout_name})...")
 
                             (
                                 t_fwd,
@@ -120,14 +122,14 @@ def run_sparse_logsumexp_benchmark():
 
                             records.append(
                                 {
-                                    "size": size_label,
-                                    "layout": layout_name,
-                                    "algo": alg_name,
-                                    "index_dt": str(idx_dt).split(".")[-1],
-                                    "value_dt": str(val_dt).split(".")[-1],
+                                    "matrix": matrix_name,
                                     "N": N,
                                     "M": M,
                                     "nnz": nnz,
+                                    "index_dt": str(idx_dt).split(".")[-1],
+                                    "value_dt": str(val_dt).split(".")[-1],
+                                    "layout": layout_name,
+                                    "algo": alg_name,
                                     "fwd_time_us": t_fwd,
                                     "fwd_time_std_us": std_fwd,
                                     "fwd_mem_MB": mem_fwd,
@@ -140,18 +142,18 @@ def run_sparse_logsumexp_benchmark():
                             )
 
                         except Exception as e:
-                            print(f"    ❌ {alg_name} ({layout_name}) failed: {e}")
+                            print(f"  ❌ {alg_name} ({layout_name}) failed: {e}")
 
                             records.append(
                                 {
-                                    "size": size_label,
-                                    "layout": layout_name,
-                                    "algo": alg_name,
-                                    "index_dt": str(idx_dt).split(".")[-1],
-                                    "value_dt": str(val_dt).split(".")[-1],
+                                    "matrix": matrix_name,
                                     "N": N,
                                     "M": M,
                                     "nnz": nnz,
+                                    "index_dt": str(idx_dt).split(".")[-1],
+                                    "value_dt": str(val_dt).split(".")[-1],
+                                    "layout": layout_name,
+                                    "algo": alg_name,
                                     "fwd_time_us": np.nan,
                                     "fwd_time_std_us": np.nan,
                                     "fwd_mem_MB": np.nan,
@@ -164,12 +166,11 @@ def run_sparse_logsumexp_benchmark():
                                 }
                             )
 
-    # Save results
     if records:
-        save_benchmark_results(records, "sparse_logsumexp_rand")
+        save_benchmark_results(records, "sparse_logsumexp_suitesparse")
 
-    print("\n✅ Sparse log-sum-exp benchmark completed!")
+    print("\n✅ Sparse log-sum-exp SuiteSparse benchmark completed!")
 
 
 if __name__ == "__main__":
-    run_sparse_logsumexp_benchmark()
+    run_sparse_logsumexp_suitesparse_benchmark()
