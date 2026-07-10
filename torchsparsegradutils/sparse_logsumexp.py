@@ -123,11 +123,12 @@ def _logsumexp_2d(input: Tensor, dims, keepdim: bool, include_zeros: bool) -> Te
 
 
 def _logsumexp_batched(input: Tensor, dims, keepdim: bool, include_zeros: bool) -> Tensor:
-    """Reduction within each slice of a batched 3-D sparse tensor.
+    """Reduction within each batch slice ``input[k]`` of a batched 3-D sparse tensor.
 
-    Each ``(rows, cols)`` slice is independent: the batch index is folded into the
-    scatter segment id, so a single scatter reduces every slice at once. Batched
-    inputs go through COO (batched CSR/CSC require equal nnz per slice in PyTorch).
+    Each ``(rows, cols)`` matrix ``input[k]`` is reduced independently: the batch
+    index is folded into the scatter index, so a single scatter reduces every slice
+    at once. Batched inputs go through COO (batched CSR/CSC require equal nnz per
+    slice in PyTorch).
     """
     b, nrows, ncols = input.shape
     coo = input if (input.layout == torch.sparse_coo and input.is_coalesced()) else input.to_sparse_coo().coalesce()
