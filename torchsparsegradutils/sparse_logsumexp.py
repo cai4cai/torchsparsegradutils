@@ -90,6 +90,9 @@ def _logsumexp_2d(input: Tensor, dims, keepdim: bool, include_zeros: bool) -> Te
     """Reduction for an unbatched 2-D sparse tensor (see :func:`sparse_logsumexp`)."""
     nrows, ncols = input.shape
 
+    # One scatter path for every layout/axis: segment_reduce fits only the natural
+    # CSR/CSC axis and measured 1.5x-13x slower than scatter on GPU, worst with the
+    # many-small-segments common case.
     rows, cols, vals, row_nnz, col_nnz = _row_col_val(input, nrows, ncols)
 
     if dims == [0, 1]:
