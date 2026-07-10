@@ -233,9 +233,20 @@ def sparse_logsumexp(
     if input.layout not in supported:
         raise NotImplementedError(f"sparse_logsumexp does not support layout {input.layout}. Supported: {supported}.")
 
-    # Normalise dim to a sorted set of non-negative ints for this rank.
+    # Validate against the raw dims (before normalising), matching torch.logsumexp.
     dims_list = [dim] if isinstance(dim, int) else list(dim)
-    dims = sorted({d % input.ndim for d in dims_list})
+    if not dims_list:
+        raise RuntimeError("sparse_logsumexp: dim must not be an empty sequence.")
+    for d in dims_list:
+        if not -input.ndim <= d < input.ndim:
+            raise IndexError(
+                f"Dimension out of range (expected to be in range of "
+                f"[{-input.ndim}, {input.ndim - 1}], but got {d})"
+            )
+    normalised = [d % input.ndim for d in dims_list]
+    if len(set(normalised)) != len(normalised):
+        raise RuntimeError("sparse_logsumexp: dim contains a repeated dimension.")
+    dims = sorted(normalised)
 
     if input.ndim == 2:
         return _logsumexp_2d(input, dims, keepdim, include_zeros)

@@ -202,3 +202,27 @@ def test_unsupported_rank_raises():
 def test_dense_layout_raises():
     with pytest.raises(NotImplementedError):
         sparse_logsumexp(torch.randn(3, 3), dim=1)
+
+
+@pytest.mark.parametrize("bad_dim", [2, -3])
+def test_dim_out_of_range_raises(device, bad_dim):
+    """Out-of-range dims raise IndexError instead of silently wrapping via modulo."""
+    sp = torch.randn(3, 4, device=device).to_sparse_coo()
+    with pytest.raises(IndexError):
+        sparse_logsumexp(sp, dim=bad_dim)
+
+
+@pytest.mark.parametrize("bad_dim", [[], [0, 0], [1, 1]])
+def test_dim_empty_or_repeated_raises(device, bad_dim):
+    """Empty or duplicate dims raise RuntimeError instead of being silently deduped."""
+    sp = torch.randn(3, 4, device=device).to_sparse_coo()
+    with pytest.raises(RuntimeError):
+        sparse_logsumexp(sp, dim=bad_dim)
+
+
+def test_negative_dims_supported(device):
+    """Valid negative dims behave like torch.logsumexp."""
+    dense = torch.randn(3, 4, device=device, dtype=torch.float64)
+    sp = dense.to_sparse_coo()
+    _assert_close(sparse_logsumexp(sp, dim=-1), torch.logsumexp(dense, dim=-1), torch.float64)
+    _assert_close(sparse_logsumexp(sp, dim=[-1, -2]), torch.logsumexp(dense, dim=(-1, -2)), torch.float64)
