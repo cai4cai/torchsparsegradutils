@@ -107,6 +107,28 @@ def test_csc_layout(device):
     _assert_close(out, torch.logsumexp(dense, dim=1), torch.float64)
 
 
+def test_all_negative_values_stability(layout, device, dim, include_zeros):
+    """All-negative values: the stability shift must account for the structural
+    zero (value 0) so include_zeros neither overflows to +inf (rows with a zero)
+    nor produces 0 * inf -> nan (fully dense rows). Row 0 has a structural zero,
+    row 1 is fully dense, row 2 is all-zero."""
+    dense = torch.tensor(
+        [[-1000.0, -5.0, 0.0], [-3.0, -900.0, -2.0], [0.0, 0.0, 0.0]],
+        device=device,
+        dtype=torch.float64,
+    )
+    out = sparse_logsumexp(_to_layout(dense, layout), dim=dim, include_zeros=include_zeros)
+    _assert_close(out, _dense_reference(dense, dim, include_zeros), torch.float64)
+    assert not torch.isnan(out).any()
+
+
+def test_all_negative_single_value(device):
+    """Minimal case: a lone very-negative value with a structural zero returns ~0,
+    not +inf (the structural zero's exp(0)=1 dominates)."""
+    x = torch.sparse_coo_tensor([[0], [0]], [-1000.0], (1, 2), device=device).coalesce()
+    _assert_close(sparse_logsumexp(x, dim=1, include_zeros=True), torch.logsumexp(x.to_dense(), dim=1), torch.float32)
+
+
 def _make_batched_dense(device, value_dtype, seed):
     """A (3, 5, 4) batched tensor with zeros, incl. an empty row inside one slice."""
     g = torch.Generator().manual_seed(seed)

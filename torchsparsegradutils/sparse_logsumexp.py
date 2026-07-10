@@ -42,6 +42,8 @@ def _scatter_logsumexp(
     # Per-group max, detached — a stability shift the result is invariant to.
     max_val = torch.full((n_groups,), float("-inf"), device=device, dtype=dtype)
     max_val.scatter_reduce_(0, scatter_index, values, reduce="amax", include_self=True)
+    if n_zeros_per_group is not None:
+        max_val = torch.where(n_zeros_per_group > 0, max_val.clamp(min=0.0), max_val)
     shift = max_val.detach().clone()
     shift[shift == float("-inf")] = 0.0  # empty groups
 
@@ -50,7 +52,9 @@ def _scatter_logsumexp(
 
     # Structural zeros each contribute exp(0 - shift) = exp(-shift).
     if n_zeros_per_group is not None:
-        sum_exp = sum_exp + n_zeros_per_group.to(dtype) * (-shift).exp()
+        has_zeros = n_zeros_per_group > 0
+        zeros_contrib = n_zeros_per_group.to(dtype) * (-shift).exp()
+        sum_exp = sum_exp + torch.where(has_zeros, zeros_contrib, torch.zeros_like(sum_exp))
 
     # Un-shift. Groups with no contribution at all (sum_exp == 0) stay -inf.
     result = shift + sum_exp.log()
