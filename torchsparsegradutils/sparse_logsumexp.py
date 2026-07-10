@@ -6,51 +6,53 @@ from torch import Tensor
 __all__ = ["sparse_logsumexp"]
 
 
-def _segment_logsumexp(
+def _scatter_logsumexp(
     values: Tensor,
-    segment_ids: Tensor,
-    n_segments: int,
-    n_zeros_per_segment: Union[Tensor, None],
+    scatter_index: Tensor,
+    n_groups: int,
+    n_zeros_per_group: Union[Tensor, None],
 ) -> Tensor:
-    r"""Numerically stable log-sum-exp over scattered segments.
+    r"""Numerically stable log-sum-exp over scatter-reduced groups.
 
-    Reduces ``values`` into ``n_segments`` groups, where ``segment_ids[k]`` gives
-    the group of ``values[k]``. Uses the standard max-shift trick so that
-    :math:`\exp` never overflows.
+    Reduces ``values`` into ``n_groups`` groups, where ``scatter_index[k]`` gives
+    the group of ``values[k]``. This is a *scatter* reduction, not a segmented one:
+    ``scatter_index`` is an arbitrary per-value output index (via
+    ``Tensor.scatter_reduce_``), so a group's members need not be contiguous. Uses
+    the standard max-shift trick so that :math:`\exp` never overflows.
 
     Parameters
     ----------
     values : Tensor, shape ``(nnz,)``
         The explicit (nonzero) values to reduce.
-    segment_ids : Tensor, shape ``(nnz,)``
-        Output segment index for each value.
-    n_segments : int
-        Number of output segments.
-    n_zeros_per_segment : Tensor or None, shape ``(n_segments,)``
-        Count of structural zeros contributing ``exp(0) = 1`` to each segment, or
+    scatter_index : Tensor, shape ``(nnz,)``
+        Output group index for each value.
+    n_groups : int
+        Number of output groups.
+    n_zeros_per_group : Tensor or None, shape ``(n_groups,)``
+        Count of structural zeros contributing ``exp(0) = 1`` to each group, or
         ``None`` to ignore structural zeros entirely.
 
     Returns
     -------
-    Tensor, shape ``(n_segments,)``
-        Per-segment log-sum-exp. Empty segments (no values and no zeros) are ``-inf``.
+    Tensor, shape ``(n_groups,)``
+        Per-group log-sum-exp. Empty groups (no values and no zeros) are ``-inf``.
     """
     device, dtype = values.device, values.dtype
 
-    # Per-segment max, detached — a stability shift the result is invariant to.
-    max_val = torch.full((n_segments,), float("-inf"), device=device, dtype=dtype)
-    max_val.scatter_reduce_(0, segment_ids, values, reduce="amax", include_self=True)
+    # Per-group max, detached — a stability shift the result is invariant to.
+    max_val = torch.full((n_groups,), float("-inf"), device=device, dtype=dtype)
+    max_val.scatter_reduce_(0, scatter_index, values, reduce="amax", include_self=True)
     shift = max_val.detach().clone()
-    shift[shift == float("-inf")] = 0.0  # empty segments
+    shift[shift == float("-inf")] = 0.0  # empty groups
 
-    sum_exp = torch.zeros(n_segments, device=device, dtype=dtype)
-    sum_exp.scatter_reduce_(0, segment_ids, (values - shift[segment_ids]).exp(), reduce="sum", include_self=True)
+    sum_exp = torch.zeros(n_groups, device=device, dtype=dtype)
+    sum_exp.scatter_reduce_(0, scatter_index, (values - shift[scatter_index]).exp(), reduce="sum", include_self=True)
 
     # Structural zeros each contribute exp(0 - shift) = exp(-shift).
-    if n_zeros_per_segment is not None:
-        sum_exp = sum_exp + n_zeros_per_segment.to(dtype) * (-shift).exp()
+    if n_zeros_per_group is not None:
+        sum_exp = sum_exp + n_zeros_per_group.to(dtype) * (-shift).exp()
 
-    # Un-shift. Segments with no contribution at all (sum_exp == 0) stay -inf.
+    # Un-shift. Groups with no contribution at all (sum_exp == 0) stay -inf.
     result = shift + sum_exp.log()
     return torch.where(sum_exp == 0.0, float("-inf"), result)
 
@@ -97,22 +99,22 @@ def _logsumexp_2d(input: Tensor, dims, keepdim: bool, include_zeros: bool) -> Te
             if include_zeros
             else None
         )
-        result = _segment_logsumexp(vals, torch.zeros_like(rows), 1, n_zeros).squeeze(0)
+        result = _scatter_logsumexp(vals, torch.zeros_like(rows), 1, n_zeros).squeeze(0)
         return result.reshape(1, 1) if keepdim else result
 
     # dims == [1]: reduce columns -> one value per row.
     # dims == [0]: reduce rows    -> one value per column.
     if dims == [1]:
-        seg, n_seg, axis_nnz, full, keep_ax = rows, nrows, row_nnz, ncols, 1
+        scatter_idx, n_groups, axis_nnz, full, keep_ax = rows, nrows, row_nnz, ncols, 1
     else:
-        seg, n_seg, axis_nnz, full, keep_ax = cols, ncols, col_nnz, nrows, 0
+        scatter_idx, n_groups, axis_nnz, full, keep_ax = cols, ncols, col_nnz, nrows, 0
 
     if include_zeros:
-        axis_nnz = axis_nnz if axis_nnz is not None else torch.bincount(seg, minlength=n_seg)
+        axis_nnz = axis_nnz if axis_nnz is not None else torch.bincount(scatter_idx, minlength=n_groups)
         n_zeros = (full - axis_nnz).to(vals.dtype)
     else:
         n_zeros = None
-    result = _segment_logsumexp(vals, seg, n_seg, n_zeros)
+    result = _scatter_logsumexp(vals, scatter_idx, n_groups, n_zeros)
     return result.unsqueeze(keep_ax) if keepdim else result
 
 
@@ -131,18 +133,18 @@ def _logsumexp_batched(input: Tensor, dims, keepdim: bool, include_zeros: bool) 
     if dims == [1, 2]:
         # Reduce each whole slice -> (b,).
         n_zeros = (nrows * ncols - torch.bincount(bidx, minlength=b)).to(vals.dtype) if include_zeros else None
-        result = _segment_logsumexp(vals, bidx, b, n_zeros)
+        result = _scatter_logsumexp(vals, bidx, b, n_zeros)
         return result.reshape(b, 1, 1) if keepdim else result
 
     # dims == [2]: reduce columns -> (b, rows).
     # dims == [1]: reduce rows    -> (b, cols).
     if dims == [2]:
-        seg, n_seg, full, out_shape, keep_ax = bidx * nrows + rows, b * nrows, ncols, (b, nrows), 2
+        scatter_idx, n_groups, full, out_shape, keep_ax = bidx * nrows + rows, b * nrows, ncols, (b, nrows), 2
     else:
-        seg, n_seg, full, out_shape, keep_ax = bidx * ncols + cols, b * ncols, nrows, (b, ncols), 1
+        scatter_idx, n_groups, full, out_shape, keep_ax = bidx * ncols + cols, b * ncols, nrows, (b, ncols), 1
 
-    n_zeros = (full - torch.bincount(seg, minlength=n_seg)).to(vals.dtype) if include_zeros else None
-    result = _segment_logsumexp(vals, seg, n_seg, n_zeros).reshape(out_shape)
+    n_zeros = (full - torch.bincount(scatter_idx, minlength=n_groups)).to(vals.dtype) if include_zeros else None
+    result = _scatter_logsumexp(vals, scatter_idx, n_groups, n_zeros).reshape(out_shape)
     return result.unsqueeze(keep_ax) if keepdim else result
 
 
