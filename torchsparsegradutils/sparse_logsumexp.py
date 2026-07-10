@@ -93,13 +93,14 @@ def _logsumexp_2d(input: Tensor, dims, keepdim: bool, include_zeros: bool) -> Te
     rows, cols, vals, row_nnz, col_nnz = _row_col_val(input, nrows, ncols)
 
     if dims == [0, 1]:
-        # Reduce everything -> scalar.
-        n_zeros = (
-            torch.tensor([nrows * ncols - vals.numel()], device=vals.device, dtype=vals.dtype)
-            if include_zeros
-            else None
-        )
-        result = _scatter_logsumexp(vals, torch.zeros_like(rows), 1, n_zeros).squeeze(0)
+        # Reduce everything -> scalar. n_zeros structural zeros == one entry of log(n_zeros).
+        flat = vals
+        if include_zeros:
+            n_zeros = nrows * ncols - vals.numel()
+            if n_zeros > 0:
+                log_nz = torch.full((1,), float(n_zeros), device=vals.device, dtype=vals.dtype).log()
+                flat = torch.cat([vals, log_nz])
+        result = torch.logsumexp(flat, dim=0)
         return result.reshape(1, 1) if keepdim else result
 
     # dims == [1]: reduce columns -> one value per row.
