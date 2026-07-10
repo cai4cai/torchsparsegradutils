@@ -17,7 +17,7 @@ A comprehensive collection of utility functions to work with PyTorch sparse tens
 **Numerically-Stable Sparse Reductions**
 - `sparse_logsumexp`: Sparse-aware `log-sum-exp` reduction mirroring `torch.logsumexp`
 - Operates directly on the nonzero values (no dense materialisation), with a numerically stable max-shift
-- Supports COO/CSR/CSC layouts and an `include_zeros` flag for structural-zero semantics
+- Supports COO/CSR/CSC layouts (unbatched 2-D and batched 3-D) and an `include_zeros` flag for structural-zero semantics
 - Fills the gap of [PyTorch issue #31394](https://github.com/pytorch/pytorch/issues/31394) (no native `scatter_logsumexp`)
 
 **Sparse Linear System Solvers**

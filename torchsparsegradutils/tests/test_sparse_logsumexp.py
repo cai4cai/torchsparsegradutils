@@ -107,6 +107,41 @@ def test_csc_layout(device):
     _assert_close(out, torch.logsumexp(dense, dim=1), torch.float64)
 
 
+def _make_batched_dense(device, value_dtype, seed):
+    """A (3, 5, 4) batched tensor with zeros, incl. an empty row inside one slice."""
+    g = torch.Generator().manual_seed(seed)
+    dense = torch.randn(3, 5, 4, generator=g, dtype=torch.float64)
+    dense = dense.masked_fill(torch.rand(3, 5, 4, generator=g) < 0.5, 0.0)
+    dense[1, 2] = 0.0  # empty row within the second slice
+    return dense.to(device=device, dtype=value_dtype)
+
+
+@pytest.fixture(params=[1, 2, [1, 2]], ids=["dim1", "dim2", "dim12"])
+def batched_dim(request):
+    return request.param
+
+
+def test_batched_matches_dense(device, value_dtype, batched_dim, include_zeros):
+    dense = _make_batched_dense(device, value_dtype, seed=4)
+    out = sparse_logsumexp(dense.to_sparse_coo(), dim=batched_dim, include_zeros=include_zeros)
+    ref = _dense_reference(dense, batched_dim, include_zeros)
+    _assert_close(out, ref, value_dtype)
+
+
+def test_batched_keepdim_shapes(device):
+    dense = _make_batched_dense(device, torch.float64, seed=5)
+    sp = dense.to_sparse_coo()
+    assert sparse_logsumexp(sp, dim=1, keepdim=True).shape == (3, 1, 4)
+    assert sparse_logsumexp(sp, dim=2, keepdim=True).shape == (3, 5, 1)
+    assert sparse_logsumexp(sp, dim=[1, 2], keepdim=True).shape == (3, 1, 1)
+
+
+def test_batched_cannot_reduce_batch_dim(device):
+    sp = _make_batched_dense(device, torch.float64, seed=6).to_sparse_coo()
+    with pytest.raises(NotImplementedError):
+        sparse_logsumexp(sp, dim=0)
+
+
 def test_gradient(layout, device):
     """Gradients through the explicit values match autograd on the dense op."""
     dense = _make_dense(device, torch.float64, seed=3)
@@ -128,8 +163,8 @@ def test_gradient(layout, device):
     _assert_close(vals.grad, expected, torch.float64)
 
 
-def test_non_2d_raises():
-    x = torch.randn(2, 3, 4).to_sparse_coo()
+def test_unsupported_rank_raises():
+    x = torch.randn(2, 3, 4, 5).to_sparse_coo()  # 4-D: neither 2-D nor batched 3-D
     with pytest.raises(NotImplementedError):
         sparse_logsumexp(x, dim=1)
 
