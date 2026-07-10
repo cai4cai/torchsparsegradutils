@@ -85,7 +85,7 @@ def _row_col_val(input: Tensor, nrows: int, ncols: int):
         col_nnz = ccol[1:] - ccol[:-1]
         cols = torch.repeat_interleave(torch.arange(ncols, device=vals.device), col_nnz)
         return input.row_indices().long(), cols, vals, None, col_nnz
-    coo = input.coalesce()
+    coo = input if input.is_coalesced() else input.coalesce()
     rows, cols = coo.indices()
     return rows, cols, coo.values(), None, None
 
