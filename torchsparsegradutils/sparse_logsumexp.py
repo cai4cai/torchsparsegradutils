@@ -341,15 +341,20 @@ def sparse_bidir_logsumexp(
 ) -> Union[Tensor, "tuple[Tensor, Tensor]"]:
     r"""Simultaneous row- and column-wise log-sum-exp of a sparse tensor.
 
-    Computes the column-wise reduction (over rows, ``dim=0``) *and* the row-wise
-    reduction (over columns, ``dim=1``) of a 2-D (or batched 3-D) sparse tensor in a
-    single traversal of the sparse structure. Equivalent to, but cheaper than::
+    Computes the column-wise reduction (over rows) *and* the row-wise reduction (over
+    columns) of a 2-D (or batched 3-D) sparse tensor in a single traversal of the sparse
+    structure. For a 2-D input this equals::
 
         (sparse_logsumexp(input, dim=0, ...), sparse_logsumexp(input, dim=1, ...))
 
+    For a batched 3-D input the per-slice reductions use ``dim=1`` (over rows) and
+    ``dim=2`` (over columns) instead — ``dim=0`` is the batch axis and cannot be reduced.
+
     Every nonzero contributes to both outputs, so a single extraction feeds one batched
     :func:`~torch.Tensor.scatter_reduce_` (via ``values.expand(2, nnz)``, a view) rather
-    than two separate passes. Numerically stable via the same max-shift trick as
+    than two separate passes; the shared extraction and single autograd graph make it
+    faster than two calls (at a modestly higher peak memory, since both reductions are
+    live at once). Numerically stable via the same max-shift trick as
     :func:`sparse_logsumexp`.
 
     Parameters
@@ -369,15 +374,18 @@ def sparse_bidir_logsumexp(
     output_layout : {"tuple", "padded", "nested"}, default ``"tuple"``
         How to return the two reductions:
 
-        - ``"tuple"``: ``(col_lse, row_lse)`` — the most pythonic. ``col_lse`` is the
-          ``dim=0`` reduction (one value per column), ``row_lse`` the ``dim=1``
-          reduction (one value per row). **Note the order: column result first.**
+        - ``"tuple"``: ``(col_lse, row_lse)``. ``col_lse`` is the reduction over rows
+          (2-D ``dim=0``; batched ``dim=1``), shape ``(cols,)`` / ``(batch, cols)``;
+          ``row_lse`` is the reduction over columns (2-D ``dim=1``; batched ``dim=2``),
+          shape ``(rows,)`` / ``(batch, rows)``. **Note the order: column result first.**
         - ``"padded"``: a single dense tensor of shape ``(2, G)`` (unbatched) or
           ``(batch, 2, G)`` (batched) with ``G = max(rows, cols)``. Row ``0`` is
           ``col_lse``, row ``1`` is ``row_lse``; each is padded to ``G`` with ``-inf``.
         - ``"nested"``: ``torch.nested.as_nested_tensor([col_lse, row_lse])`` — a single
           container preserving the two (possibly different) lengths. Requires
-          PyTorch >= 2.4.
+          PyTorch >= 2.4, and (as a prototype API) is meant to be consumed via
+          ``.unbind()``; whole-tensor ops such as ``.sum()`` / ``.shape`` are not
+          supported on it. Emits PyTorch's nested-tensor prototype ``UserWarning``.
 
     Returns
     -------
