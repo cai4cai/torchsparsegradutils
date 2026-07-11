@@ -113,13 +113,13 @@ def test_keepdim_shapes(layout, device):
 def test_keepdim_rejected_for_non_tuple_layouts(device):
     sp = _make_dense(device, torch.float64, seed=3).to_sparse_coo()
     for output_layout in ("padded", "nested"):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="keepdim is only supported"):
             sparse_bidir_logsumexp(sp, keepdim=True, output_layout=output_layout)
 
 
 def test_unknown_output_layout_raises(device):
     sp = _make_dense(device, torch.float64, seed=3).to_sparse_coo()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown output_layout"):
         sparse_bidir_logsumexp(sp, output_layout="bogus")
 
 
@@ -204,6 +204,37 @@ def test_gradient_parity_with_two_call(layout, device):
         return leaf.grad
 
     _assert_close(_grad(bidir=True), _grad(bidir=False), torch.float64)
+
+
+def test_batched_gradient_parity_with_two_call(device):
+    """_bidir_batched is a distinct backward path; its gradient must still match the
+    sum of the two separate batched reductions' gradients."""
+    dense = _make_batched_dense(device, torch.float64, seed=6)  # (3, 5, 4)
+
+    def _grad(bidir):
+        leaf = dense.clone().requires_grad_(True)
+        sp = leaf.to_sparse_coo()
+        if bidir:
+            col_lse, row_lse = sparse_bidir_logsumexp(sp)
+            (col_lse.sum() + row_lse.sum()).backward()
+        else:
+            (sparse_logsumexp(sp, dim=1).sum() + sparse_logsumexp(sp, dim=2).sum()).backward()
+        return leaf.grad
+
+    _assert_close(_grad(bidir=True), _grad(bidir=False), torch.float64)
+
+
+def test_duplicate_coordinates_are_coalesced(device, include_zeros):
+    """An uncoalesced COO with repeated coordinates must sum the duplicates before
+    exp (guards against a refactor to _values()/_indices() that would double-count)."""
+    indices = torch.tensor([[0, 0, 1], [1, 1, 2]], device=device)  # (0,1) appears twice
+    values = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64, device=device)
+    sp = torch.sparse_coo_tensor(indices, values, (2, 3), device=device)  # NOT coalesced
+    assert not sp.is_coalesced()
+    dense = sp.to_dense()  # (0,1) -> 3.0 after summing
+    col_lse, row_lse = sparse_bidir_logsumexp(sp, include_zeros=include_zeros)
+    _assert_close(col_lse, _dense_reference(dense, 0, include_zeros), torch.float64)
+    _assert_close(row_lse, _dense_reference(dense, 1, include_zeros), torch.float64)
 
 
 def test_unsupported_rank_raises(device):
