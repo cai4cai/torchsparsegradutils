@@ -79,15 +79,27 @@ def run_sparse_bidir_logsumexp_benchmark():
                     layout_name = "coo" if layout == torch.sparse_coo else "csr"
                     print(f"\n  📊 Configuration: idx_dtype={idx_dt}, val_dtype={val_dt}, layout={layout_name}")
 
+                    # COO indices are always int64 -> skip int32 rather than mislabel a duplicate.
+                    if layout == torch.sparse_coo and idx_dt != torch.int64:
+                        print(f"    ⏭  skipping {layout_name} + {idx_dt} (COO indices are always int64)")
+                        continue
+
+                    # Generate once per config, outside the try so generation errors surface here.
+                    A_sparse = rand_sparse(
+                        A_shape, nnz, layout, indices_dtype=idx_dt, values_dtype=val_dt, device=device
+                    )
+                    actual_idx_dt = (
+                        A_sparse.col_indices().dtype
+                        if layout == torch.sparse_csr
+                        else A_sparse.coalesce().indices().dtype
+                    )
+                    assert actual_idx_dt == idx_dt, f"index dtype mislabel: requested {idx_dt}, built {actual_idx_dt}"
+
                     print_results_table_header()
 
                     for alg_name, alg_fn in ALGORITHMS:
                         try:
                             print(f"    🧮 Testing {alg_name} ({layout_name})...")
-
-                            A_sparse = rand_sparse(
-                                A_shape, nnz, layout, indices_dtype=idx_dt, values_dtype=val_dt, device=device
-                            )
 
                             (
                                 t_fwd,

@@ -76,13 +76,25 @@ def run_sparse_bidir_logsumexp_suitesparse_benchmark():
                     layout_name = "coo" if layout == torch.sparse_coo else "csr"
                     print(f"\n🔍 Testing configuration: idx_dtype={idx_dt}, val_dtype={val_dt}, layout={layout_name}")
 
-                    indices = torch.tensor([A_np_coo.row, A_np_coo.col], dtype=idx_dt, device=device)
+                    # COO indices are always int64 -> skip int32 rather than mislabel a duplicate.
+                    if layout == torch.sparse_coo and idx_dt != torch.int64:
+                        print(f"  ⏭  skipping {layout_name} + {idx_dt} (COO indices are always int64)")
+                        continue
+
                     values = torch.tensor(A_np_coo.data, dtype=val_dt, device=device)
-                    A_sparse = torch.sparse_coo_tensor(
+                    indices = torch.tensor([A_np_coo.row, A_np_coo.col], dtype=torch.int64, device=device)
+                    A_coo = torch.sparse_coo_tensor(
                         indices, values, A_np_coo.shape, dtype=val_dt, device=device
                     ).coalesce()
                     if layout == torch.sparse_csr:
-                        A_sparse = A_sparse.to_sparse_csr()
+                        # to_sparse_csr() gives int64 -> rebuild with the requested dtype so the label is honest.
+                        csr = A_coo.to_sparse_csr()
+                        A_sparse = torch.sparse_csr_tensor(
+                            csr.crow_indices().to(idx_dt), csr.col_indices().to(idx_dt), csr.values(), csr.shape
+                        )
+                        assert A_sparse.col_indices().dtype == idx_dt
+                    else:
+                        A_sparse = A_coo
 
                     print_results_table_header()
 
