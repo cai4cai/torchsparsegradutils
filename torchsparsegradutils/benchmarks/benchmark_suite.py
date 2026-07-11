@@ -19,6 +19,8 @@ BENCHMARK_SCRIPTS = [
     "sparse_triangular_solve_rand.py",
     "sparse_triangular_solve_suitesparse.py",
     "batched_sparse_mm_rand.py",
+    "sparse_logsumexp_rand.py",
+    "sparse_logsumexp_suitesparse.py",
 ]
 
 

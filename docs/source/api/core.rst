@@ -25,6 +25,13 @@ Indexed Matrix Multiplication
 
 .. autofunction:: segment_mm
 
+Sparse Reductions
+-----------------
+
+.. currentmodule:: torchsparsegradutils.sparse_logsumexp
+
+.. autofunction:: sparse_logsumexp
+
 Sparse Linear Solvers
 ----------------------
 

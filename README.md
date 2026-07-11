@@ -14,6 +14,12 @@ A comprehensive collection of utility functions to work with PyTorch sparse tens
 - Workaround for [PyTorch issue #41128](https://github.com/pytorch/pytorch/issues/41128)
 - Supports both COO and CSR formats with optional batching
 
+**Numerically-Stable Sparse Reductions**
+- `sparse_logsumexp`: Sparse-aware `log-sum-exp` reduction mirroring `torch.logsumexp`
+- Operates directly on the nonzero values (no dense materialisation), with a numerically stable max-shift
+- Supports COO/CSR/CSC layouts (unbatched 2-D and batched 3-D) and an `include_zeros` flag for structural-zero semantics
+- Fills the gap of [PyTorch issue #31394](https://github.com/pytorch/pytorch/issues/31394) (no native `scatter_logsumexp`)
+
 **Sparse Linear System Solvers**
 - `sparse_triangular_solve`: Sparse triangular solver with batch support
   -  Discussion reference: [PyTorch issue #87358](https://github.com/pytorch/pytorch/issues/87358)

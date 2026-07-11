@@ -12,6 +12,7 @@ import pytest
 # Modules that have working doctests
 DOCTEST_MODULES = [
     "torchsparsegradutils.indexed_matmul",
+    "torchsparsegradutils.sparse_logsumexp",
     "torchsparsegradutils.sparse_lstsq",
     "torchsparsegradutils.sparse_matmul",
     "torchsparsegradutils.sparse_solve",
