@@ -20,35 +20,42 @@ def _scatter_logsumexp(
     ``Tensor.scatter_reduce_``), so a group's members need not be contiguous. Uses
     the standard max-shift trick so that :math:`\exp` never overflows.
 
+    Any leading batch dimensions are supported: ``values`` / ``scatter_index`` of
+    shape ``(*batch, nnz)`` are reduced independently along the last axis into an
+    output of shape ``(*batch, n_groups)``. With no batch dims (1-D inputs) this is
+    an ordinary scatter reduction.
+
     Parameters
     ----------
-    values : Tensor, shape ``(nnz,)``
+    values : Tensor, shape ``(*batch, nnz)``
         The explicit (nonzero) values to reduce.
-    scatter_index : Tensor, shape ``(nnz,)``
-        Output group index for each value.
+    scatter_index : Tensor, shape ``(*batch, nnz)``
+        Output group index for each value, within ``[0, n_groups)``.
     n_groups : int
-        Number of output groups.
-    n_zeros_per_group : Tensor or None, shape ``(n_groups,)``
+        Number of output groups (size of the reduced last axis).
+    n_zeros_per_group : Tensor or None, shape ``(*batch, n_groups)``
         Count of structural zeros contributing ``exp(0) = 1`` to each group, or
         ``None`` to ignore structural zeros entirely.
 
     Returns
     -------
-    Tensor, shape ``(n_groups,)``
+    Tensor, shape ``(*batch, n_groups)``
         Per-group log-sum-exp. Empty groups (no values and no zeros) are ``-inf``.
     """
     device, dtype = values.device, values.dtype
+    batch = values.shape[:-1]
 
     # Per-group max, detached — a stability shift the result is invariant to.
-    max_val = torch.full((n_groups,), float("-inf"), device=device, dtype=dtype)
-    max_val.scatter_reduce_(0, scatter_index, values, reduce="amax", include_self=True)
+    max_val = torch.full((*batch, n_groups), float("-inf"), device=device, dtype=dtype)
+    max_val.scatter_reduce_(-1, scatter_index, values, reduce="amax", include_self=True)
     if n_zeros_per_group is not None:
         max_val = torch.where(n_zeros_per_group > 0, max_val.clamp(min=0.0), max_val)
     shift = max_val.detach().clone()
     shift[~shift.isfinite()] = 0.0  # empty groups (-inf) and +inf values (avoid inf - inf)
 
-    sum_exp = torch.zeros(n_groups, device=device, dtype=dtype)
-    sum_exp.scatter_reduce_(0, scatter_index, (values - shift[scatter_index]).exp(), reduce="sum", include_self=True)
+    sum_exp = torch.zeros((*batch, n_groups), device=device, dtype=dtype)
+    shifted_exp = (values - torch.gather(shift, -1, scatter_index)).exp()
+    sum_exp.scatter_reduce_(-1, scatter_index, shifted_exp, reduce="sum", include_self=True)
 
     # Structural zeros each contribute exp(0 - shift) = exp(-shift).
     if n_zeros_per_group is not None:
