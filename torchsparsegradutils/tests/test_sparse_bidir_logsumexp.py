@@ -77,6 +77,31 @@ def test_output_layouts_agree(layout, device, include_zeros):
         _assert_close(parts[1], row_lse, torch.float64)
 
 
+def test_wide_matrix_row_padding(layout, device):
+    """ncols > nrows exercises the row-side -inf padding; the tall (5x4) fixtures only
+    ever hit the column-side pad, so transpose to a wide (4x5) matrix."""
+    dense = _make_dense(device, torch.float64, seed=1).t().contiguous()  # (4, 5), wide
+    sp = _to_layout(dense, layout)
+    nrows, ncols = dense.shape  # 4, 5 -> G=5
+    G = max(nrows, ncols)
+    col_lse, row_lse = sparse_bidir_logsumexp(sp)
+    _assert_close(col_lse, _dense_reference(dense, 0, True), torch.float64)
+    _assert_close(row_lse, _dense_reference(dense, 1, True), torch.float64)
+    padded = sparse_bidir_logsumexp(sp, output_layout="padded")
+    assert padded.shape == (2, G)
+    _assert_close(padded[1, :nrows], row_lse, torch.float64)
+    assert torch.isneginf(padded[1, nrows:]).all()  # row_lse tail padded with -inf
+
+
+def test_csc_layout(device):
+    """CSC reaches sparse_bidir_logsumexp's free-col_nnz path; backward is unsupported
+    for CSC in PyTorch, so this is forward-only (matching the sibling suite)."""
+    dense = _make_dense(device, torch.float64, seed=2)
+    col_lse, row_lse = sparse_bidir_logsumexp(dense.to_sparse_csc())
+    _assert_close(col_lse, _dense_reference(dense, 0, True), torch.float64)
+    _assert_close(row_lse, _dense_reference(dense, 1, True), torch.float64)
+
+
 def test_keepdim_shapes(layout, device):
     dense = _make_dense(device, torch.float64, seed=2)  # (5, 4)
     sp = _to_layout(dense, layout)
@@ -140,6 +165,27 @@ def test_batched_output_shapes(device):
     assert sparse_bidir_logsumexp(sp, output_layout="padded").shape == (b, 2, G)
     ck, rk = sparse_bidir_logsumexp(sp, keepdim=True)
     assert ck.shape == (b, 1, ncols) and rk.shape == (b, nrows, 1)
+
+
+def test_batched_output_layouts_agree(device, include_zeros):
+    """Batched padded/nested carry the same values as tuple (not just the right shape),
+    so a col/row plane swap in the padded assembly cannot pass unnoticed."""
+    dense = _make_batched_dense(device, torch.float64, seed=5)  # (3, 5, 4)
+    sp = dense.to_sparse_coo()
+    b, nrows, ncols = dense.shape
+    G = max(nrows, ncols)
+    col_lse, row_lse = sparse_bidir_logsumexp(sp, include_zeros=include_zeros)
+
+    padded = sparse_bidir_logsumexp(sp, include_zeros=include_zeros, output_layout="padded")
+    assert padded.shape == (b, 2, G)
+    _assert_close(padded[:, 0, :ncols], col_lse, torch.float64)
+    _assert_close(padded[:, 1, :nrows], row_lse, torch.float64)
+    assert torch.isneginf(padded[:, 0, ncols:]).all()  # col-side -inf pad
+
+    if _NESTED_OK:
+        parts = sparse_bidir_logsumexp(sp, include_zeros=include_zeros, output_layout="nested").unbind()
+        _assert_close(parts[0], col_lse, torch.float64)  # (b, ncols)
+        _assert_close(parts[1], row_lse, torch.float64)  # (b, nrows)
 
 
 def test_gradient_parity_with_two_call(layout, device):
