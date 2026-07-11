@@ -278,6 +278,8 @@ def sparse_logsumexp(
     NotImplementedError
         If ``input`` is not a supported sparse layout, is not 2-D or 3-D, or if a
         batched 3-D input's ``dim`` includes the batch axis.
+    ValueError
+        If ``input`` is a hybrid sparse tensor (has dense dimensions).
 
     Examples
     --------
@@ -309,6 +311,9 @@ def sparse_logsumexp(
     supported = {torch.sparse_coo, torch.sparse_csr, torch.sparse_csc}
     if input.layout not in supported:
         raise NotImplementedError(f"sparse_logsumexp does not support layout {input.layout}. Supported: {supported}.")
+
+    if input.dense_dim() != 0:
+        raise ValueError("sparse_logsumexp requires a sparse tensor with zero dense dimensions.")
 
     # Validate against the raw dims (before normalising), matching torch.logsumexp.
     dims_list = [dim] if isinstance(dim, int) else list(dim)
@@ -398,7 +403,8 @@ def sparse_bidir_logsumexp(
         If ``input`` is not a supported sparse layout / rank, or ``output_layout=
         "nested"`` on a PyTorch older than 2.4.
     ValueError
-        If ``output_layout`` is unknown, or ``keepdim=True`` with a non-tuple layout.
+        If ``output_layout`` is unknown, ``keepdim=True`` with a non-tuple layout, or
+        ``input`` is a hybrid sparse tensor (has dense dimensions).
 
     Examples
     --------
@@ -433,6 +439,9 @@ def sparse_bidir_logsumexp(
             f"sparse_bidir_logsumexp does not support layout {input.layout}. Supported: {supported}."
         )
 
+    if input.dense_dim() != 0:
+        raise ValueError("sparse_bidir_logsumexp requires a sparse tensor with zero dense dimensions.")
+
     if output_layout not in ("tuple", "padded", "nested"):
         raise ValueError(
             f"sparse_bidir_logsumexp: unknown output_layout {output_layout!r}. "
@@ -440,6 +449,9 @@ def sparse_bidir_logsumexp(
         )
     if keepdim and output_layout != "tuple":
         raise ValueError("sparse_bidir_logsumexp: keepdim is only supported with output_layout='tuple'.")
+    # Gate the nested prototype up front, before paying the forward cost.
+    if output_layout == "nested" and parse_version(torch.__version__) < parse_version("2.4"):
+        raise NotImplementedError("PyTorch version is too old for nested tensors")
 
     batched = input.ndim == 3
     col_lse, row_lse, padded = _bidir_batched(input, include_zeros) if batched else _bidir_2d(input, include_zeros)
@@ -448,8 +460,6 @@ def sparse_bidir_logsumexp(
         return padded
 
     if output_layout == "nested":
-        if parse_version(torch.__version__) < parse_version("2.4"):
-            raise NotImplementedError("PyTorch version is too old for nested tensors")
         return torch.nested.as_nested_tensor([col_lse, row_lse])
 
     if keepdim:
