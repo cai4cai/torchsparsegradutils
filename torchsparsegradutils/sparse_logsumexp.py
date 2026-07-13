@@ -398,6 +398,12 @@ def sparse_bidir_logsumexp(
           with ``-inf``. The direction leads in both cases, so ``out[0]`` / ``out[1]``
           select the two reductions regardless of rank. This is the scatter's native
           output buffer, returned without a copy.
+
+          .. warning::
+             Experimental. The axis order, the ``G = max(rows, cols)`` group padding and
+             the ``-inf`` fill mirror the internal scatter buffer, and may change without
+             a deprecation cycle if that buffer does. Use ``"tuple"`` for a stable layout.
+
         - ``"nested"``: ``torch.nested.as_nested_tensor([col_lse, row_lse])`` — a single
           container preserving the two (possibly different) lengths. Requires
           PyTorch >= 2.4, and (as a prototype API) is meant to be consumed via
