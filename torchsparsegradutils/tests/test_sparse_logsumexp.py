@@ -17,7 +17,12 @@ def device_id(device):
 
 
 def layout_id(layout):
-    return "coo" if layout == torch.sparse_coo else "csr"
+    return {torch.sparse_coo: "coo", torch.sparse_csr: "csr", torch.sparse_csc: "csc"}[layout]
+
+
+# SPARSE_LAYOUTS (coo, csr) is the repo-wide matrix, and is what the gradient tests can
+# use: PyTorch has no backward for CSC values. Forward-only tests take the wider set.
+FWD_LAYOUTS = [*SPARSE_LAYOUTS, torch.sparse_csc]
 
 
 def dim_id(dim):
@@ -61,6 +66,11 @@ def layout(request):
     return request.param
 
 
+@pytest.fixture(params=FWD_LAYOUTS, ids=[layout_id(x) for x in FWD_LAYOUTS])
+def fwd_layout(request):
+    return request.param
+
+
 @pytest.fixture(params=DEVICES, ids=[device_id(d) for d in DEVICES])
 def device(request):
     return request.param
@@ -96,30 +106,23 @@ def _make_dense(device, value_dtype, seed):
     return dense.to(device=device, dtype=value_dtype)
 
 
-def test_matches_dense_reference(layout, device, value_dtype, index_dtype, dim, include_zeros):
+def test_matches_dense_reference(fwd_layout, device, value_dtype, index_dtype, dim, include_zeros):
     dense = _make_dense(device, value_dtype, seed=0)
-    sp = _to_layout(dense, layout, index_dtype)
+    sp = _to_layout(dense, fwd_layout, index_dtype)
     out = sparse_logsumexp(sp, dim=dim, include_zeros=include_zeros)
     ref = _dense_reference(dense, dim, include_zeros)
     _assert_close(out, ref, value_dtype)
 
 
-def test_keepdim_shapes(layout, device):
+def test_keepdim_shapes(fwd_layout, device):
     dense = _make_dense(device, torch.float64, seed=1)
-    sp = _to_layout(dense, layout)
+    sp = _to_layout(dense, fwd_layout)
     assert sparse_logsumexp(sp, dim=1, keepdim=True).shape == (5, 1)
     assert sparse_logsumexp(sp, dim=0, keepdim=True).shape == (1, 4)
     assert sparse_logsumexp(sp, dim=[0, 1], keepdim=True).shape == (1, 1)
 
 
-def test_csc_layout(device):
-    """CSC is supported even though it is not in the standard test matrix."""
-    dense = _make_dense(device, torch.float64, seed=2)
-    out = sparse_logsumexp(dense.to_sparse_csc(), dim=1, include_zeros=True)
-    _assert_close(out, torch.logsumexp(dense, dim=1), torch.float64)
-
-
-def test_all_negative_values_stability(layout, device, dim, include_zeros):
+def test_all_negative_values_stability(fwd_layout, device, dim, include_zeros):
     """All-negative values: the stability shift must account for the structural
     zero (value 0) so include_zeros neither overflows to +inf (rows with a zero)
     nor produces 0 * inf -> nan (fully dense rows). Row 0 has a structural zero,
@@ -129,7 +132,7 @@ def test_all_negative_values_stability(layout, device, dim, include_zeros):
         device=device,
         dtype=torch.float64,
     )
-    out = sparse_logsumexp(_to_layout(dense, layout), dim=dim, include_zeros=include_zeros)
+    out = sparse_logsumexp(_to_layout(dense, fwd_layout), dim=dim, include_zeros=include_zeros)
     _assert_close(out, _dense_reference(dense, dim, include_zeros), torch.float64)
     assert not torch.isnan(out).any()
 
@@ -141,10 +144,10 @@ def test_all_negative_single_value(device):
     _assert_close(sparse_logsumexp(x, dim=1, include_zeros=True), torch.logsumexp(x.to_dense(), dim=1), torch.float32)
 
 
-def test_positive_inf_value(layout, device, dim, include_zeros):
+def test_positive_inf_value(fwd_layout, device, dim, include_zeros):
     """An explicit +inf must yield +inf, not nan from inf - inf in the shift."""
     dense = torch.tensor([[float("inf"), 0.0, 1.0], [-2.0, 3.0, 0.0]], device=device, dtype=torch.float64)
-    out = sparse_logsumexp(_to_layout(dense, layout), dim=dim, include_zeros=include_zeros)
+    out = sparse_logsumexp(_to_layout(dense, fwd_layout), dim=dim, include_zeros=include_zeros)
     _assert_close(out, _dense_reference(dense, dim, include_zeros), torch.float64)
     assert not torch.isnan(out).any()
 
@@ -156,6 +159,28 @@ def _make_batched_dense(device, value_dtype, seed):
     dense = dense.masked_fill(torch.rand(3, 5, 4, generator=g) < 0.5, 0.0)
     dense[1, 2] = 0.0  # empty row within the second slice
     return dense.to(device=device, dtype=value_dtype)
+
+
+def _make_batched_dense_equal_nnz(device, value_dtype, seed):
+    """A (3, 5, 4) batched tensor whose slices share one sparsity mask.
+
+    Batched CSR/CSC cannot represent unequal nnz per slice: PyTorch raises "Expect the
+    same number of specified elements per batch" at *construction*, so a ragged tensor
+    like _make_batched_dense's can only be tested as COO. One shared mask (with an
+    all-zero row, so empty segments are still exercised) is the widest input all three
+    layouts can express.
+    """
+    g = torch.Generator().manual_seed(seed)
+    dense = torch.randn(3, 5, 4, generator=g, dtype=torch.float64)
+    mask = torch.rand(5, 4, generator=g) < 0.5  # one mask, broadcast over the batch
+    dense = dense.masked_fill(mask, 0.0)
+    dense[:, 2] = 0.0  # same all-zero row in every slice, keeping nnz equal
+    return dense.to(device=device, dtype=value_dtype)
+
+
+@pytest.fixture(params=FWD_LAYOUTS, ids=[layout_id(x) for x in FWD_LAYOUTS])
+def batched_layout(request):
+    return request.param
 
 
 @pytest.fixture(params=[1, 2, [1, 2]], ids=["dim1", "dim2", "dim12"])
@@ -173,6 +198,38 @@ def test_batched_matches_dense(device, value_dtype, batched_dim, include_zeros):
 def test_batched_keepdim_shapes(device):
     dense = _make_batched_dense(device, torch.float64, seed=5)
     sp = dense.to_sparse_coo()
+    assert sparse_logsumexp(sp, dim=1, keepdim=True).shape == (3, 1, 4)
+    assert sparse_logsumexp(sp, dim=2, keepdim=True).shape == (3, 5, 1)
+    assert sparse_logsumexp(sp, dim=[1, 2], keepdim=True).shape == (3, 1, 1)
+
+
+def test_batched_matches_dense_all_layouts(batched_layout, device, value_dtype, batched_dim, include_zeros):
+    """Batched COO, CSR and CSC all reduce per slice. The compressed layouts reach the
+    reduction by a different route than COO (they are converted, since batched CSR/CSC
+    have no per-slice index accessors), so they need covering, not just COO."""
+    dense = _make_batched_dense_equal_nnz(device, value_dtype, seed=4)
+    sp = _to_layout(dense, batched_layout)
+    out = sparse_logsumexp(sp, dim=batched_dim, include_zeros=include_zeros)
+    _assert_close(out, _dense_reference(dense, batched_dim, include_zeros), value_dtype)
+
+
+def test_batched_compressed_nnz_is_per_slice(device):
+    """Pins the convention behind the batched code path: _nnz() counts the *whole*
+    tensor for COO but a *single slice* for batched CSR/CSC. Any batched code that
+    reads _nnz() (or values().numel()) as a total is wrong for the compressed layouts
+    -- which is why the batched reduction converts to COO before counting."""
+    dense = _make_batched_dense_equal_nnz(device, torch.float64, seed=4)
+    b = dense.shape[0]
+    total_nnz = int((dense != 0).sum())
+
+    assert dense.to_sparse_coo().coalesce()._nnz() == total_nnz
+    for compressed in (torch.sparse_csr, torch.sparse_csc):
+        assert _to_layout(dense, compressed)._nnz() == total_nnz // b
+
+
+def test_batched_keepdim_shapes_all_layouts(batched_layout, device):
+    dense = _make_batched_dense_equal_nnz(device, torch.float64, seed=5)
+    sp = _to_layout(dense, batched_layout)
     assert sparse_logsumexp(sp, dim=1, keepdim=True).shape == (3, 1, 4)
     assert sparse_logsumexp(sp, dim=2, keepdim=True).shape == (3, 5, 1)
     assert sparse_logsumexp(sp, dim=[1, 2], keepdim=True).shape == (3, 1, 1)
