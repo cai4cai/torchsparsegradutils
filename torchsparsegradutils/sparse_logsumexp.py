@@ -252,22 +252,26 @@ def sparse_logsumexp(
     r"""Sparse-aware log-sum-exp, mirroring :func:`torch.logsumexp`.
 
     Computes :math:`\log \sum \exp(x)` along ``dim`` directly on the explicit
-    (nonzero) values of a 2-D (or batched 3-D) sparse tensor, without materialising
+    (nonzero) values of an unbatched or batched sparse tensor, without materialising
     the dense equivalent. The reduction is numerically stable via the max-shift trick.
 
     Parameters
     ----------
     input : Tensor
         A sparse tensor with layout ``torch.sparse_coo``, ``torch.sparse_csr`` or
-        ``torch.sparse_csc``. Either an unbatched 2-D matrix, or a batched 3-D
-        ``(batch, rows, cols)`` tensor whose leading dimension is an independent
-        batch (each ``(rows, cols)`` slice is reduced on its own). Any other layout
-        or rank raises ``NotImplementedError``.
+        ``torch.sparse_csc``. Either an unbatched ``[r, c]`` matrix, or a batched
+        ``[b, r, c]`` tensor whose leading dimension is an independent batch (each
+        ``[r, c]`` slice is reduced on its own). Any other layout or rank raises
+        ``NotImplementedError``.
+
+        Batched CSR/CSC inputs are supported, but PyTorch requires every slice of a
+        batched compressed tensor to hold the same number of specified elements --
+        a ragged batch can only be expressed as COO.
     dim : int or sequence of int
-        Dimension(s) to reduce. For a 2-D input: ``dim=1`` reduces the columns (one
-        value per row), ``dim=0`` reduces the rows (one value per column), and
-        ``[0, 1]`` reduces to a scalar. For a batched 3-D input the batch axis
-        (``0``) cannot be reduced; ``dim`` must select from ``{1, 2}``.
+        Dimension(s) to reduce. For an unbatched input: ``dim=1`` reduces the columns
+        (one value per row), ``dim=0`` reduces the rows (one value per column), and
+        ``[0, 1]`` reduces to a scalar. For a batched input the batch axis (``0``)
+        cannot be reduced; ``dim`` must select from ``{1, 2}``.
     keepdim : bool, default ``False``
         If ``True``, the reduced dimension(s) are retained with size 1.
     include_zeros : bool, default ``True``
@@ -356,13 +360,14 @@ def sparse_bidir_logsumexp(
     r"""Simultaneous row- and column-wise log-sum-exp of a sparse tensor.
 
     Computes the column-wise reduction (over rows) *and* the row-wise reduction (over
-    columns) of a 2-D (or batched 3-D) sparse tensor in a single traversal of the sparse
-    structure. For a 2-D input this equals::
+    columns) of an unbatched or batched sparse tensor in a single traversal of the sparse
+    structure. For an unbatched ``[r, c]`` input this equals::
 
         (sparse_logsumexp(input, dim=0, ...), sparse_logsumexp(input, dim=1, ...))
 
-    For a batched 3-D input the per-slice reductions use ``dim=1`` (over rows) and
-    ``dim=2`` (over columns) instead — ``dim=0`` is the batch axis and cannot be reduced.
+    For a batched ``[b, r, c]`` input the per-slice reductions use ``dim=1`` (over rows)
+    and ``dim=2`` (over columns) instead — ``dim=0`` is the batch axis and cannot be
+    reduced.
 
     Every nonzero contributes to both outputs, so a single extraction feeds one batched
     :func:`~torch.Tensor.scatter_reduce_` (via ``values.expand(2, nnz)``, a view) rather
@@ -375,9 +380,13 @@ def sparse_bidir_logsumexp(
     ----------
     input : Tensor
         A sparse tensor (``torch.sparse_coo`` / ``sparse_csr`` / ``sparse_csc``), either
-        an unbatched 2-D ``(rows, cols)`` matrix or a batched 3-D ``(batch, rows, cols)``
-        tensor whose leading axis is an independent batch. Any other layout or rank
-        raises ``NotImplementedError``.
+        an unbatched ``[r, c]`` matrix or a batched ``[b, r, c]`` tensor whose leading
+        axis is an independent batch. Any other layout or rank raises
+        ``NotImplementedError``.
+
+        Batched CSR/CSC inputs are supported, but PyTorch requires every slice of a
+        batched compressed tensor to hold the same number of specified elements --
+        a ragged batch can only be expressed as COO.
     keepdim : bool, default ``False``
         If ``True``, the reduced dimension is retained with size 1 in each returned
         vector. Only supported with ``output_layout="tuple"`` (raises otherwise).
@@ -389,18 +398,18 @@ def sparse_bidir_logsumexp(
         How to return the two reductions:
 
         - ``"tuple"``: ``(col_lse, row_lse)``. ``col_lse`` is the reduction over rows
-          (2-D ``dim=0``; batched ``dim=1``), shape ``(cols,)`` / ``(batch, cols)``;
-          ``row_lse`` is the reduction over columns (2-D ``dim=1``; batched ``dim=2``),
-          shape ``(rows,)`` / ``(batch, rows)``. **Note the order: column result first.**
+          (unbatched ``dim=0``; batched ``dim=1``), shape ``(c,)`` / ``(b, c)``;
+          ``row_lse`` is the reduction over columns (unbatched ``dim=1``; batched
+          ``dim=2``), shape ``(r,)`` / ``(b, r)``. **Note the order: column result first.**
         - ``"padded"``: a single dense tensor of shape ``(2, G)`` (unbatched) or
-          ``(2, batch, G)`` (batched) with ``G = max(rows, cols)``. Index ``0`` along the
+          ``(2, b, G)`` (batched) with ``G = max(r, c)``. Index ``0`` along the
           leading axis is ``col_lse``, index ``1`` is ``row_lse``; each is padded to ``G``
           with ``-inf``. The direction leads in both cases, so ``out[0]`` / ``out[1]``
           select the two reductions regardless of rank. This is the scatter's native
           output buffer, returned without a copy.
 
           .. warning::
-             Experimental. The axis order, the ``G = max(rows, cols)`` group padding and
+             Experimental. The axis order, the ``G = max(r, c)`` group padding and
              the ``-inf`` fill mirror the internal scatter buffer, and may change without
              a deprecation cycle if that buffer does. Use ``"tuple"`` for a stable layout.
 
@@ -440,7 +449,7 @@ def sparse_bidir_logsumexp(
     >>> torch.equal(col_lse, sparse_logsumexp(x, dim=0)) and torch.equal(row_lse, sparse_logsumexp(x, dim=1))
     True
 
-    The ``"padded"`` layout stacks both into one ``(2, max(rows, cols))`` tensor:
+    The ``"padded"`` layout stacks both into one ``(2, max(r, c))`` tensor:
 
     >>> sparse_bidir_logsumexp(x, output_layout="padded")
     tensor([[2.2395, 1.5514, 3.0949],
