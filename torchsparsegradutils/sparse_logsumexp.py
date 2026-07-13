@@ -218,13 +218,7 @@ def _bidir_batched(input: Tensor, include_zeros: bool):
 
     Returns ``(col_lse (b, ncols), row_lse (b, nrows), padded (2, b, G))``. As in
     :func:`_bidir_2d` the three share one allocation: ``padded`` is the scatter's native
-    buffer and the other two are views into it.
-
-    Note ``padded`` comes back in that native ``(direction, batch, group)`` order, not
-    the ``(batch, direction, group)`` order the public ``output_layout="padded"``
-    documents. Transposing it is a copy, so the caller does it only on the path that
-    actually asks for that layout, rather than every call paying for a buffer the tuple
-    and nested paths discard.
+    buffer and the other two are views into it, and the direction is axis 0 in both.
     """
     b, nrows, ncols = input.shape
     coo = input if (input.layout == torch.sparse_coo and input.is_coalesced()) else input.to_sparse_coo().coalesce()
@@ -399,8 +393,11 @@ def sparse_bidir_logsumexp(
           ``row_lse`` is the reduction over columns (2-D ``dim=1``; batched ``dim=2``),
           shape ``(rows,)`` / ``(batch, rows)``. **Note the order: column result first.**
         - ``"padded"``: a single dense tensor of shape ``(2, G)`` (unbatched) or
-          ``(batch, 2, G)`` (batched) with ``G = max(rows, cols)``. Row ``0`` is
-          ``col_lse``, row ``1`` is ``row_lse``; each is padded to ``G`` with ``-inf``.
+          ``(2, batch, G)`` (batched) with ``G = max(rows, cols)``. Index ``0`` along the
+          leading axis is ``col_lse``, index ``1`` is ``row_lse``; each is padded to ``G``
+          with ``-inf``. The direction leads in both cases, so ``out[0]`` / ``out[1]``
+          select the two reductions regardless of rank. This is the scatter's native
+          output buffer, returned without a copy.
         - ``"nested"``: ``torch.nested.as_nested_tensor([col_lse, row_lse])`` — a single
           container preserving the two (possibly different) lengths. Requires
           PyTorch >= 2.4, and (as a prototype API) is meant to be consumed via
@@ -472,9 +469,7 @@ def sparse_bidir_logsumexp(
     col_lse, row_lse, padded = _bidir_batched(input, include_zeros) if batched else _bidir_2d(input, include_zeros)
 
     if output_layout == "padded":
-        # The batched scatter's native buffer is (2, b, G); the documented layout is
-        # (b, 2, G). That transpose is a copy, and this is the only path that needs it.
-        return padded.permute(1, 0, 2).contiguous() if batched else padded
+        return padded
 
     if output_layout == "nested":
         return torch.nested.as_nested_tensor([col_lse, row_lse])

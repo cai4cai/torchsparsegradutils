@@ -163,7 +163,7 @@ def test_batched_output_shapes(device):
     G = max(nrows, ncols)
     col_lse, row_lse = sparse_bidir_logsumexp(sp)
     assert col_lse.shape == (b, ncols) and row_lse.shape == (b, nrows)
-    assert sparse_bidir_logsumexp(sp, output_layout="padded").shape == (b, 2, G)
+    assert sparse_bidir_logsumexp(sp, output_layout="padded").shape == (2, b, G)
     ck, rk = sparse_bidir_logsumexp(sp, keepdim=True)
     assert ck.shape == (b, 1, ncols) and rk.shape == (b, nrows, 1)
 
@@ -178,10 +178,10 @@ def test_batched_output_layouts_agree(device, include_zeros):
     col_lse, row_lse = sparse_bidir_logsumexp(sp, include_zeros=include_zeros)
 
     padded = sparse_bidir_logsumexp(sp, include_zeros=include_zeros, output_layout="padded")
-    assert padded.shape == (b, 2, G)
-    _assert_close(padded[:, 0, :ncols], col_lse, torch.float64)
-    _assert_close(padded[:, 1, :nrows], row_lse, torch.float64)
-    assert torch.isneginf(padded[:, 0, ncols:]).all()  # col-side -inf pad
+    assert padded.shape == (2, b, G)
+    _assert_close(padded[0, :, :ncols], col_lse, torch.float64)
+    _assert_close(padded[1, :, :nrows], row_lse, torch.float64)
+    assert torch.isneginf(padded[0, :, ncols:]).all()  # col-side -inf pad
 
     if _NESTED_OK:
         parts = sparse_bidir_logsumexp(sp, include_zeros=include_zeros, output_layout="nested").unbind()
@@ -191,8 +191,8 @@ def test_batched_output_layouts_agree(device, include_zeros):
 
 def test_bidir_returns_share_one_allocation(device):
     """Both _bidir_* helpers return the scatter's native buffer plus two views into it,
-    so a batched tuple/nested call never materialises the transposed (b, 2, G) copy —
-    that copy belongs to output_layout='padded' alone."""
+    and every output_layout is served from that one allocation — no layout copies it.
+    The direction leads in both ranks, so no transpose is needed to reach 'padded'."""
     same_storage = lambda a, b: a.untyped_storage().data_ptr() == b.untyped_storage().data_ptr()
 
     dense = _make_dense(device, torch.float64, seed=7)  # (5, 4)
