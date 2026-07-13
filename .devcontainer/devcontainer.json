@@ -6,9 +6,7 @@
     },
     "runArgs": [
         "--gpus",
-        "all",
-        "--cpuset-cpus",
-        "0-1,3-5,7-23"
+        "all"
     ],
     "remoteEnv": {
         "SSH_AUTH_SOCK": "/tmp/ssh-agent.sock"
