@@ -10,8 +10,11 @@ concepts the same name.
 Core terminology
 ----------------
 
-Use **matrix** for the logical object represented by the final two axes, and
-use **tensor** for the PyTorch object or for a genuinely non-matrix object.
+Use **matrix** for a logical object with row and column axes, and use
+**tensor** for the PyTorch object or for a genuinely non-matrix object. For
+the non-hybrid matrix tensors used by most operations in this repository,
+the row and column axes are the final two axes. Hybrid sparse tensors may
+have trailing dense value dimensions.
 
 * An unbatched sparse matrix has shape ``(n_rows, n_cols)``.
 * A batched sparse matrix (a batch of sparse matrices) has shape
@@ -72,12 +75,12 @@ the same number of specified entries in every batch item; that is a storage
 constraint, not a mathematical requirement of batching. Do not generalise
 this restriction to COO.
 
-``_nnz()`` for batched gradients
---------------------------------
+Specified-element counts in batched layouts
+--------------------------------------------
 
-``_nnz()`` is layout-specific for a batched sparse tensor. In particular, the
-gradient produced for the sparse input of :func:`torchsparsegradutils.sparse_mm`
-is covered by ``test_sprase_mm_backward`` in the test suite:
+``_nnz()`` is layout-specific for a batched sparse tensor. This distinction is
+exercised by the sparse-matrix multiplication backward tests in
+``torchsparsegradutils/tests/test_sparse_matmul.py``:
 
 * For batched CSR, ``A.grad._nnz()`` is the number of specified entries
   **per batch element**.
@@ -140,7 +143,7 @@ Shape symbols and operations
 ----------------------------
 
 Within a function or document, choose one scheme and keep it consistent:
-``batch_size`` (or ``B``), ``nrows``/``n_rows`` (or ``M``),
+``batch_size`` (or ``b``), ``nrows``/``n_rows`` (or ``M``),
 ``ncols``/``n_cols`` (or ``N``), and ``nrhs``/``n_rhs`` (or ``K``). Short local
 names such as ``b, nrows, ncols`` are appropriate in compact numerical code.
 
@@ -161,9 +164,11 @@ For solves, use:
    X: same shape as B
 
 Call ``B`` the **right-hand side**; its final axis is the number of
-right-hand sides, not a batch dimension. ``A.T`` or
-``A.transpose(-2, -1)`` means the matrix transpose of the final two axes and
-leaves a batch axis in place.
+right-hand sides, not a batch dimension. For an unbatched matrix, ``A.T``
+transposes the matrix axes. For a batched matrix, use ``A.mT`` or
+``A.transpose(-2, -1)`` to transpose the final two matrix axes while preserving
+the leading batch axis. Do not use ``A.T`` for batched matrices because it
+reverses all tensor axes.
 
 Reduction, distribution, and memory wording
 --------------------------------------------
