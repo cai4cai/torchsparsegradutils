@@ -33,7 +33,11 @@ def _scatter_logsumexp(
     scatter_index : Tensor, shape ``(*batch, nnz)``
         Output group index for each value, within ``[0, n_groups)``.
     n_groups : int
-        Number of output groups (size of the reduced last axis).
+        Number of output groups (size of the reduced last axis). A single value shared
+        by every batch slice, since the output is a rectangular ``(*batch, n_groups)``.
+        A caller whose slices need *different* numbers of groups passes the maximum over
+        the slices and pads: the surplus groups of the shorter slices receive no values
+        and no zeros, so they come back ``-inf`` and can be sliced off.
     n_zeros_per_group : Tensor or None, shape ``(*batch, n_groups)``
         Count of structural zeros contributing ``exp(0) = 1`` to each group, or
         ``None`` to ignore structural zeros entirely.
