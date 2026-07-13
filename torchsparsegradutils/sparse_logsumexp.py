@@ -181,7 +181,9 @@ def _bidir_2d(input: Tensor, include_zeros: bool):
 
     Returns ``(col_lse (ncols,), row_lse (nrows,), padded (2, G))`` where
     ``G = max(nrows, ncols)`` and the ``padded`` tail (beyond each axis' length) is
-    ``-inf`` (empty groups).
+    ``-inf`` (empty groups). ``padded`` is the scatter's native output buffer, and
+    ``col_lse`` / ``row_lse`` are basic-slice *views* into it — the three returns cost
+    one allocation between them, not three.
     """
     nrows, ncols = input.shape
     rows, cols, vals, row_nnz, col_nnz = _row_col_val(input, nrows, ncols)
