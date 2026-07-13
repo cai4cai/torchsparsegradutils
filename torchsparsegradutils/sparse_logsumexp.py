@@ -213,7 +213,15 @@ def _bidir_batched(input: Tensor, include_zeros: bool):
     directions share one output). Batched inputs go through COO (batched CSR/CSC
     require equal nnz per slice in PyTorch).
 
-    Returns ``(col_lse (b, ncols), row_lse (b, nrows), padded (b, 2, G))``.
+    Returns ``(col_lse (b, ncols), row_lse (b, nrows), padded (2, b, G))``. As in
+    :func:`_bidir_2d` the three share one allocation: ``padded`` is the scatter's native
+    buffer and the other two are views into it.
+
+    Note ``padded`` comes back in that native ``(direction, batch, group)`` order, not
+    the ``(batch, direction, group)`` order the public ``output_layout="padded"``
+    documents. Transposing it is a copy, so the caller does it only on the path that
+    actually asks for that layout, rather than every call paying for a buffer the tuple
+    and nested paths discard.
     """
     b, nrows, ncols = input.shape
     coo = input if (input.layout == torch.sparse_coo and input.is_coalesced()) else input.to_sparse_coo().coalesce()
@@ -235,9 +243,7 @@ def _bidir_batched(input: Tensor, include_zeros: bool):
         n_zeros = None
 
     padded = _scatter_logsumexp(batched_vals, batched_idx, b * G, n_zeros).reshape(2, b, G)
-    col_lse = padded[0, :, :ncols]  # (b, ncols)
-    row_lse = padded[1, :, :nrows]  # (b, nrows)
-    return col_lse, row_lse, padded.permute(1, 0, 2).contiguous()  # padded: (b, 2, G)
+    return padded[0, :, :ncols], padded[1, :, :nrows], padded  # (b, ncols), (b, nrows), (2, b, G)
 
 
 def sparse_logsumexp(
@@ -463,7 +469,9 @@ def sparse_bidir_logsumexp(
     col_lse, row_lse, padded = _bidir_batched(input, include_zeros) if batched else _bidir_2d(input, include_zeros)
 
     if output_layout == "padded":
-        return padded
+        # The batched scatter's native buffer is (2, b, G); the documented layout is
+        # (b, 2, G). That transpose is a copy, and this is the only path that needs it.
+        return padded.permute(1, 0, 2).contiguous() if batched else padded
 
     if output_layout == "nested":
         return torch.nested.as_nested_tensor([col_lse, row_lse])

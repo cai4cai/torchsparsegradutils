@@ -16,6 +16,7 @@ from test_sparse_logsumexp import (
 )
 
 from torchsparsegradutils import sparse_bidir_logsumexp, sparse_logsumexp
+from torchsparsegradutils.sparse_logsumexp import _bidir_2d, _bidir_batched
 
 _NESTED_OK = parse_version(torch.__version__) >= parse_version("2.4")
 
@@ -186,6 +187,25 @@ def test_batched_output_layouts_agree(device, include_zeros):
         parts = sparse_bidir_logsumexp(sp, include_zeros=include_zeros, output_layout="nested").unbind()
         _assert_close(parts[0], col_lse, torch.float64)  # (b, ncols)
         _assert_close(parts[1], row_lse, torch.float64)  # (b, nrows)
+
+
+def test_bidir_returns_share_one_allocation(device):
+    """Both _bidir_* helpers return the scatter's native buffer plus two views into it,
+    so a batched tuple/nested call never materialises the transposed (b, 2, G) copy —
+    that copy belongs to output_layout='padded' alone."""
+    same_storage = lambda a, b: a.untyped_storage().data_ptr() == b.untyped_storage().data_ptr()
+
+    dense = _make_dense(device, torch.float64, seed=7)  # (5, 4)
+    nrows, ncols = dense.shape
+    col, row, padded = _bidir_2d(dense.to_sparse_coo(), True)
+    assert same_storage(col, padded) and same_storage(row, padded)
+    assert padded.shape == (2, max(nrows, ncols))
+
+    bdense = _make_batched_dense(device, torch.float64, seed=7)  # (3, 5, 4)
+    b, nrows, ncols = bdense.shape
+    col, row, padded = _bidir_batched(bdense.to_sparse_coo(), True)
+    assert same_storage(col, padded) and same_storage(row, padded)
+    assert padded.shape == (2, b, max(nrows, ncols))  # native (direction, batch, group) order
 
 
 def test_gradient_parity_with_two_call(layout, device):
