@@ -32,6 +32,8 @@ Sparse Reductions
 
 .. autofunction:: sparse_logsumexp
 
+.. autofunction:: sparse_bidir_logsumexp
+
 Sparse Linear Solvers
 ----------------------
 

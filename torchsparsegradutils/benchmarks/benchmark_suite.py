@@ -21,6 +21,8 @@ BENCHMARK_SCRIPTS = [
     "batched_sparse_mm_rand.py",
     "sparse_logsumexp_rand.py",
     "sparse_logsumexp_suitesparse.py",
+    "sparse_bidir_logsumexp_rand.py",
+    "sparse_bidir_logsumexp_suitesparse.py",
 ]
 
 

@@ -19,6 +19,9 @@ A comprehensive collection of utility functions to work with PyTorch sparse tens
 - Operates directly on the nonzero values (no dense materialisation), with a numerically stable max-shift
 - Supports COO/CSR/CSC layouts (unbatched 2-D and batched 3-D) and an `include_zeros` flag for structural-zero semantics
 - Fills the gap of [PyTorch issue #31394](https://github.com/pytorch/pytorch/issues/31394) (no native `scatter_logsumexp`)
+- `sparse_bidir_logsumexp`: Row- and column-wise `log-sum-exp` simultaneously in a single traversal
+- Fuses the two `sparse_logsumexp(dim=0)` / `sparse_logsumexp(dim=1)` passes into one batched scatter, sharing the index extraction and autograd graph
+- Returns `tuple`, `padded`, or `nested` output layouts
 
 **Sparse Linear System Solvers**
 - `sparse_triangular_solve`: Sparse triangular solver with batch support
