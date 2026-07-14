@@ -12,11 +12,3 @@ Pairwise Encoders
    :members:
    :undoc-members:
    :show-inheritance:
-
-Pairwise Voxel Encoders
------------------------
-
-.. automodule:: torchsparsegradutils.encoders.pairwise_voxel_encoder
-   :members:
-   :undoc-members:
-   :show-inheritance:

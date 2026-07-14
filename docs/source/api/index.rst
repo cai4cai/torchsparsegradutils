@@ -10,7 +10,6 @@ This section contains the complete API reference for all modules in torchsparseg
    utils
    distributions
    encoders
-   backends
 
 Core Functions
 --------------

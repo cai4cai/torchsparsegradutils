@@ -342,20 +342,12 @@ class BenchmarkVisualizer:
                 "sparse_generic_bicgstab": "tsgu BiCGSTAB",
                 "sparse_generic_minres": "tsgu MINRES",
                 "sparse_generic_lsmr": "tsgu LSMR",
-                "cupy_cg": "CuPy CG",
-                "cupy_cgs": "CuPy CGS",
-                "cupy_minres": "CuPy MINRES",
-                "cupy_gmres": "CuPy GMRES",
-                "cupy_spsolve": "CuPy spsolve",
                 "dense.solve": "Dense",
-                "jax_cg": "JAX CG",
-                "jax_bicgstab": "JAX BiCGSTAB",
                 # batched sparse mm:
                 "torch_sparse_mm_list": "torch list",
                 "sparse_mm_list": "tsgu list",
                 "batched_sparse_mm": "tsgu batched",
                 # Triangular:
-                "cupy.spsolve_triangular": "CuPy",
                 "dense.triangular_solve": "Dense",
                 "torch_triangular_solve": "torch",
                 "sparse_triangular_solve": "tsgu",
@@ -891,7 +883,7 @@ class BenchmarkVisualizer:
                 axes[1, 0].tick_params(axis="x", rotation=45)
 
     def _plot_backend_comparison(self, suite_benchmarks, axes):
-        """Helper method to plot backend comparison (PyTorch vs CuPy vs JAX)"""
+        """Helper method to plot backend comparison"""
         backend_data = []
         for name, df in suite_benchmarks.items():
             algo_col = "algo" if "algo" in df.columns else "algorithm" if "algorithm" in df.columns else None
@@ -899,11 +891,7 @@ class BenchmarkVisualizer:
                 for _, row in df.iterrows():
                     algo_name = row[algo_col]
                     backend = "Unknown"
-                    if "cupy" in algo_name.lower():
-                        backend = "CuPy"
-                    elif "jax" in algo_name.lower():
-                        backend = "JAX"
-                    elif "torch" in algo_name.lower() or "dense" in algo_name.lower() or "sparse" in algo_name.lower():
+                    if "torch" in algo_name.lower() or "dense" in algo_name.lower() or "sparse" in algo_name.lower():
                         backend = "PyTorch"
 
                     if backend != "Unknown":

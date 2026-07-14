@@ -505,60 +505,6 @@ def calc_pairwise_coo_indices_nd(
     return indices
 
 
-def calc_pairwise_coo_indices(
-    radius: float,
-    volume_shape: Tuple[int, int, int, int],
-    diag: bool = False,
-    upper: bool | None = None,
-    channel_voxel_relation: str = "indep",
-    dtype: torch.dtype = torch.int64,
-    device: torch.device = torch.device("cpu"),
-) -> Dict[Tuple[int, int, int, int], torch.Tensor]:
-    r"""3D wrapper for :func:`calc_pairwise_coo_indices_nd` (deprecated).
-
-    .. deprecated:: 0.x
-       Use :func:`calc_pairwise_coo_indices_nd`.
-
-    Parameters
-    ----------
-    radius : float
-        Spatial radius (``>=1``).
-    volume_shape : tuple[int,int,int,int]
-        ``(C,H,D,W)``.
-    diag : bool, optional
-        Include diagonal. Default ``False``.
-    upper : bool or None, optional
-        Sign-selection (see N-D version). Default ``None``.
-    channel_voxel_relation : {'indep','intra','inter'}, optional
-        Channel relation mode. Default ``'indep'``.
-    dtype : torch.dtype, optional
-        Index dtype (default ``torch.int64``).
-    device : torch.device, optional
-        Target device (default CPU).
-
-    Returns
-    -------
-    dict[tuple[int,int,int,int], torch.Tensor]
-        Per-offset COO index pairs.
-
-    Raises
-    ------
-    ValueError
-        If inputs are invalid.
-    """
-    # Validate 4D shape for backward compatibility
-    if not (len(volume_shape) == 4 and all(isinstance(dim, int) and dim > 0 for dim in volume_shape)):
-        raise ValueError("`volume_shape` must be a 4D tuple of positive integers, representing [C, H, D, W]")
-
-    out = calc_pairwise_coo_indices_nd(radius, volume_shape, diag, upper, channel_voxel_relation, dtype, device)
-    # Narrow key type for static checker (all offsets have length 4 here)
-    return {tuple(k): v for k, v in out.items()}  # type: ignore[return-value]
-
-
-# Keep the typo version for backward compatibility
-calc_pariwise_coo_indices = calc_pairwise_coo_indices  # type: ignore[misc]
-
-
 class PairwiseEncoder(torch.nn.Module):
     r"""Encode pairwise spatial–channel neighborhoods as sparse tensors.
 

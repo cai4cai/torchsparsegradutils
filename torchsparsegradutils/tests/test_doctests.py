@@ -24,10 +24,6 @@ DOCTEST_MODULES = [
     "torchsparsegradutils.utils.dist_stats_helpers",
     "torchsparsegradutils.encoders.pairwise_encoder",
     "torchsparsegradutils.distributions.sparse_multivariate_normal",
-    "torchsparsegradutils.jax.jax_bindings",
-    "torchsparsegradutils.jax.jax_sparse_solve",
-    "torchsparsegradutils.cupy.cupy_bindings",
-    "torchsparsegradutils.cupy.cupy_sparse_solve",
 ]
 
 

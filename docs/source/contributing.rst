@@ -45,7 +45,7 @@ To switch configurations, modify the ``dockerfile`` field in ``.devcontainer/dev
 **What's Included:**
 
 - **CUDA 12.8**: Full GPU development support with NVIDIA drivers
-- **Pre-installed Dependencies**: PyTorch, CuPy, JAX, SciPy, and all development tools
+- **Pre-installed Dependencies**: PyTorch, SciPy, and all development tools
 - **VS Code Extensions**: Python, Pylance, Jupyter, GitHub Copilot, and code formatting tools
 - **Development Tools**: pytest, black, flake8, pre-commit hooks
 - **Python Environment**: Python 3.10+ with all optional dependencies

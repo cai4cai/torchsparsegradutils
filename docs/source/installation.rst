@@ -12,28 +12,6 @@ The easiest way to install torchsparsegradutils is from PyPI:
 
 This will install the package with its core dependencies.
 
-Extra Dependencies
-------------------
-
-For additional functionality, you can install optional dependencies:
-
-.. code-block:: bash
-
-   # Install with CuPy support (GPU acceleration, requires CUDA 12.x)
-   pip install torchsparsegradutils[cupy]
-
-   # Install with JAX support
-   pip install torchsparsegradutils[jax]
-
-   # Install all optional dependencies
-   pip install torchsparsegradutils[all]
-
-.. note::
-
-   The CuPy extra installs ``cupy-cuda12x>=13.0``. If you are using a different
-   CUDA version, install the appropriate CuPy package manually
-   (e.g. ``pip install cupy-cuda11x``).
-
 Requirements
 ------------
 
@@ -42,12 +20,6 @@ Core Requirements
 
 - Python >= 3.10
 - PyTorch >= 2.5
-
-Optional Requirements
-~~~~~~~~~~~~~~~~~~~~~
-
-- JAX (for JAX backend integration): ``pip install torchsparsegradutils[jax]``
-- CuPy >= 13.0 (for CuPy backend integration): ``pip install torchsparsegradutils[cupy]``
 
 Development Installation
 ------------------------
@@ -64,7 +36,7 @@ To install development dependencies:
 
 .. code-block:: bash
 
-   pip install -e .[all]
+   pip install -e .[dev]
    pip install -r requirements-ci.txt
 
 Verification
@@ -99,7 +71,7 @@ You can also use the package in a Docker container. Here's a simple Dockerfile:
 
    FROM pytorch/pytorch:latest
 
-   RUN pip install torchsparsegradutils[all]
+   RUN pip install torchsparsegradutils
 
    # Your application code
    COPY . /app
@@ -118,14 +90,6 @@ Make sure your PyTorch installation is compatible with your CUDA version:
 .. code-block:: bash
 
    python -c "import torch; print(torch.version.cuda)"
-
-**CuPy installation issues**
-
-CuPy installation can be tricky. Refer to the `CuPy installation guide <https://docs.cupy.dev/en/stable/install.html>`_.
-
-**JAX installation issues**
-
-For JAX installation issues, refer to the `JAX installation guide <https://github.com/google/jax#installation>`_.
 
 Getting Help
 ~~~~~~~~~~~~

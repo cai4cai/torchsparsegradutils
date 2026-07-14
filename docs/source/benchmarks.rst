@@ -11,7 +11,7 @@ Our benchmarking suite evaluates the performance of sparse linear algebra operat
 - **Matrix sizes and sparsity patterns**
 - **Data types (float32/float64, int32/int64 indices)**
 - **Sparse layouts (COO/CSR)**
-- **Backend implementations (PyTorch, CuPy/SciPy, JAX)**
+- **Backend implementations (PyTorch, SciPy)**
 - **Forward and backward pass performance**
 - **Memory efficiency during gradient computation**
 
@@ -232,7 +232,7 @@ Each algorithm variant is measured with 100 repeats after 10 warmups using the d
 Sparse Linear System Solvers
 -----------------------------
 
-This benchmark evaluates iterative and direct sparse linear system solvers with gradient computation across PyTorch (dense baseline), torchsparsegradutils native solvers, CuPy/SciPy wrappers, and JAX wrappers.
+This benchmark evaluates iterative and direct sparse linear system solvers with gradient computation across PyTorch (dense baseline) and torchsparsegradutils native solvers.
 
 **Algorithms Compared:**
 
@@ -255,27 +255,6 @@ This benchmark evaluates iterative and direct sparse linear system solvers with 
    * - ``tsgu.sparse_generic_solve(A, B, solve=minres)``
      - MINRES (tsgu) implementation for symmetric systems
      - tsgu MINRES
-   * - ``tsgucupy.sparse_solve_c4t(A, B, solve="cg")``
-     - CuPy CG via torchsparsegradutils conversion (GPU accelerated)
-     - CuPy CG
-   * - ``tsgucupy.sparse_solve_c4t(A, B, solve="cgs")``
-     - CuPy CGS (CG squared) wrapper
-     - CuPy CGS
-   * - ``tsgucupy.sparse_solve_c4t(A, B, solve="minres")``
-     - CuPy MINRES wrapper
-     - CuPy MINRES
-   * - ``tsgucupy.sparse_solve_c4t(A, B, solve="gmres")``
-     - CuPy GMRES wrapper (restarted algorithm)
-     - CuPy GMRES
-   * - ``tsgucupy.sparse_solve_c4t(A, B, solve="spsolve")``
-     - CuPy direct sparse LU (no tolerance parameters)
-     - CuPy spsolve
-   * - ``tsgujax.sparse_solve_j4t(A, B, solve=jax.scipy.sparse.linalg.cg)``
-     - JAX CG solver (wrapped, consistent tolerances)
-     - JAX CG
-   * - ``tsgujax.sparse_solve_j4t(A, B, solve=jax.scipy.sparse.linalg.bicgstab)``
-     - JAX BiCGSTAB solver (wrapped, consistent tolerances)
-     - JAX BiCGSTAB
 
 All iterative solvers use shared convergence settings (relative tol 1e-5, absolute tol 1e-8, max 1000 iterations, no preconditioner). BiCGSTAB uses ``matvec_max = 2 × maxiter`` internally.
 
@@ -286,15 +265,13 @@ Matrix: ``Rothberg/cfd2`` (123,440 × 123,440, nnz 3,085,406). Right‑hand side
 - Construct PyTorch sparse tensor (COO then optionally convert to CSR).
 - Run each solver with 10 repeats after 1 warmup (``REPEATS=10``, ``WARMUP_RUNS=1``) using the unified ``measure_op`` harness.
 - Capture forward/backward time & peak CUDA memory; apply IQR filtering before computing mean/std.
-- Compute residual norm ``||A x − B||`` and relative residual ``/ ||B||`` (direct solve residual for ``cupy_spsolve`` may be smallest when successful).
-- Record failures (OOM or cusolver errors) with NaN metrics for visualization (plotted as missing / failure markers).
+- Compute residual norm ``||A x − B||`` and relative residual ``/ ||B||``.
+- Record failures (OOM errors) with NaN metrics for visualization (plotted as missing / failure markers).
 
 **Key Testing Features:**
 
-- Uniform tolerance configuration across backends for fairness.
+- Uniform tolerance configuration across solvers for fairness.
 - Residual norms reported (accuracy dimension in addition to performance).
-- Direct vs iterative solver contrast (``CuPy spsolve`` vs Krylov methods).
-- Cross‑backend gradient pathways (PyTorch native vs CuPy vs JAX) under identical statistical treatment.
 - Layout + dtype sweep highlights memory scaling; CSR vs COO differences mirror matmul findings.
 
 **Results:**
@@ -344,11 +321,8 @@ Matrix: ``Rothberg/cfd2`` (123,440 × 123,440, nnz 3,085,406). Right‑hand side
 1. The dense PyTorch solver ``torch.linalg.solve`` fails due to out-of-memory (OOM) errors before the forward pass due to failure of creating a dense tensor which would occupy 57GB of CUDA memory.
 2. ``torch.sparse_csr`` with ``float32`` and ``int32`` indices is the most memory efficient format for both forward and backward passes.
 3. Similar to ``tsgu.sparse_mm``, the ``int32`` indices for ``torch.sparse_coo`` format uses marginally less memory than ``int64`` despite ``A.indices()`` returning ``int64`` indices.
-4. All CuPy and JAX solvers use the same amount of memory on the forward and backward pass.
-5. The native torchsparsegradutils iterative solvers (CG, BiCGSTAB, MINRES) use marginally more memory on the forward pass, but consistent on the backward pass with other methods.
-6. The native torchsparsegradutils iterative solvers (CG, BiCGSTAB, MINRES) are generally faster than the CuPy and JAX implementations for ``torch.sparse_coo`` format, this is likely due to the CuPy solvers converting the sparse matrix to CSR format internally.
-7. The CuPy direct solver ``spsolve`` provides the lowest residual, but fails in most cases due to a ``CUSOLVER_STATUS_ALLOC_FAILED`` error, more debugging is required to determine the exact cause.
-8. The residuals for CuPy CGS and tsgu BiCGSTAB are significantly higher than other methods, indicating poor convergence behavior, which may be improved with preconditioning or improved convergence parameters.
+4. The native torchsparsegradutils iterative solvers (CG, BiCGSTAB, MINRES) use marginally more memory on the forward pass, but consistent on the backward pass with other methods.
+5. The residuals for tsgu BiCGSTAB are somewhat higher than other methods, indicating poor convergence behavior, which may be improved with preconditioning or improved convergence parameters.
 
 **Recommendations:**
 
@@ -377,9 +351,6 @@ This benchmark evaluates sparse triangular system solvers with gradient computat
    * - ``tsgu.sparse_triangular_solve(A, B, upper=..., unitriangular=..., transpose=...)``
      - torchsparsegradutils sparse triangular solve with gradient support and memory efficiency
      - tsgu
-   * - ``tsgucupy.sparse_solve_c4t(A, B, solve=lambda A_c,B_c: cupy.spsolve_triangular(A_c,B_c, lower=..., unit_diagonal=...))``
-     - CuPy triangular solve wrapped for PyTorch tensors (no explicit transpose solve path required here)
-     - CuPy
 
 **Methodology:**
 
@@ -444,9 +415,8 @@ Using the same SuiteSparse matrix ``Rothberg/cfd2`` (shape 123,440 × 123,440, n
 1. Attempting to densify the sparse matrix for ``Dense`` triangular solve leads to OOM errors due to the large memory footprint (≈58 GB for float32, ≈114 GB for float64) on the RTX 4090.
 2. ``torch`` sparse triangular solve on COO layout also fails on backward and forward as torch.triangular_solve does not support sparse COO
 3. ``torch`` sparse triangular solve on CSR layout succeeds on forward pass but fails on backward pass due to internal densification of gradients.
-4. ``CuPy`` triangular solve does provide a sensible memory footprint but has excessive runtime on the backward pass
-5. ``tsgu`` triangular solve provides a good balance of memory efficiency and runtime performance on both forward and backward passes.
-6. Residuals are neglible due to the direct nature of forward and backward substitution
+4. ``tsgu`` triangular solve provides a good balance of memory efficiency and runtime performance on both forward and backward passes.
+5. Residuals are neglible due to the direct nature of forward and backward substitution
 
 **Recommendations:**
 
@@ -475,10 +445,6 @@ All benchmarks can be reproduced using our benchmark suite. You can either run a
    # Run specific benchmarks
    python sparse_mm_rand.py              # Random matrix multiplication
    python sparse_mm_suite.py             # SuiteSparse matrix multiplication
-   python sparse_generic_solve_rand.py   # Random linear system solving
-   python sparse_generic_solve_suite.py  # SuiteSparse linear system solving
-   python sparse_triangular_solve_rand.py # Random triangular solving
-   python sparse_triangular_solve_suitesparse.py # SuiteSparse triangular
    python batched_sparse_mm_rand.py      # Batched operations
 
    # Generate visualizations

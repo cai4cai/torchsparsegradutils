@@ -178,57 +178,6 @@ The distributions support reparameterized sampling for gradient computation:
    print(f"Diagonal gradient norm: {torch.norm(diagonal.grad):.6f}")
    print(f"Scale gradient nnz: {scale_tril.grad._nnz()}")
 
-Working with Different Backends
--------------------------------
-
-CuPy Backend (GPU Acceleration)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-For GPU acceleration with CuPy:
-
-.. code-block:: python
-
-   import torch
-   from torchsparsegradutils.cupy import sparse_solve_c4t
-   from torchsparsegradutils.utils.random_sparse import make_spd_sparse
-
-   # Create matrices on GPU
-   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-   A_sparse, A_dense = make_spd_sparse(50, torch.sparse_csr, torch.float32, torch.int64, device)
-   b = torch.randn(50, device=device)
-
-   # Solve using CuPy backend (only works on GPU)
-   if device.type == 'cuda':
-       x = sparse_solve_c4t(A_sparse, b, solve='cg', tol=1e-6)
-       print(f"CuPy solution on GPU: {x.shape}")
-   else:
-       print("CUDA not available, skipping CuPy example")
-
-JAX Backend
-~~~~~~~~~~~
-
-For JAX integration:
-
-.. code-block:: python
-
-   import torch
-   from torchsparsegradutils.utils.random_sparse import make_spd_sparse
-
-   try:
-       from torchsparsegradutils.jax import sparse_solve_j4t
-       from jax.scipy.sparse.linalg import cg
-
-       # Create test matrices
-       A_sparse, A_dense = make_spd_sparse(20, torch.sparse_csr, torch.float32, torch.int64, 'cpu')
-       b = torch.randn(20)
-
-       # Solve using JAX backend
-       x = sparse_solve_j4t(A_sparse, b, solve=cg, tol=1e-6)
-       print(f"JAX solution shape: {x.shape}")
-
-   except ImportError:
-       print("JAX not available, skipping JAX example")
-
 Next Steps
 ----------
 

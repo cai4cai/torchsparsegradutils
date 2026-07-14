@@ -28,12 +28,6 @@ A comprehensive collection of utility functions to work with PyTorch sparse tens
   -  Discussion reference: [PyTorch issue #87358](https://github.com/pytorch/pytorch/issues/87358)
 - `sparse_generic_solve`: Generic sparse linear solver with pluggable backends
   - Tested and benchmarked with CG, BICGSTAB, LSMR and MINRES solvers
-
-- `sparse_solve_c4t`: Wrappers around [cupy sparse solvers](https://docs.cupy.dev/en/stable/reference/scipy_sparse_linalg.html#solving-linear-problems)
-  -  Discussion reference: [Pytorch issue #69538](https://github.com/pytorch/pytorch/issues/69538)
-  - Tested and benchmarked with: [CG](https://docs.cupy.dev/en/v9.6.0/reference/generated/cupyx.scipy.sparse.linalg.cg.html), [CGS](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.cgs.html#cupyx.scipy.sparse.linalg.cgs), [MINRES](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.minres.html#cupyx.scipy.sparse.linalg.minres), [GMRES](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.gmres.html#cupyx.scipy.sparse.linalg.gmres), [spsolve](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.spsolve.html#cupyx.scipy.sparse.linalg.spsolve) and [spsolve_triangular](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.spsolve_triangular.html#cupyx.scipy.sparse.linalg.spsolve_triangular) CuPy solvers
-- `tsgujax.sparse_solve_j4t`: Wrappers around [jax sparse solvers](https://jax.readthedocs.io/en/latest/jax.scipy.html#module-jax.scipy.sparse.linalg)
-  - Tested with: CG and BICGSTAB JAX solvers
 - `sparse_generic_lstsq`: Generic sparse linear least-squares solver
 
 ### Built-in Iterative Solvers (No External Dependencies)
@@ -100,20 +94,9 @@ pip install git+https://github.com/cai4cai/torchsparsegradutils
 For full functionality, install optional dependencies:
 
 ```bash
-# For CuPy sparse solver support (GPU acceleration, requires CUDA 12.x)
-pip install torchsparsegradutils[cupy]
-
-# For JAX sparse solver support
-pip install torchsparsegradutils[jax]
-
-# Install all optional dependencies
-pip install torchsparsegradutils[all]
-
 # For benchmarking and testing
 pip install scipy matplotlib pandas tqdm pytest
 ```
-
-> **Note:** The CuPy extra installs `cupy-cuda12x>=13.0`. If you are using a different CUDA version, install the appropriate CuPy package manually (e.g. `pip install cupy-cuda11x`).
 
 ### Requirements
 
@@ -174,10 +157,6 @@ x1 = sparse_triangular_solve(A, b, upper=False)
 
 # Generic solve with different backends
 x2 = sparse_generic_solve(A, b, solve=linear_cg, tol=1e-6)
-
-# Using CuPy backend (if available)
-from torchsparsegradutils.cupy import sparse_solve_c4t
-x3 = sparse_solve_c4t(A, b, solve="cg", tol=1e-6)
 ```
 
 ### Sparse Multivariate Normal Distribution
@@ -525,7 +504,7 @@ To switch configurations, modify the `dockerfile` field in `.devcontainer/devcon
 
 **What's Included:**
 - **CUDA 13.0**: Full GPU development support with NVIDIA drivers
-- **Pre-installed Dependencies**: PyTorch, CuPy, JAX, SciPy, and all development tools
+- **Pre-installed Dependencies**: PyTorch, SciPy, and all development tools
 - **VS Code Extensions**: Python, Pylance, Jupyter, GitHub Copilot, and code formatting tools
 - **Development Tools**: pytest, black, flake8, pre-commit hooks
 - **Python Environment**: Python 3.10+ with all optional dependencies
@@ -544,8 +523,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 ## 🙏 Acknowledgments
 
 - **PyTorch Team**: For the foundational sparse tensor implementations
-- **SciPy/CuPy Teams**: For high-performance sparse linear algebra routines
-- **JAX Team**: For cross-platform sparse operations and XLA compilation
+- **SciPy Team**: For high-performance sparse linear algebra routines
 - **Open Source Libraries**: We port and adapt algorithms from:
   - [pykrylov](https://github.com/PythonOptimizers/pykrylov) (BICGSTAB)
   - [cornellius-gp/linear_operator](https://github.com/cornellius-gp/linear_operator) (CG, MINRES)

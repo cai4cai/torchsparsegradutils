@@ -69,8 +69,6 @@ intersphinx_mapping = {
     "torch": ("https://pytorch.org/docs/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
-    "jax": ("https://jax.readthedocs.io/en/latest/", None),
-    "cupy": ("https://docs.cupy.dev/en/stable/", None),
 }
 
 templates_path = ["_templates"]

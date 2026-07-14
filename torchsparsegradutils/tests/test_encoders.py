@@ -19,7 +19,6 @@ from torchsparsegradutils.encoders.pairwise_encoder import (
     _gen_offsets,
     _gen_offsets_nd,
     _trim_nd,
-    calc_pairwise_coo_indices,
     calc_pairwise_coo_indices_nd,
 )
 from torchsparsegradutils.utils.utils import _sort_coo_indices
@@ -205,7 +204,7 @@ def test_gen_offsets(radius, upper, num_channels, channel_voxel_relation, expect
     assert offsets == expected_shifts
 
 
-# Test the calc_pairwise_coo_indices function:
+# Test the calc_pairwise_coo_indices_nd function:
 
 
 # Test invalid inputs:
@@ -213,7 +212,6 @@ def test_gen_offsets(radius, upper, num_channels, channel_voxel_relation, expect
     "radius, volume_shape, dtype, channel_voxel_relation",
     [
         (0.5, (1, 1, 1, 1), torch.int64, "indep"),  # radius less than 1
-        (1, (1, 1, 1), torch.int64, "indep"),  # volume_shape length not 4
         (1, (1, 0, 1, 1), torch.int64, "indep"),  # volume_shape contains non-positive integer
         (1, (1, 1, 1, 1), torch.int64, "invalid"),  # invalid channel_voxel_relation
         (1, (1, 1, 1, 1), torch.int64, "intra"),  # single channel non 'indep' relation
@@ -221,18 +219,18 @@ def test_gen_offsets(radius, upper, num_channels, channel_voxel_relation, expect
 )
 def test_pariwise_coo_indices_invalid_inputs(radius, volume_shape, dtype, channel_voxel_relation):
     with pytest.raises(ValueError):
-        calc_pairwise_coo_indices(radius, volume_shape, dtype=dtype, channel_voxel_relation=channel_voxel_relation)
+        calc_pairwise_coo_indices_nd(radius, volume_shape, dtype=dtype, channel_voxel_relation=channel_voxel_relation)
 
 
 # Test dtype and devices:
 def test_pairwise_coo_indices_dtype_and_device(indices_dtype, device):
     radius = 1
     volume_shape = (2, 2, 2, 2)
-    indices_dict = calc_pairwise_coo_indices(
+    indices_dict = calc_pairwise_coo_indices_nd(
         radius, volume_shape, diag=True, upper=False, dtype=indices_dtype, device=device
     )
     for k, indices in indices_dict.items():
-        # NOTE: The calc_pairwise_coo_indices function returns regular tensors, not sparse tensors,
+        # NOTE: The calc_pairwise_coo_indices_nd function returns regular tensors, not sparse tensors,
         # so PyTorch's int32->int64 conversion only happens when creating sparse COO tensors
         assert indices.dtype == indices_dtype
         assert indices.device.type == device.type
@@ -240,7 +238,7 @@ def test_pairwise_coo_indices_dtype_and_device(indices_dtype, device):
 
 # Test upper flag:
 def test_pairwise_coo_indices_upper_lower(radius, volume_shape, diag, upper, channel_voxel_relation):
-    indices_dict = calc_pairwise_coo_indices(radius, volume_shape, diag, upper, channel_voxel_relation)
+    indices_dict = calc_pairwise_coo_indices_nd(radius, volume_shape, diag, upper, channel_voxel_relation)
     for k, indices in indices_dict.items():
         if upper is not None:
             if upper and not diag:
@@ -255,7 +253,7 @@ def test_pairwise_coo_indices_upper_lower(radius, volume_shape, diag, upper, cha
 
 # Test all the indices are unique:
 def test_pairwise_coo_indices_unique(radius, volume_shape, diag, upper, channel_voxel_relation):
-    indices_dict = calc_pairwise_coo_indices(radius, volume_shape, diag, upper, channel_voxel_relation)
+    indices_dict = calc_pairwise_coo_indices_nd(radius, volume_shape, diag, upper, channel_voxel_relation)
     all_indices = []
     total_indices_count = 0
     for k, indices in indices_dict.items():
@@ -292,7 +290,7 @@ def test_pariwise_coo_indices(radius, volume_shape, diag, upper, channel_relatio
         literal_eval(k): torch.tensor(v).reshape(2, -1) for k, v in expected_indices.items()
     }  # reshape just required to make empty tensors have shape (2, 0)
 
-    indices_dict = calc_pairwise_coo_indices(radius, volume_shape, diag, upper, channel_relation)
+    indices_dict = calc_pairwise_coo_indices_nd(radius, volume_shape, diag, upper, channel_relation)
 
     assert indices_dict.keys() == expected_indices_dict.keys()
 
@@ -617,7 +615,7 @@ def test_pariwise_coo_indices_visually():
     # Iterate over the radii
     for radius in radius_list:
         # Create a color dictionary for maximum shifts
-        indices_dict_max = calc_pairwise_coo_indices(
+        indices_dict_max = calc_pairwise_coo_indices_nd(
             radius=radius,
             volume_shape=volume_shape,
             diag=diag,
@@ -633,7 +631,7 @@ def test_pariwise_coo_indices_visually():
         # Iterate over the channel_voxel_relations
         for j, channel_voxel_relation in enumerate(channel_voxel_relation_list):
             # Create the encoder and get the indices dictionary
-            indices_dict = calc_pairwise_coo_indices(
+            indices_dict = calc_pairwise_coo_indices_nd(
                 radius=radius,
                 volume_shape=volume_shape,
                 diag=diag,
@@ -740,21 +738,6 @@ def test_PairwiseEncoder_1d():
     assert sparse_matrix.size() == expected_size
 
 
-def test_PairwiseVoxelEncoder_deprecation_warning():
-    # Test that PairwiseVoxelEncoder issues deprecation warning when accessed via lazy import
-    with pytest.warns(DeprecationWarning, match="PairwiseVoxelEncoder is deprecated"):
-        from torchsparsegradutils.encoders import PairwiseVoxelEncoder
-
-        _ = PairwiseVoxelEncoder(1.0, (2, 3, 3, 3))
-
-
-@pytest.mark.skip(reason="Module deprecation warning is only emitted once per session")
-def test_pairwise_voxel_encoder_module_deprecation_warning():
-    # Test that importing the module issues a deprecation warning
-    # Note: This test is skipped because the deprecation warning is only emitted once per session
-    # The module deprecation is already tested by other tests that import the module
-    pass
-
 
 def test_PairwiseEncoder_backward_compatibility():
     # Test that PairwiseEncoder works correctly (it's the current non-deprecated class)
@@ -857,7 +840,7 @@ def test_PairwiseEncoder_supports_nd():
 
 def test_imports_from_init():
     # Test that we can import from the main module
-    from torchsparsegradutils.encoders import PairwiseEncoder, calc_pairwise_coo_indices, calc_pairwise_coo_indices_nd
+    from torchsparsegradutils.encoders import PairwiseEncoder, calc_pairwise_coo_indices_nd  # noqa: F401
 
     # Test that these are the right classes
     assert PairwiseEncoder.__name__ == "PairwiseEncoder"
