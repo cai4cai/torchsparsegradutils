@@ -108,13 +108,7 @@ pip install scipy matplotlib pandas tqdm pytest
 
 ## 📊 Performance Benchmarks
 
-Our comprehensive benchmark suite demonstrates significant performance improvements across various sparse operations. All benchmarks were conducted on an NVIDIA GeForce RTX 4090 with PyTorch 2.9.0+cu130. Benchmarks are performed using [Rothberg/cfd2](https://suitesparse-collection-website.herokuapp.com/Rothberg/cfd2) matrix from [SuiteSparse Matrix Collection](https://suitesparse-collection-website.herokuapp.com/)
-
-![Sparse MM Suite Performance (int32/float32 COO)](torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_mm_suite_performance_int32_float32_coo.png)
-
-![Sparse Triangular Solve Suite Performance (int32/float32 COO)](torchsparsegradutils/benchmarks/benchmark_visualizations/triangular_solve_suitesparse_performance_int32_float32_coo.png)
-
-![Sparse Generic Solve Suite Performance (int32/float32 COO)](torchsparsegradutils/benchmarks/benchmark_visualizations/sparse_solve_suite_performance_int32_float32_coo.png)
+The pre-rewrite benchmark suite and its charts have been retired (see the CUDA-rewrite spec); a new benchmark harness and numbers land later in that migration.
 
 ## 🚀 Quick Start
 
@@ -279,16 +273,16 @@ The encoder creates sparse matrices that encode pairwise spatial relationships w
 <div align="center">
 
 **Radius = 1.0**
-![Spatial Encodings Radius 1](torchsparsegradutils/tests/test_outputs/sparse_encodings_radius_1.png)
+![Spatial Encodings Radius 1](tests/test_outputs/sparse_encodings_radius_1.png)
 
 **Radius = 2.0**
-![Spatial Encodings Radius 2](torchsparsegradutils/tests/test_outputs/sparse_encodings_radius_2.png)
+![Spatial Encodings Radius 2](tests/test_outputs/sparse_encodings_radius_2.png)
 <!--
 **Legend for Spatial Offsets:**
 <table>
 <tr>
-<td><img src="torchsparsegradutils/tests/test_outputs/legend_radius_1.png" width="150"/></td>
-<td><img src="torchsparsegradutils/tests/test_outputs/legend_radius_2.png" width="150"/></td>
+<td><img src="tests/test_outputs/legend_radius_1.png" width="150"/></td>
+<td><img src="tests/test_outputs/legend_radius_2.png" width="150"/></td>
 </tr>
 <tr>
 <td align="center">Radius 1.0 Offsets</td>

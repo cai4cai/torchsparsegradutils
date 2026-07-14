@@ -657,7 +657,7 @@ def test_pariwise_coo_indices_visually():
 
         # Adjust spacing between subplots and save figure
         plt.tight_layout()
-        plt.savefig(f"torchsparsegradutils/tests/test_outputs/sparse_encodings_radius_{radius}.png")
+        plt.savefig(f"tests/test_outputs/sparse_encodings_radius_{radius}.png")
 
         # Create separate figure for the legend
         legend_elements = [
@@ -666,7 +666,7 @@ def test_pariwise_coo_indices_visually():
         fig_legend = plt.figure(figsize=(3, 8))
         plt.legend(handles=legend_elements, loc="center")
         plt.axis("off")
-        fig_legend.savefig(f"torchsparsegradutils/tests/test_outputs/legend_radius_{radius}.png")
+        fig_legend.savefig(f"tests/test_outputs/legend_radius_{radius}.png")
 
 
 # Tests for N-dimensional functionality

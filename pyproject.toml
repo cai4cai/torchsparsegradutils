@@ -108,10 +108,10 @@ project-includes = ["torchsparsegradutils/"]
 minversion = "6.0"
 addopts = ["-v"]
 testpaths = [
-    "torchsparsegradutils/tests",
+    "tests",
 ]
 pythonpath = [
-    "torchsparsegradutils/tests",
+    "tests",
 ]
 doctest_optionflags = [
     "NORMALIZE_WHITESPACE",
