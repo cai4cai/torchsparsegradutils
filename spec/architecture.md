@@ -105,9 +105,10 @@ torchsparsegradutils/                  # monorepo root
 ├── cuda/                              # ── torchsparsegradutils-cuda package ──
 │   ├── build.toml                     # kernel-builder config (or pyproject.toml if wheels win — build.md)
 │   ├── flake.nix
-│   ├── torchsparsegradutils_cuda/
-│   │   └── __init__.py                # loads the extension, __backend_api_version__
-│   ├── bench/                         # NVBench microbenchmarks — one target per kernel, lands with the kernel (day-one)
+│   ├── torch-ext/
+│   │   └── torchsparsegradutils_cuda/
+│   │       └── __init__.py            # loads the extension, __backend_api_version__ (torch-ext/ dir is a hard kernel-builder layout requirement — recorded from commit 10)
+│   ├── bench/                         # NVBench microbenchmarks — one target per kernel, lands with the kernel (day-one); standalone CMake+FetchContent, deliberately independent of the kernel-builder Nix build (intended pattern — kernel-builder has no NVBench integration)
 │   └── csrc/
 │       ├── registration.cpp           # STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, …) — all ops
 │       ├── common/                    # infra shared by every kernel — not a kernel family
