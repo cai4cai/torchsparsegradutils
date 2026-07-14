@@ -55,6 +55,7 @@ dev = [
     "scipy",
     "ruff==0.15.21",
     "pyrefly>=1.1.1",
+    "hypothesis>=6.156.6",
 ]
 
 [tool.setuptools]
