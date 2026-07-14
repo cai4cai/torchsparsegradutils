@@ -2588,6 +2588,10 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+bench = [
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "matplotlib", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
 dev = [
     { name = "hypothesis" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2631,6 +2635,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+bench = [{ name = "matplotlib", specifier = ">=3.5.0" }]
 dev = [
     { name = "hypothesis", specifier = ">=6.156.6" },
     { name = "numpy" },

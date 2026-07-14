@@ -140,6 +140,13 @@ dmypy.json
 # Benchmark data
 torchsparsegradutils/benchmarks/.benchmark_data/
 
+# New benchmarks/ suite (spec/benchmarks.md §4: "JSON only, no dashboards"
+# during migration) -- one JSON per run, machine-specific, never committed
+# (spec/commit.md #11: "results/*.json from your test run are NOT
+# committed"). Rendered charts are reproducible from those JSONs too.
+benchmarks/results/
+benchmarks/charts/
+
 # cuda/ package build artifacts (spec/commit.md commit 10 / build.md:
 # kernel-builder is Hub-only — nothing here is committed source).
 cuda/result

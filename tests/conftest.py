@@ -4,8 +4,36 @@ import random
 import numpy as np
 import pytest
 import torch
+from hypothesis import settings
 
 SEED = 42
+
+# ---------------------------------------------------------------------------
+# Hypothesis profiles (spec/testing.md "Resolved: Hypothesis budget",
+# spec/commit.md #11).
+#
+# Three registered profiles, selected via the HYPOTHESIS_PROFILE env var:
+#   - "pr"      max_examples=50   (CI on every PR — stays quick)
+#   - "nightly" max_examples=1000 (deeper nightly run)
+#   - "local"   max_examples=100  (library default; used when
+#                                  HYPOTHESIS_PROFILE is unset)
+#
+# deadline=None in CI (Hypothesis's own CI default) — detected here via the
+# CI env var (set by GitHub Actions and most other CI systems) rather than
+# assumed, so a local run keeps Hypothesis's normal per-example deadline.
+# ---------------------------------------------------------------------------
+
+
+def _in_ci() -> bool:
+    return os.getenv("CI", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_deadline_kwargs = {"deadline": None} if _in_ci() else {}
+
+settings.register_profile("pr", max_examples=50, **_deadline_kwargs)
+settings.register_profile("nightly", max_examples=1000, **_deadline_kwargs)
+settings.register_profile("local", max_examples=100, **_deadline_kwargs)
+settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "local"))
 
 
 def _seed_unlocked() -> bool:

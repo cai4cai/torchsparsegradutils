@@ -57,6 +57,13 @@ dev = [
     "pyrefly>=1.1.1",
     "hypothesis>=6.156.6",
 ]
+# benchmarks/ only -- kept out of `dev` so the test-only install stays lean
+# (spec/commit.md #11 clarification). `tox -e gpu` pulls this group in
+# alongside `dev` since the six-stage gate run also renders/consumes
+# benchmark JSON.
+bench = [
+    "matplotlib>=3.5.0",
+]
 
 [tool.setuptools]
 zip-safe = false
@@ -122,4 +129,13 @@ doctest_optionflags = [
 # Separate command for doctests due to potential issues
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    # The six-stage GPU gate order (spec/testing.md "Gates & ordering",
+    # spec/commit.md #11). tests/gpu_gates.py runs these, in order, via
+    # `tox -e gpu`; a test with no gateN marker is not part of any gate.
+    "gate1: gate 1 -- smoke (one tiny input per op, fail fast)",
+    "gate2: gate 2 -- opcheck (all tsgu:: ops x representative inputs)",
+    "gate3: gate 3 -- parity (Oracle A + B, full variant matrix)",
+    "gate4: gate 4 -- gradcheck / gradgradcheck (f64)",
+    "gate5: gate 5 -- property + adversarial + determinism",
+    "gate6: gate 6 -- contract conformance + workspace assertion",
 ]
