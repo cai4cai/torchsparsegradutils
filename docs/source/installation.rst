@@ -32,12 +32,11 @@ For development or to get the latest features:
    cd torchsparsegradutils
    pip install -e .
 
-To install development dependencies:
+To install development dependencies (via `uv <https://docs.astral.sh/uv/>`_):
 
 .. code-block:: bash
 
-   pip install -e .[dev]
-   pip install -r requirements-ci.txt
+   uv sync --group dev
 
 Verification
 ------------

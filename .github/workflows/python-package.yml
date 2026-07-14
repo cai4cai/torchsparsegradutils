@@ -9,46 +9,46 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.torch-type == 'nightly' }}
+    continue-on-error: ${{ matrix.tox-env == 'py312-torch-nightly' }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-        torch-version: ["2.5.0", "2.11.0"]
-        torch-type: ["stable"]
         include:
+        - python-version: "3.10"
+          tox-env: py310
+        - python-version: "3.11"
+          tox-env: py311
         - python-version: "3.12"
-          torch-version: "nightly"
-          torch-type: "nightly"
+          tox-env: py312
+        - python-version: "3.13"
+          tox-env: py313
+        - python-version: "3.12"
+          tox-env: py312-torch-min
+        - python-version: "3.12"
+          tox-env: py312-torch-nightly
 
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+    - name: Install uv (and Python ${{ matrix.python-version }})
+      uses: astral-sh/setup-uv@v5
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        if [ "${{ matrix.torch-type }}" = "nightly" ]; then
-          pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cpu
-        else
-          pip install torch==${{ matrix.torch-version }}
-        fi
-        pip install -r requirements-ci.txt
+        enable-cache: true
+    - name: Sync dev environment
+      run: uv sync --locked
     - name: Lint check with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --show-source --statistics
+        uv run flake8 . --count --show-source --statistics
     - name: Check import sorting with isort
       run: |
-        isort --check-only --diff .
+        uv run isort --check-only --diff .
     - name: Check code formatting with black
       run: |
-        black --check .
-    - name: Run pytest
+        uv run black --check .
+    - name: Run pytest (via tox -e ${{ matrix.tox-env }})
       run: |
-        python -m pytest --ignore=torchsparsegradutils/tests/test_doctests.py
-    - name: Test installing package
+        uvx --with tox-uv tox -e ${{ matrix.tox-env }}
+    - name: Test installing package (pyproject-only metadata, no setup.py)
       run: |
-        python -m pip install .
+        uv pip install .
