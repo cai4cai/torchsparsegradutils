@@ -1,5 +1,6 @@
 import torch
 from packaging.version import parse as parse_version
+from torch import Tensor
 
 try:
     import dgl.ops as dglops
@@ -7,6 +8,126 @@ try:
     dgl_installed = True
 except ImportError:
     dgl_installed = False
+
+# ---------------------------------------------------------------------------
+# tsgu::grouped_gemm — op schema, fake kernel, autograd registration.
+# spec/commit.md Phase 1 #9; routing verbatim from spec/map.md "Kernel
+# routing": both ``segment_mm`` and ``gather_mm`` route their forward *and*
+# both gradients through this single op ("transposed operands"). Schema
+# takes plain dense tensors only (architecture.md §2); per architecture.md
+# §6 this op bypasses BatchedCSR entirely — nothing sparse touches it. The
+# `segment_mm`/`gather_mm` wrappers below still call their `_legacy_*`
+# bodies; nothing wires this op in until commit 18 (spec/commit.md Phase 3).
+#
+# No CUDA/CPU implementation is registered in this commit — the op exists
+# only as schema + fake (meta) kernel and raises NotImplementedError if
+# actually invoked.
+# ---------------------------------------------------------------------------
+
+
+@torch.library.custom_op("tsgu::grouped_gemm", mutates_args=())
+def grouped_gemm(a: Tensor, b: Tensor, idx: Tensor, num_groups: int, reduce: bool) -> Tensor:
+    r"""Grouped (indexed) matrix multiplication — the single kernel behind
+    both ``segment_mm`` and ``gather_mm`` (map.md routing: forward and both
+    grads of each route through this op; DGL-exact semantics; bypasses
+    BatchedCSR entirely per architecture.md §6 — "nothing sparse touches
+    these ops").
+
+    Two modes, selected by ``reduce``:
+
+    - ``reduce=False`` (**gather** mode — the forward pass of both public
+      ops, and each op's ``gradA``): for every row ``i`` of ``a``, computes
+      ``a[i] @ b[idx[i]]``. ``segment_mm(a, b, seglen_a)`` is this mode with
+      ``idx = repeat_interleave(arange(R), seglen_a)`` built host-side (its
+      contiguous segments are a special case of arbitrary per-row
+      grouping); ``gather_mm(a, b, idx_b)`` is this mode directly with
+      ``idx = idx_b``. Each op's ``gradA`` reuses this same mode with ``a``
+      = the upstream gradient and ``b`` = the forward's ``b`` operand
+      transposed per group (map.md: "transposed operands").
+    - ``reduce=True`` (**scatter-reduce** mode — each op's ``gradB``): for
+      every group ``k``, computes
+      ``sum_{i : idx[i] == k} outer(a[i], b[i])`` — the adjoint of gather
+      mode's linear map in ``b``. Both ``a`` and ``b`` are row-indexed by
+      ``idx`` here (unlike gather mode, where ``b`` is indexed by group);
+      this is what map.md's routing table means by "transposed operands"
+      for ``gradB``: the same op, with the roles of the per-row and
+      per-group operand swapped between input and output.
+
+    Parameters
+    ----------
+    a : Tensor, shape ``(N, D1)``
+        Per-row left operand (both modes).
+    b : Tensor, shape ``(num_groups, D1, D2)`` in gather mode, or
+        ``(N, D2)`` in scatter mode
+        Per-group right operand (gather mode) or per-row second operand
+        (scatter mode).
+    idx : Tensor, shape ``(N,)``, integer dtype
+        Group index per row of ``a`` (and, in scatter mode, of ``b``), in
+        ``[0, num_groups)``.
+    num_groups : int
+        Number of groups (``R`` in map.md's ``segment_mm``/``gather_mm``
+        signatures).
+    reduce : bool
+        Selects gather mode (``False``) or scatter-reduce mode (``True``).
+
+    Returns
+    -------
+    Tensor
+        Gather mode: shape ``(N, D2)``, ``D2 = b.shape[-1]``. Scatter mode:
+        shape ``(num_groups, D1, D2)``, ``D1 = a.shape[-1]``,
+        ``D2 = b.shape[-1]``.
+    """
+    raise NotImplementedError(
+        "tsgu::grouped_gemm has no implementation registered yet — lands in spec/commit.md Phase 3 (commit 18)."
+    )
+
+
+@grouped_gemm.register_fake
+def _grouped_gemm_fake(a: Tensor, b: Tensor, idx: Tensor, num_groups: int, reduce: bool) -> Tensor:
+    # Value-independent: shapes derive only from a/b's own shapes and
+    # num_groups/reduce, never from idx's contents.
+    if reduce:
+        return a.new_empty(num_groups, a.shape[-1], b.shape[-1])
+    return a.new_empty(a.shape[0], b.shape[-1])
+
+
+def _grouped_gemm_setup_context(ctx, inputs, output):
+    a, b, idx, num_groups, reduce = inputs
+    ctx.save_for_backward(a, b, idx)
+    ctx.num_groups = num_groups
+    ctx.reduce = reduce
+    ctx.a_requires_grad = a.requires_grad
+    ctx.b_requires_grad = b.requires_grad
+
+
+def _grouped_gemm_backward(ctx, grad_output):
+    a, b, idx = ctx.saved_tensors
+
+    if ctx.reduce:
+        # This invocation computed a gradB (scatter-reduce mode); map.md's
+        # routing never differentiates *through* that computation itself
+        # (it's only ever used as a gradient leaf), so no further autograd
+        # is defined here.
+        raise NotImplementedError(
+            "tsgu::grouped_gemm(reduce=True) is only used as a gradient leaf (map.md routing); "
+            "it is not itself differentiated."
+        )
+
+    grad_a = None
+    if ctx.a_requires_grad:
+        # gradA (map.md "transposed operands"): gather mode with b's groups
+        # transposed.
+        grad_a = torch.ops.tsgu.grouped_gemm(grad_output, b.mT, idx, ctx.num_groups, False)
+
+    grad_b = None
+    if ctx.b_requires_grad:
+        # gradB (map.md "transposed operands"): scatter-reduce mode.
+        grad_b = torch.ops.tsgu.grouped_gemm(a, grad_output, idx, ctx.num_groups, True)
+
+    return grad_a, grad_b, None, None, None
+
+
+grouped_gemm.register_autograd(_grouped_gemm_backward, setup_context=_grouped_gemm_setup_context)
 
 
 def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torch.Tensor:

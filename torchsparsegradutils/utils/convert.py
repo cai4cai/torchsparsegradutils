@@ -1,6 +1,69 @@
 from typing import List, Tuple
 
 import torch
+from torch import Tensor
+
+# ---------------------------------------------------------------------------
+# tsgu::coo2csr — op schema, fake kernel. spec/commit.md Phase 1 #9; routing
+# verbatim from spec/map.md "Kernel routing": ``convert_coo_to_csr*`` and
+# ``BatchedCSR.from_torch``'s COO path both route here (architecture.md §3
+# says the kernel replaces that path's pure-torch internals in commit 19 —
+# nothing calls this op yet). Schema takes plain dense (index) tensors only
+# (architecture.md §2).
+#
+# No CUDA/CPU implementation is registered in this commit — the op exists
+# only as schema + fake (meta) kernel and raises NotImplementedError if
+# actually invoked. Per map.md's routing table ("— (index-only, no grad)")
+# this op gets no register_autograd, here or ever: it only rearranges
+# integer index tensors, which carry no gradient.
+# ---------------------------------------------------------------------------
+
+
+@torch.library.custom_op("tsgu::coo2csr", mutates_args=())
+def coo2csr(batch: Tensor, row: Tensor, col: Tensor, B: int, n: int) -> List[Tensor]:
+    r"""Fused sort+compress of batched COO coordinates into folded CSR
+    (map.md: ``convert_coo_to_csr*`` / ``BatchedCSR.from_torch``'s COO path,
+    architecture.md §3 — this kernel replaces that path's internals,
+    spec/commit.md commit 19).
+
+    Parameters
+    ----------
+    batch : Tensor, shape ``(nse_total,)``, integer dtype
+        Batch index of each COO entry, in ``[0, B)``.
+    row : Tensor, shape ``(nse_total,)``, integer dtype
+        Local row index of each COO entry, in ``[0, n)``.
+    col : Tensor, shape ``(nse_total,)``, integer dtype
+        Local column index of each COO entry (naming.md §2 ``col``); not
+        bounds-checked against ``n_cols`` here (that shape isn't needed to
+        sort+compress by row).
+    B, n : int
+        ``batch_size`` and ``n_rows``.
+
+    Returns
+    -------
+    list of Tensor, length 3 — ``(rowptr, col_sorted, permutation)``
+        ``rowptr``, shape ``(B * n + 1,)``: absolute CSR pointer over folded
+        rows ``row_global = b * n + r`` (naming.md §2 ``rowptr``).
+        ``col_sorted``, shape ``(nse_total,)``: ``col`` reordered to match
+        ``rowptr`` (naming.md §2 ``col``).
+        ``permutation``, shape ``(nse_total,)``: the sort permutation —
+        ``values[permutation]`` reorders a values tensor aligned with the
+        input coordinate order to match ``rowptr``/``col_sorted``.
+    """
+    raise NotImplementedError(
+        "tsgu::coo2csr has no implementation registered yet — lands in spec/commit.md Phase 3 (commit 19)."
+    )
+
+
+@coo2csr.register_fake
+def _coo2csr_fake(batch: Tensor, row: Tensor, col: Tensor, B: int, n: int) -> List[Tensor]:
+    # Value-independent (architecture.md §2): every output shape derives
+    # only from B, n, and col's length — never from batch/row/col contents.
+    nse_total = col.shape[0]
+    rowptr = row.new_empty(B * n + 1)
+    col_sorted = col.new_empty(nse_total)
+    permutation = row.new_empty(nse_total)
+    return [rowptr, col_sorted, permutation]
 
 
 def stack_csr(

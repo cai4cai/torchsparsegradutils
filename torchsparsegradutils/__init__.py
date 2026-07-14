@@ -1,3 +1,4 @@
+from . import _dispatch  # noqa: F401  (import triggers the CUDA backend probe, architecture.md §1)
 from .ops import (
     gather_mm,
     segment_mm,

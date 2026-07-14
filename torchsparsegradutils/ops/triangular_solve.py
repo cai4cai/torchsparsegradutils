@@ -1,8 +1,132 @@
 from typing import cast
 
 import torch
+from torch import Tensor
 
 from torchsparsegradutils.utils import convert_coo_to_csr, sparse_block_diag, sparse_block_diag_split, stack_csr
+
+# ---------------------------------------------------------------------------
+# tsgu::spsm — op schema, fake kernel, autograd registration.
+# spec/commit.md Phase 1 #9; routing verbatim from spec/map.md "Kernel
+# routing". Schema takes plain dense tensors only (architecture.md §2). The
+# `sparse_triangular_solve` wrapper below still calls
+# `_legacy_sparse_triangular_solve`; nothing wires this op in until commit 16
+# (spec/commit.md Phase 3), which also adds the real SpSM analysis-plan
+# cache (architecture.md §3).
+#
+# No CUDA/CPU implementation is registered in this commit — the op exists
+# only as schema + fake (meta) kernel and raises NotImplementedError if
+# actually invoked. Its `register_autograd` backward below therefore also
+# references torch.ops.tsgu.spsm / torch.ops.tsgu.sddmm with no real
+# implementation yet; nothing exercises those code paths until later.
+# ---------------------------------------------------------------------------
+
+
+@torch.library.custom_op("tsgu::spsm", mutates_args=())
+def spsm(
+    vals: Tensor,
+    rowptr: Tensor,
+    col: Tensor,
+    rhs: Tensor,
+    B: int,
+    n: int,
+    upper: bool,
+    unitriangular: bool,
+    transpose: bool,
+) -> Tensor:
+    r"""Batched sparse triangular solve (map.md: ``sparse_triangular_solve``
+    forward; also serves its own ``gradB`` via the "transposed plan" —
+    calling this same op again with ``transpose`` flipped, map.md routing;
+    the real analysis-plan cache reuse, architecture.md §3, lands with the
+    kernel in commit 16).
+
+    Solves, per batch item ``b``, :math:`A[b]\,x[b] = \mathrm{rhs}[b]` (or
+    :math:`A[b]^\top\,x[b] = \mathrm{rhs}[b]` when ``transpose=True``) for
+    triangular ``A[b]``.
+
+    Parameters
+    ----------
+    vals : Tensor, shape ``(nse_total,)``
+        Stored values of the triangular matrix (naming.md §2 ``vals``).
+    rowptr : Tensor, shape ``(B * n + 1,)``
+        Absolute CSR pointer over folded rows (naming.md §2 ``rowptr``).
+    col : Tensor, shape ``(nse_total,)``
+        Local column indices in ``[0, n)`` (naming.md §2 ``col``) — ``A`` is
+        square, ``n_rows == n_cols == n``.
+    rhs : Tensor, shape ``(B, n, p)``
+        Right-hand side.
+    B, n : int
+        ``batch_size``, ``n_rows`` (== ``n_cols``).
+    upper, unitriangular, transpose : bool
+        Kept verbatim from the public ``sparse_triangular_solve`` contract
+        (map.md invariant 1).
+
+    Returns
+    -------
+    Tensor, shape ``(B, n, p)``
+        Solution ``x``, same shape as ``rhs``.
+    """
+    raise NotImplementedError(
+        "tsgu::spsm has no implementation registered yet — lands in spec/commit.md Phase 3 (commit 16)."
+    )
+
+
+@spsm.register_fake
+def _spsm_fake(
+    vals: Tensor,
+    rowptr: Tensor,
+    col: Tensor,
+    rhs: Tensor,
+    B: int,
+    n: int,
+    upper: bool,
+    unitriangular: bool,
+    transpose: bool,
+) -> Tensor:
+    # Value-independent: output shape/dtype exactly mirror rhs.
+    return rhs.new_empty(rhs.shape)
+
+
+def _spsm_setup_context(ctx, inputs, output):
+    vals, rowptr, col, rhs, B, n, upper, unitriangular, transpose = inputs
+    ctx.save_for_backward(vals, rowptr, col, output)
+    ctx.B, ctx.n = B, n
+    ctx.upper, ctx.unitriangular, ctx.transpose = upper, unitriangular, transpose
+    ctx.vals_requires_grad = vals.requires_grad
+    ctx.rhs_requires_grad = rhs.requires_grad
+
+
+def _spsm_backward(ctx, grad_output):
+    vals, rowptr, col, x = ctx.saved_tensors
+    B, n = ctx.B, ctx.n
+
+    need_gradB = ctx.rhs_requires_grad or ctx.vals_requires_grad
+    gradB = None
+    if need_gradB:
+        # gradB (map.md "transposed plan"): the same op with `transpose`
+        # flipped. Unlike tsgu::spmm's gradB, spsm carries its own
+        # `transpose` flag, so no separately-transposed (CSC) pattern is
+        # needed — `vals`/`rowptr`/`col` are reused as-is.
+        gradB = torch.ops.tsgu.spsm(
+            vals, rowptr, col, grad_output, B, n, ctx.upper, ctx.unitriangular, not ctx.transpose
+        )
+
+    grad_vals = None
+    if ctx.vals_requires_grad:
+        # gradA (map.md): sampled outer product -gradB @ x^T at A's own
+        # pattern, via tsgu::sddmm's negate epilogue. NOTE: this uses the
+        # non-transposed (g=gradB, mat=x) index convention; the exact
+        # row/col role swap the reference implementation applies when
+        # transpose=True (see the legacy SparseTriangularSolve.backward) is
+        # a kernel-commit-16 detail, not a schema-level concern here.
+        grad_vals = torch.ops.tsgu.sddmm(rowptr, col, gradB, x, B, n, n, True)
+
+    grad_rhs = gradB if ctx.rhs_requires_grad else None
+
+    return grad_vals, None, None, grad_rhs, None, None, None, None, None
+
+
+spsm.register_autograd(_spsm_backward, setup_context=_spsm_setup_context)
 
 
 def sparse_triangular_solve(

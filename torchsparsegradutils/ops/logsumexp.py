@@ -6,6 +6,243 @@ from torch import Tensor
 
 __all__ = ["sparse_logsumexp", "sparse_bidir_logsumexp"]
 
+# ---------------------------------------------------------------------------
+# tsgu::seglse / tsgu::seglse_bwd / tsgu::seglse_bidir / tsgu::seglse_bidir_bwd
+# — op schemas, fake kernels, autograd registration.
+# spec/commit.md Phase 1 #9; routing verbatim from spec/map.md "Kernel
+# routing". Schemas take plain dense tensors only (architecture.md §2). The
+# `sparse_logsumexp`/`sparse_bidir_logsumexp` wrappers below still call their
+# `_legacy_*` bodies; nothing wires these ops in until commits 12/13
+# (spec/commit.md Phase 3).
+#
+# No CUDA/CPU implementation is registered in this commit — each op exists
+# only as schema + fake (meta) kernel and raises NotImplementedError if
+# actually invoked.
+# ---------------------------------------------------------------------------
+
+
+@torch.library.custom_op("tsgu::seglse", mutates_args=())
+def seglse(vals: Tensor, rowptr: Tensor, B: int, n: int, m: int, include_zeros: bool) -> Tensor:
+    r"""Segmented log-sum-exp forward (map.md / kernels.md Family 2 flagship)
+    — the shared forward kernel behind ``sparse_logsumexp``. Reduces the
+    *stored* values within each of the ``B * n`` folded segments
+    (naming.md §2 folded row ``row_global = b * n + r``) to one log-sum-exp
+    value per segment.
+
+    The wrapper selects which logical axis this reduces (``dim`` of
+    ``sparse_logsumexp``) by passing either ``A``'s own BatchedCSR (segments
+    = rows, reducing columns) or its BatchedCSC (segments = columns, reducing
+    rows) — this op only ever sees a generic folded-row/segment structure,
+    never COO/CSC directly.
+
+    Parameters
+    ----------
+    vals : Tensor, shape ``(nse_total,)``
+        Stored values to reduce (naming.md §2 ``vals``).
+    rowptr : Tensor, shape ``(B * n + 1,)``
+        Absolute CSR-style pointer over the ``B * n`` folded segments
+        (naming.md §2 ``rowptr``).
+    B, n : int
+        ``batch_size`` and number of segments per batch item (``n_rows``
+        when reducing columns, ``n_cols`` when reducing rows).
+    m : int
+        Full size of the *reduced* axis (``n_cols`` when reducing columns,
+        ``n_rows`` when reducing rows) — needed only to count structural
+        zeros when ``include_zeros=True`` (``m - segment_nse`` per segment).
+    include_zeros : bool
+        Whether structural zeros contribute ``exp(0) = 1`` to each segment's
+        sum (map.md contract: matches ``torch.logsumexp`` on the dense
+        equivalent when ``True``).
+
+    Returns
+    -------
+    Tensor, shape ``(B, n)``
+        Per-segment log-sum-exp; also the ``lse`` saved for
+        ``tsgu::seglse_bwd`` (kernels.md: "no recompute").
+    """
+    raise NotImplementedError(
+        "tsgu::seglse has no implementation registered yet — lands in spec/commit.md Phase 3 (commit 12)."
+    )
+
+
+@seglse.register_fake
+def _seglse_fake(vals: Tensor, rowptr: Tensor, B: int, n: int, m: int, include_zeros: bool) -> Tensor:
+    # Value-independent: shape derives only from the B, n shape ints.
+    return vals.new_empty(B, n)
+
+
+@torch.library.custom_op("tsgu::seglse_bwd", mutates_args=())
+def seglse_bwd(vals: Tensor, rowptr: Tensor, lse: Tensor, gout: Tensor, B: int, n: int) -> Tensor:
+    r"""Backward of :func:`seglse` (map.md / kernels.md Family 2):
+    embarrassingly parallel per specified entry,
+    ``gradA_val = exp(v - lse[seg]) * gout[seg]``, using the ``lse`` saved
+    from the forward pass (no recompute).
+
+    Parameters
+    ----------
+    vals : Tensor, shape ``(nse_total,)``
+        The forward's stored values (naming.md §2 ``vals``).
+    rowptr : Tensor, shape ``(B * n + 1,)``
+        Same folded-segment pointer as the forward call (naming.md §2
+        ``rowptr``).
+    lse : Tensor, shape ``(B, n)``
+        :func:`seglse`'s saved output.
+    gout : Tensor, shape ``(B, n)``
+        Upstream gradient w.r.t. :func:`seglse`'s output.
+    B, n : int
+        ``batch_size`` and segment count, as in the forward call.
+
+    Returns
+    -------
+    Tensor, shape ``(nse_total,)``
+        Gradient values aligned with ``vals`` / the pattern's ``rowptr``.
+    """
+    raise NotImplementedError(
+        "tsgu::seglse_bwd has no implementation registered yet — lands in spec/commit.md Phase 3 (commit 12)."
+    )
+
+
+@seglse_bwd.register_fake
+def _seglse_bwd_fake(vals: Tensor, rowptr: Tensor, lse: Tensor, gout: Tensor, B: int, n: int) -> Tensor:
+    return vals.new_empty(vals.shape[0])
+
+
+# tsgu::seglse_bwd gets no register_autograd: in this commit it is only ever
+# used as sparse_logsumexp's backward primitive; any higher-order-gradient
+# support for it is decided at its own kernel commit (commit 12), not
+# invented here.
+
+
+def _seglse_setup_context(ctx, inputs, output):
+    vals, rowptr, B, n, m, include_zeros = inputs
+    ctx.save_for_backward(vals, rowptr, output)
+    ctx.B, ctx.n = B, n
+    ctx.vals_requires_grad = vals.requires_grad
+
+
+def _seglse_backward(ctx, grad_output):
+    vals, rowptr, lse = ctx.saved_tensors
+    grad_vals = None
+    if ctx.vals_requires_grad:
+        grad_vals = torch.ops.tsgu.seglse_bwd(vals, rowptr, lse, grad_output, ctx.B, ctx.n)
+    return grad_vals, None, None, None, None, None
+
+
+seglse.register_autograd(_seglse_backward, setup_context=_seglse_setup_context)
+
+
+@torch.library.custom_op("tsgu::seglse_bidir", mutates_args=())
+def seglse_bidir(vals: Tensor, rowptr: Tensor, col: Tensor, B: int, n: int, m: int, include_zeros: bool) -> Tensor:
+    r"""Fused row-and-column segmented log-sum-exp (map.md:
+    ``sparse_bidir_logsumexp`` forward) — a single traversal of
+    ``(rowptr, col, vals)`` updating both the per-row and per-column
+    accumulators together (kernels.md Family 2: "the entire point is a
+    single traversal ... instead of two"). Must equal two separate
+    :func:`seglse` calls (map.md contract).
+
+    Parameters
+    ----------
+    vals : Tensor, shape ``(nse_total,)``
+        Stored values (naming.md §2 ``vals``).
+    rowptr : Tensor, shape ``(B * n + 1,)``
+        Absolute CSR pointer over folded rows (naming.md §2 ``rowptr``).
+    col : Tensor, shape ``(nse_total,)``
+        Local column indices in ``[0, m)`` (naming.md §2 ``col``) — needed
+        (unlike :func:`seglse`) because both axes are reduced at once.
+    B, n, m : int
+        ``batch_size``, ``n_rows``, ``n_cols``.
+    include_zeros : bool
+        As in :func:`seglse`.
+
+    Returns
+    -------
+    Tensor, shape ``(2, B, G)`` where ``G = max(n, m)``
+        The op's native "padded" buffer (map.md / ``sparse_bidir_logsumexp``'s
+        ``output_layout="padded"``): index ``0`` along dim 0 is the
+        column-reduction (``col_lse``, one value per column, padded to
+        ``G``), index ``1`` is the row-reduction (``row_lse``). The
+        ``tuple``/``nested`` output layouts are assembled host-side from this
+        buffer, outside the op (architecture.md §2 / map.md).
+    """
+    raise NotImplementedError(
+        "tsgu::seglse_bidir has no implementation registered yet — lands in spec/commit.md Phase 3 (commit 13)."
+    )
+
+
+@seglse_bidir.register_fake
+def _seglse_bidir_fake(
+    vals: Tensor, rowptr: Tensor, col: Tensor, B: int, n: int, m: int, include_zeros: bool
+) -> Tensor:
+    # Value-independent: shape derives only from B and G = max(n, m).
+    G = max(n, m)
+    return vals.new_empty(2, B, G)
+
+
+@torch.library.custom_op("tsgu::seglse_bidir_bwd", mutates_args=())
+def seglse_bidir_bwd(
+    vals: Tensor, rowptr: Tensor, col: Tensor, padded: Tensor, gout: Tensor, B: int, n: int, m: int
+) -> Tensor:
+    r"""Backward of :func:`seglse_bidir`. Every specified entry receives a
+    gradient contribution from *both* directions it participates in:
+    ``gradA_val = exp(v - col_lse[col]) * gout[0, col] + exp(v - row_lse[row])
+    * gout[1, row]``, where ``col_lse = padded[0]``, ``row_lse = padded[1]``
+    are the forward's saved output and ``row`` is recovered from ``rowptr``
+    (kernels.md Family 2).
+
+    Parameters
+    ----------
+    vals, rowptr, col : Tensor
+        Same pattern as the forward call (naming.md §2 ``vals``/``rowptr``/
+        ``col``).
+    padded : Tensor, shape ``(2, B, G)``
+        :func:`seglse_bidir`'s saved output.
+    gout : Tensor, shape ``(2, B, G)``
+        Upstream gradient in the same padded layout as ``padded`` (the
+        wrapper converts a user-facing ``tuple``/``nested`` upstream
+        gradient into this layout before autograd sees it).
+    B, n, m : int
+        ``batch_size``, ``n_rows``, ``n_cols``.
+
+    Returns
+    -------
+    Tensor, shape ``(nse_total,)``
+        Gradient values aligned with ``vals``.
+    """
+    raise NotImplementedError(
+        "tsgu::seglse_bidir_bwd has no implementation registered yet — lands in spec/commit.md Phase 3 (commit 13)."
+    )
+
+
+@seglse_bidir_bwd.register_fake
+def _seglse_bidir_bwd_fake(
+    vals: Tensor, rowptr: Tensor, col: Tensor, padded: Tensor, gout: Tensor, B: int, n: int, m: int
+) -> Tensor:
+    return vals.new_empty(vals.shape[0])
+
+
+# tsgu::seglse_bidir_bwd gets no register_autograd: in this commit it is only
+# ever used as sparse_bidir_logsumexp's backward primitive; any
+# higher-order-gradient support is decided at its own kernel commit
+# (commit 13), not invented here.
+
+
+def _seglse_bidir_setup_context(ctx, inputs, output):
+    vals, rowptr, col, B, n, m, include_zeros = inputs
+    ctx.save_for_backward(vals, rowptr, col, output)
+    ctx.B, ctx.n, ctx.m = B, n, m
+    ctx.vals_requires_grad = vals.requires_grad
+
+
+def _seglse_bidir_backward(ctx, grad_output):
+    vals, rowptr, col, padded = ctx.saved_tensors
+    grad_vals = None
+    if ctx.vals_requires_grad:
+        grad_vals = torch.ops.tsgu.seglse_bidir_bwd(vals, rowptr, col, padded, grad_output, ctx.B, ctx.n, ctx.m)
+    return grad_vals, None, None, None, None, None, None
+
+
+seglse_bidir.register_autograd(_seglse_bidir_backward, setup_context=_seglse_bidir_setup_context)
+
 
 def _scatter_logsumexp(
     values: Tensor,
