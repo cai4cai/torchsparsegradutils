@@ -42,6 +42,9 @@ jobs:
     - name: Check code formatting with ruff
       run: |
         uv run ruff format --check .
+    - name: Type check with pyrefly (baseline: 224 errors as of commit 5 — burn down in follow-ups)
+      run: |
+        uv run pyrefly check --baseline pyrefly_baseline.json
     - name: Run pytest (via tox -e ${{ matrix.tox-env }})
       run: |
         uvx --with tox-uv tox -e ${{ matrix.tox-env }}
