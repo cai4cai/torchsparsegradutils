@@ -6,8 +6,8 @@ import torch
 from test_config import Tolerances
 
 import torchsparsegradutils
+from torchsparsegradutils.solvers.minres import minres
 from torchsparsegradutils.utils import MINRESSettings
-from torchsparsegradutils.utils.minres import minres
 
 ATOL, RTOL = Tolerances.iterative(torch.float64)
 

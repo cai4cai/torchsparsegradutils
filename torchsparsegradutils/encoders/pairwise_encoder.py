@@ -9,7 +9,7 @@ import numpy
 import torch
 
 from torchsparsegradutils.utils import convert_coo_to_csr_indices_values
-from torchsparsegradutils.utils.utils import _sort_coo_indices
+from torchsparsegradutils.utils.convert import _sort_coo_indices
 
 
 def _trim_nd(x: torch.Tensor, offsets: Tuple[int, ...]) -> torch.Tensor:

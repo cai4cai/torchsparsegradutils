@@ -21,7 +21,7 @@ from torchsparsegradutils.encoders.pairwise_encoder import (
     _trim_nd,
     calc_pairwise_coo_indices_nd,
 )
-from torchsparsegradutils.utils.utils import _sort_coo_indices
+from torchsparsegradutils.utils.convert import _sort_coo_indices
 
 if parse_version(torch.__version__) >= parse_version("2.0"):
     # https://pytorch.org/docs/stable/generated/torch.sparse.check_sparse_tensor_invariants.html

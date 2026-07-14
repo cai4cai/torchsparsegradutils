@@ -126,6 +126,11 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     if A.size(-1) != B.size(-2):
         raise ValueError(f"Incompatible inner dimensions: A[..., {A.size(-1)}] vs B[..., {B.size(-2)}]")
 
+    return _legacy_sparse_mm(A, B)
+
+
+# deleted by its kernel commit (spec/commit.md Phase 3)
+def _legacy_sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     return cast(torch.Tensor, SparseMatMul.apply(A, B))
 
 

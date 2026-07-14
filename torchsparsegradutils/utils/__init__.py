@@ -1,17 +1,13 @@
-from .bicgstab import BICGSTABSettings, bicgstab
-from .dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
-from .linear_cg import LinearCGSettings, linear_cg
-from .lsmr import lsmr
-from .minres import MINRESSettings, minres
-from .random_sparse import rand_sparse, rand_sparse_tri
-from .utils import (
+from ..solvers import BICGSTABSettings, LinearCGSettings, MINRESSettings, bicgstab, linear_cg, lsmr, minres
+from ._block_diag import sparse_block_diag, sparse_block_diag_split
+from .convert import (
     convert_coo_to_csr,
     convert_coo_to_csr_indices_values,
-    sparse_block_diag,
-    sparse_block_diag_split,
     sparse_eye,
     stack_csr,
 )
+from .dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
+from .random_sparse import rand_sparse, rand_sparse_tri
 
 __all__ = [
     "linear_cg",

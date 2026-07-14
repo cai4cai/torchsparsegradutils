@@ -93,7 +93,7 @@ def test_segment_mm_raises_on_old_pytorch():
     """Test that segment_mm raises NotImplementedError on PyTorch < 2.4."""
     from unittest.mock import patch
 
-    from torchsparsegradutils import indexed_matmul
+    from torchsparsegradutils.ops import indexed_matmul
 
     a = torch.randn(10, 4)
     b = torch.randn(2, 4, 3)
@@ -108,7 +108,7 @@ def test_gather_mm_raises_on_old_pytorch():
     """Test that gather_mm raises NotImplementedError on PyTorch < 2.4."""
     from unittest.mock import patch
 
-    from torchsparsegradutils import indexed_matmul
+    from torchsparsegradutils.ops import indexed_matmul
 
     a = torch.randn(3, 4)
     b = torch.randn(2, 4, 5)

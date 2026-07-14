@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from torchsparsegradutils.utils.linear_cg import linear_cg
+from torchsparsegradutils.solvers.cg import linear_cg
 
 
 # Test basic CG solve for vectors and matrices

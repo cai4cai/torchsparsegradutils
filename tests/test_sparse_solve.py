@@ -4,7 +4,7 @@ import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
-from torchsparsegradutils.sparse_solve import sparse_generic_solve
+from torchsparsegradutils.ops.generic_solve import sparse_generic_solve
 from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, linear_cg, minres
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
@@ -122,7 +122,7 @@ def _bicgstab_transpose(A, B, **kwargs):
 
 
 def _bicgstab_higher_order_kwargs(value_dtype):
-    from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
+    from torchsparsegradutils.solvers.bicgstab import BICGSTABSettings
 
     if value_dtype == torch.float32:
         return {"settings": BICGSTABSettings(reltol=1e-6, abstol=1e-6, matvec_max=1000)}
@@ -145,11 +145,11 @@ def _higher_order_bicgstab_tolerances(value_dtype):
 
 def _settings_for_higher_order_solve(solve, value_dtype):
     if solve is linear_cg:
-        from torchsparsegradutils.utils.linear_cg import LinearCGSettings
+        from torchsparsegradutils.solvers.cg import LinearCGSettings
 
         return {"settings": LinearCGSettings(cg_tolerance=1e-5, max_cg_iterations=1000)}
     if solve is minres:
-        from torchsparsegradutils.utils.minres import MINRESSettings
+        from torchsparsegradutils.solvers.minres import MINRESSettings
 
         tolerance = 1e-6 if value_dtype == torch.float32 else 1e-10
         return {"settings": MINRESSettings(minres_tolerance=tolerance, max_cg_iterations=1000)}
@@ -239,7 +239,7 @@ def test_solve_backward_routine(layout, solve, device, value_dtype, index_dtype,
 
 def test_linear_cg_kwargs(device, value_dtype, layout):
     """Test sparse_generic_solve with LinearCGSettings kwargs."""
-    from torchsparsegradutils.utils.linear_cg import LinearCGSettings
+    from torchsparsegradutils.solvers.cg import LinearCGSettings
 
     n = 10
     A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
@@ -259,7 +259,7 @@ def test_linear_cg_kwargs(device, value_dtype, layout):
 
 def test_bicgstab_kwargs(device, value_dtype, layout):
     """Test sparse_generic_solve with BICGSTABSettings kwargs."""
-    from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
+    from torchsparsegradutils.solvers.bicgstab import BICGSTABSettings
 
     n = 10
     A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
@@ -277,7 +277,7 @@ def test_bicgstab_kwargs(device, value_dtype, layout):
 
 def test_minres_kwargs(device, value_dtype, layout):
     """Test sparse_generic_solve with MINRESSettings kwargs."""
-    from torchsparsegradutils.utils.minres import MINRESSettings
+    from torchsparsegradutils.solvers.minres import MINRESSettings
 
     n = 10
     A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
@@ -295,7 +295,7 @@ def test_minres_kwargs(device, value_dtype, layout):
 
 def test_kwargs_backward_pass(device, value_dtype, layout):
     """Test that kwargs work correctly during backward pass."""
-    from torchsparsegradutils.utils.linear_cg import LinearCGSettings
+    from torchsparsegradutils.solvers.cg import LinearCGSettings
 
     n = 10
     A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
@@ -328,7 +328,7 @@ def test_kwargs_backward_pass(device, value_dtype, layout):
 
 def test_multiple_kwargs(device, value_dtype):
     """Test sparse_generic_solve with multiple kwargs (like used in benchmarks)."""
-    from torchsparsegradutils.utils.linear_cg import LinearCGSettings
+    from torchsparsegradutils.solvers.cg import LinearCGSettings
 
     n = 10
     layout = torch.sparse_csr  # Use CSR for this test
@@ -350,9 +350,9 @@ def test_multiple_kwargs(device, value_dtype):
 
 def test_kwargs_with_different_solvers_same_matrix():
     """Test that different solvers with their respective kwargs produce similar results."""
-    from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
-    from torchsparsegradutils.utils.linear_cg import LinearCGSettings
-    from torchsparsegradutils.utils.minres import MINRESSettings
+    from torchsparsegradutils.solvers.bicgstab import BICGSTABSettings
+    from torchsparsegradutils.solvers.cg import LinearCGSettings
+    from torchsparsegradutils.solvers.minres import MINRESSettings
 
     device = torch.device("cpu")
     value_dtype = torch.float64  # Use higher precision for better comparison

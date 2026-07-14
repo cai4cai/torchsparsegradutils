@@ -16,7 +16,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 
-from torchsparsegradutils.utils.utils import convert_coo_to_csr, convert_coo_to_csr_indices_values
+from torchsparsegradutils.utils.convert import convert_coo_to_csr, convert_coo_to_csr_indices_values
 
 __all__ = [
     "rand_sparse",

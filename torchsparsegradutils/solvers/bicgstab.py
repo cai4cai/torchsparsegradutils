@@ -91,7 +91,7 @@ def bicgstab(
 
     With custom settings:
 
-    >>> from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
+    >>> from torchsparsegradutils.solvers.bicgstab import BICGSTABSettings
     >>> settings = BICGSTABSettings(abstol=1e-10, reltol=1e-8, matvec_max=1000)
     >>> x = bicgstab(A.matmul, b, settings=settings)
 

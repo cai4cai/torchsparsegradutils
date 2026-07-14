@@ -120,8 +120,13 @@ def sparse_generic_lstsq(
     >>> A.grad.is_sparse
     True
     """
+    return _legacy_sparse_generic_lstsq(A, B, lstsq, transpose_lstsq)
+
+
+# deleted by its kernel commit (spec/commit.md Phase 3)
+def _legacy_sparse_generic_lstsq(A, B, lstsq, transpose_lstsq):
     if lstsq is None or transpose_lstsq is None:
-        from .utils import lsmr
+        from ..utils import lsmr
 
         if lstsq is None:
 

@@ -4,19 +4,18 @@ import pytest
 import torch
 from test_config import DEVICES, devices_match
 
-from torchsparsegradutils.utils.random_sparse import (
-    generate_random_sparse_coo_matrix,
-    generate_random_sparse_csr_matrix,
-)
-from torchsparsegradutils.utils.utils import (
+from torchsparsegradutils.utils._block_diag import sparse_block_diag, sparse_block_diag_split
+from torchsparsegradutils.utils.convert import (
     _compress_row_indices,
     _demcompress_crow_indices,
     _sort_coo_indices,
     convert_coo_to_csr,
-    sparse_block_diag,
-    sparse_block_diag_split,
     sparse_eye,
     stack_csr,
+)
+from torchsparsegradutils.utils.random_sparse import (
+    generate_random_sparse_coo_matrix,
+    generate_random_sparse_csr_matrix,
 )
 
 

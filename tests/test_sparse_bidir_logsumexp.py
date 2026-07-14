@@ -18,7 +18,7 @@ from test_sparse_logsumexp import (
 )
 
 from torchsparsegradutils import sparse_bidir_logsumexp, sparse_logsumexp
-from torchsparsegradutils.sparse_logsumexp import _bidir_2d, _bidir_batched
+from torchsparsegradutils.ops.logsumexp import _bidir_2d, _bidir_batched
 
 _NESTED_OK = parse_version(torch.__version__) >= parse_version("2.4")
 

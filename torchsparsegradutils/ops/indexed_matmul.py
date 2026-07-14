@@ -74,6 +74,11 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torc
         >>> segment_mm(a, b, seglen_a).shape
         torch.Size([18, 2])
     """
+    return _legacy_segment_mm(a, b, seglen_a)
+
+
+# deleted by its kernel commit (spec/commit.md Phase 3)
+def _legacy_segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torch.Tensor:
     if parse_version(torch.__version__) < parse_version("2.4"):
         raise NotImplementedError("PyTorch version is too old for nested tensors")
 
@@ -178,6 +183,11 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Te
         tensor([[1., 2.],
                 [6., 8.]])
     """
+    return _legacy_gather_mm(a, b, idx_b)
+
+
+# deleted by its kernel commit (spec/commit.md Phase 3)
+def _legacy_gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Tensor:
     if parse_version(torch.__version__) < parse_version("2.4"):
         raise NotImplementedError("PyTorch version is too old for nested tensors")
 

@@ -342,6 +342,11 @@ def sparse_logsumexp(
         raise RuntimeError("sparse_logsumexp: dim contains a repeated dimension.")
     dims = sorted(normalised)
 
+    return _legacy_sparse_logsumexp(input, dims, keepdim, include_zeros)
+
+
+# deleted by its kernel commit (spec/commit.md Phase 3)
+def _legacy_sparse_logsumexp(input: Tensor, dims, keepdim: bool, include_zeros: bool) -> Tensor:
     if input.ndim == 2:
         return _logsumexp_2d(input, dims, keepdim, include_zeros)
 
@@ -479,6 +484,11 @@ def sparse_bidir_logsumexp(
     if output_layout == "nested" and parse_version(torch.__version__) < parse_version("2.4"):
         raise NotImplementedError("PyTorch version is too old for nested tensors")
 
+    return _legacy_sparse_bidir_logsumexp(input, keepdim, include_zeros, output_layout)
+
+
+# deleted by its kernel commit (spec/commit.md Phase 3)
+def _legacy_sparse_bidir_logsumexp(input: Tensor, keepdim: bool, include_zeros: bool, output_layout: str):
     batched = input.ndim == 3
     col_lse, row_lse, padded = _bidir_batched(input, include_zeros) if batched else _bidir_2d(input, include_zeros)
 
