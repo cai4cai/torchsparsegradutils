@@ -610,7 +610,7 @@ class BenchmarkVisualizer:
             perf_data = perf_data.sort_values("mean")
 
             axes[i, 0].barh(perf_data[algo_col], perf_data["mean"], xerr=perf_data["std"])
-            axes[i, 0].set_title(f'{dataset.replace("_", " ").title()} - Forward Time')
+            axes[i, 0].set_title(f"{dataset.replace('_', ' ').title()} - Forward Time")
             axes[i, 0].set_xlabel("Time (μs)")
             axes[i, 0].set_xscale("log")
 
@@ -618,7 +618,7 @@ class BenchmarkVisualizer:
             if "fwd_mem_MB" in df.columns:
                 mem_data = df.groupby(algo_col)["fwd_mem_MB"].mean().sort_values()
                 mem_data.plot(kind="barh", ax=axes[i, 1])
-                axes[i, 1].set_title(f'{dataset.replace("_", " ").title()} - Memory Usage')
+                axes[i, 1].set_title(f"{dataset.replace('_', ' ').title()} - Memory Usage")
                 axes[i, 1].set_xlabel("Memory (MB)")
 
         plt.tight_layout()

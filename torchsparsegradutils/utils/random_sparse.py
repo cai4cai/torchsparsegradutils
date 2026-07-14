@@ -299,9 +299,9 @@ def _gen_indices_2d_coo(
     >>> coords.shape
     torch.Size([2, 6])
     """
-    assert (
-        nnz <= nr * nc
-    ), "Number of elements (nnz) must be less than or equal to the total number of elements (nr * nc)."
+    assert nnz <= nr * nc, (
+        "Number of elements (nnz) must be less than or equal to the total number of elements (nr * nc)."
+    )
 
     coordinates = set()
     while True:
@@ -634,9 +634,9 @@ def _gen_indices_2d_coo_strictly_tri(
     >>> coords.shape
     torch.Size([2, 6])
     """
-    assert (
-        nnz <= n * (n - 1) // 2
-    ), "Number of elements (nnz) must be less than or equal to the total number of elements (n * (n - 1) // 2)."
+    assert nnz <= n * (n - 1) // 2, (
+        "Number of elements (nnz) must be less than or equal to the total number of elements (n * (n - 1) // 2)."
+    )
 
     coordinates = set()
     while True:

@@ -728,7 +728,7 @@ class PairwiseEncoder(torch.nn.Module):
 
         if spatial_shape_in_values != expected_spatial_shape:
             raise ValueError(
-                f"Spatial dimensions do not match: expected {expected_spatial_shape}, " f"got {spatial_shape_in_values}"
+                f"Spatial dimensions do not match: expected {expected_spatial_shape}, got {spatial_shape_in_values}"
             )
 
         # Check number of offsets

@@ -36,16 +36,12 @@ jobs:
         enable-cache: true
     - name: Sync dev environment
       run: uv sync --locked
-    - name: Lint check with flake8
+    - name: Lint check with ruff
       run: |
-        # stop the build if there are Python syntax errors or undefined names
-        uv run flake8 . --count --show-source --statistics
-    - name: Check import sorting with isort
+        uv run ruff check .
+    - name: Check code formatting with ruff
       run: |
-        uv run isort --check-only --diff .
-    - name: Check code formatting with black
-      run: |
-        uv run black --check .
+        uv run ruff format --check .
     - name: Run pytest (via tox -e ${{ matrix.tox-env }})
       run: |
         uvx --with tox-uv tox -e ${{ matrix.tox-env }}

@@ -1,0 +1,7 @@
+# Pinned clang-format major version: 19 (spec/commit.md #4). Bump this
+# comment (and CI/pre-commit pins) together if the pin ever moves.
+---
+BasedOnStyle: Google
+ColumnLimit: 120
+PointerAlignment: Left
+DerivePointerAlignment: false

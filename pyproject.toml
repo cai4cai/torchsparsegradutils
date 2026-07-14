@@ -49,13 +49,11 @@ dev = [
     "pytest==9.0.3",
     "pytest-cov",
     "pytest-rerunfailures==15.1",
-    "black==26.3.1",
-    "isort==6.0.1",
-    "flake8==7.3.0",
     "parameterized==0.9.0",
     "pyyaml==6.0.2",
     "numpy",
     "scipy",
+    "ruff==0.15.21",
 ]
 
 [tool.setuptools]
@@ -65,39 +63,42 @@ include-package-data = true
 [tool.setuptools.packages.find]
 exclude = ["tests*"]
 
-[tool.black]
+[tool.ruff]
 line-length = 120
-target-version = ['py310', 'py311', 'py312']
-include = '\.pyi?$'
-exclude = '''
-(
-  /(
-    # exclude a few common directories in the root of the project
-      \.eggs
-    | \.git
-    | \.hg
-    | \.mypy_cache
-    | \.tox
-    | \.venv
-    | \.pytype
-    | _build
-    | buck-out
-    | build
-    | dist
-  )/
-  # also separately exclude other files if needed
-  #| some_file
-)
-'''
+target-version = "py310"
+# spec/ is a standalone design-record script kept frozen as-is (commit.md #4).
+extend-exclude = ["spec"]
 
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-line_length = 120
-known_first_party = ["torchsparsegradutils"]
-force_grid_wrap = 0
-combine_as_imports = true
-include_trailing_comma = true
+[tool.ruff.lint]
+# Ports the previous .flake8 rule surface (select = B,C,E,F,W,T4,B9) as it was
+# actually enforced: this repo never installed flake8-bugbear/flake8-2020, so
+# the B/C/T4/B9 codes in that select line were inert (no plugin providing
+# them) and only E/F/W ever fired. `I` (isort) is added to replace the
+# standalone isort tool.
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E203",  # whitespace before ':' — conflicts with Black/ruff-format slicing style
+    "E266",  # multiple leading '#' in block comment — stylistic, previously ignored
+    "E501",  # line too long — superseded by line-length + ruff format wrapping
+    # W503 (line break before binary operator) has no ruff equivalent: ruff's
+    # pycodestyle port never implemented it, and it contradicts Black/ruff-format
+    # style (which breaks *before* the operator) — nothing to ignore, kept as a note.
+    "F403",  # `from module import *` — used intentionally in a couple of __init__ re-exports
+    "F401",  # unused import — same re-export use case
+    "E731",  # lambda assigned to a variable — used in a few call sites
+    "E402",  # module level import not at top of file — a couple of conditional-import spots
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["torchsparsegradutils"]
+
+[tool.ruff.format]
+# Defaults already match Black's output (quote/indent/line-ending style); kept
+# explicit for clarity and to pin behavior against future ruff defaults changing.
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+skip-magic-trailing-comma = false
 
 [tool.pytest.ini_options]
 minversion = "6.0"

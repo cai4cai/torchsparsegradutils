@@ -1,0 +1,22 @@
+# Pinned clang-tidy major version: 19 (matches .clang-format, spec/commit.md #4).
+#
+# Modest starter set for the CUDA/C++ kernel code that lands in commit 10+
+# (cuda/csrc/): bugprone-*, performance-*, readability-* minus the noisy
+# naming/magic-number checks that fight kernel-code conventions (short index
+# names like `i`/`j`/`tid`, numeric literals in tuning code).
+#
+# This check set only fully activates once `compile_commands.json` exists
+# (commit 10, `cuda/` scaffold + kernel-builder); until then there are no
+# .cu/.cpp/.h/.hpp files for it to run against.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  readability-*,
+  -readability-identifier-naming,
+  -readability-identifier-length,
+  -readability-magic-numbers
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*'
+FormatStyle: file

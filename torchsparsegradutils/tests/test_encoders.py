@@ -738,7 +738,6 @@ def test_PairwiseEncoder_1d():
     assert sparse_matrix.size() == expected_size
 
 
-
 def test_PairwiseEncoder_backward_compatibility():
     # Test that PairwiseEncoder works correctly (it's the current non-deprecated class)
     volume_shape = (2, 3, 3, 3)
