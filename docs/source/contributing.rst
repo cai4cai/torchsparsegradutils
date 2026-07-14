@@ -195,6 +195,10 @@ Example test structure:
 Documentation
 -------------
 
+See :doc:`naming` for the repository's conventions for sparse layouts, shapes,
+batching, dimensions, and specified-entry counts. Follow these conventions in
+new code, tests, docstrings, and pull requests.
+
 Documentation is built with Sphinx. To build locally:
 
 .. code-block:: bash
