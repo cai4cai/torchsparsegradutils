@@ -1,0 +1,43 @@
+# torchsparsegradutils-cuda — kernel-builder config (build.md: kernel-builder
+# is the decided build system, Hub-only distribution for now).
+#
+# Layout delta vs architecture.md §5 (reported in this commit): kernel-builder
+# (nix-builder/lib/source-set.nix) hard-requires a top-level torch-ext/
+# directory containing torch-ext/<module>/__init__.py — the Python package
+# glue must live there, not at cuda/torchsparsegradutils_cuda/__init__.py as
+# architecture.md §5 shows. Everything else (csrc/registration.cpp,
+# csrc/common/*.cuh, csrc/kernels/) follows architecture.md §5 verbatim —
+# build.toml's src lists accept arbitrary paths, so only the Python glue's
+# location is forced.
+[general]
+name = "torchsparsegradutils-cuda"
+version = 1
+edition = 5
+license = "Apache-2.0"
+backends = ["cuda"]
+
+[general.hub]
+repo-id = "cai4cai/torchsparsegradutils-cuda"
+
+[torch]
+src = [
+  "csrc/registration.cpp",
+]
+
+# Stable ABI (architecture.md §2: "registers implementations for the CUDA
+# dispatch key from C++ (STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m))") — one
+# build per CUDA version works across every torch >= this floor, instead of
+# one build per exact torch version.
+[torch.stable-abi]
+cuda = "2.11"
+
+[kernel.torchsparsegradutils_cuda]
+backend = "cuda"
+depends = ["torch"]
+src = [
+  "csrc/kernels/_smoke/_smoke.cu",
+  "csrc/common/batched_csr.cuh",
+  "csrc/common/dispatch.cuh",
+  "csrc/common/reduce.cuh",
+  "csrc/common/stream.cuh",
+]

@@ -139,3 +139,23 @@ dmypy.json
 
 # Benchmark data
 torchsparsegradutils/benchmarks/.benchmark_data/
+
+# cuda/ package build artifacts (spec/commit.md commit 10 / build.md:
+# kernel-builder is Hub-only — nothing here is committed source).
+cuda/result
+cuda/build/
+cuda/bench/build/
+# create-pyproject's generated local-install/clang-tidy scaffold (CMakeLists,
+# setup.py, pyproject.toml, torch-ext/registration.h, metadata-*.json) —
+# regenerate on demand with `kernel-builder create-pyproject cuda cuda`.
+cuda/CMakeLists.txt
+cuda/cmake/
+cuda/compat.py
+cuda/setup.py
+cuda/pyproject.toml
+cuda/metadata-*.json
+cuda/torch-ext/registration.h
+cuda/torch-ext/*/_ops.py
+cuda/torch-ext/*/*.so
+cuda/.compile-commands/
+cuda/bench/compile_commands.json

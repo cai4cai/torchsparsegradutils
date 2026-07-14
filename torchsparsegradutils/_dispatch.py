@@ -117,3 +117,39 @@ def backend_available() -> bool:
     """Whether a compatible ``torchsparsegradutils_cuda`` backend is loaded
     and registered for the CUDA dispatch key of the ``tsgu::`` ops."""
     return _backend_available
+
+
+# ---------------------------------------------------------------------------
+# tsgu::_smoke — CUDA bring-up smoke op (spec/commit.md Phase 2 #10).
+#
+# Not one of map.md's nine routed ops: this is the trivial `x + 1` op that
+# proves the whole toolchain (kernel-builder scaffold -> compiled extension
+# -> CUDA dispatch-key registration -> torch.ops.tsgu dispatch) end to end,
+# before any real kernel commit (Phase 3) exists. Defined here rather than in
+# ops/ (which is reserved for the nine public-API-routed ops) — private
+# (leading underscore), never exported, never wired to a public wrapper.
+#
+# Schema + fake kernel only, as for every other op in this commit: the CUDA
+# implementation is registered from C++ by torchsparsegradutils_cuda
+# (cuda/csrc/registration.cpp, STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m)) —
+# nothing here ever executes on CPU.
+# ---------------------------------------------------------------------------
+
+
+@torch.library.custom_op("tsgu::_smoke", mutates_args=())
+def _smoke(x: torch.Tensor) -> torch.Tensor:
+    """Bring-up smoke test: ``x + 1``, computed by an actual CUDA kernel
+    launch in the ``torchsparsegradutils_cuda`` backend (never on CPU) —
+    proves compile + load + dispatch end-to-end (spec/commit.md commit 10).
+    """
+    raise NotImplementedError(
+        "tsgu::_smoke has no CPU implementation — it exists only to smoke-test the "
+        "torchsparsegradutils_cuda backend (spec/commit.md Phase 2 #10). Install a "
+        "compatible torchsparsegradutils_cuda and call this on a CUDA tensor."
+    )
+
+
+@_smoke.register_fake
+def _smoke_fake(x: torch.Tensor) -> torch.Tensor:
+    # Value-independent: same shape/dtype/device as the input.
+    return torch.empty_like(x)
