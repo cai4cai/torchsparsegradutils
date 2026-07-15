@@ -2,7 +2,7 @@
 
 FROM python:3.12-slim
 
-ARG PACKAGE_SPEC=torchsparsegradutils[all]==0.2.2
+ARG PACKAGE_SPEC=torchsparsegradutils[all]==0.2.4
 ARG TEST_DEPENDENCIES="pytest pytest-rerunfailures parameterized pyyaml"
 
 ENV CUDA_VISIBLE_DEVICES="" \
@@ -34,7 +34,7 @@ import torchsparsegradutils.jax as tsgu_jax
 from torchsparsegradutils import sparse_mm
 
 dist = metadata.distribution("torchsparsegradutils")
-assert dist.version == "0.2.2", dist.version
+assert dist.version == "0.2.4", dist.version
 
 requires = [requirement.lower() for requirement in dist.requires or []]
 for dependency in ("cupy-cuda12x", "jax"):
