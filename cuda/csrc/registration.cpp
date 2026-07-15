@@ -25,7 +25,20 @@
 // the launcher's signature. Defined in csrc/kernels/_smoke/_smoke.cu.
 torch::stable::Tensor tsgu_smoke_launch(torch::stable::Tensor const &x);
 
-STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) { m.impl("_smoke", TORCH_BOX(&tsgu_smoke_launch)); }
+// Commit 12 (spec/commit.md Phase 3): tsgu::seglse + tsgu::seglse_bwd —
+// Family 2 "Segmented logsumexp" (kernels.md). Defined in
+// csrc/kernels/logsumexp/seglse.cu.
+torch::stable::Tensor tsgu_seglse_launch(torch::stable::Tensor const &vals, torch::stable::Tensor const &rowptr,
+                                          int64_t B, int64_t n, int64_t m, bool include_zeros);
+torch::stable::Tensor tsgu_seglse_bwd_launch(torch::stable::Tensor const &vals, torch::stable::Tensor const &rowptr,
+                                              torch::stable::Tensor const &lse, torch::stable::Tensor const &gout,
+                                              int64_t B, int64_t n);
+
+STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
+  m.impl("_smoke", TORCH_BOX(&tsgu_smoke_launch));
+  m.impl("seglse", TORCH_BOX(&tsgu_seglse_launch));
+  m.impl("seglse_bwd", TORCH_BOX(&tsgu_seglse_bwd_launch));
+}
 
 // --- Python extension module entry point ------------------------------------
 // kernel-builder's own REGISTER_EXTENSION helper (its generated

@@ -9,6 +9,7 @@ within floating-point tolerance. This is *not* the full parity harness
 itself having introduced a discrepancy (e.g. a bad import rewrite).
 """
 
+import pytest
 import torch
 
 from tests.oracle import (
@@ -31,6 +32,7 @@ from torchsparsegradutils import (
     sparse_mm,
     sparse_triangular_solve,
 )
+from torchsparsegradutils._dispatch import backend_available
 from torchsparsegradutils.utils import linear_cg
 
 
@@ -76,13 +78,20 @@ def test_oracle_sparse_generic_lstsq_matches_live():
     assert torch.allclose(live, oracle, atol=1e-4, rtol=1e-4)
 
 
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and backend_available()),
+    reason=(
+        "sparse_logsumexp dispatches to tsgu::seglse as of spec/commit.md Phase 3 "
+        "commit 12 -- CUDA-only (architecture.md §4); no CUDA device available here."
+    ),
+)
 def test_oracle_sparse_logsumexp_matches_live():
     i = torch.tensor([[0, 1, 1], [1, 0, 2]])
     v = torch.tensor([1.0, 2.0, 3.0])
-    x = torch.sparse_coo_tensor(i, v, (3, 3))
+    x = torch.sparse_coo_tensor(i, v, (3, 3)).cuda()
 
     live = sparse_logsumexp(x, dim=1)
-    oracle = oracle_sparse_logsumexp(x, dim=1)
+    oracle = oracle_sparse_logsumexp(x.cpu(), dim=1).cuda()
     assert torch.allclose(live, oracle)
 
 

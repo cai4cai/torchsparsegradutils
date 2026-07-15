@@ -8,6 +8,9 @@ import doctest
 import warnings
 
 import pytest
+import torch
+
+from torchsparsegradutils._dispatch import backend_available
 
 # Modules that have working doctests
 DOCTEST_MODULES = [
@@ -27,10 +30,22 @@ DOCTEST_MODULES = [
     "torchsparsegradutils.distributions.sparse_multivariate_normal",
 ]
 
+# Modules whose doctest examples exercise a CUDA-only tsgu:: op
+# (architecture.md §4: "CUDA-required at runtime" -- no CPU implementation
+# ships). torchsparsegradutils.ops.logsumexp's examples call
+# sparse_logsumexp (tsgu::seglse as of spec/commit.md Phase 3 commit 12) both
+# directly and from sparse_bidir_logsumexp's own docstring.
+_CUDA_ONLY_DOCTEST_MODULES = {"torchsparsegradutils.ops.logsumexp"}
+
 
 @pytest.mark.parametrize("module_name", DOCTEST_MODULES)
 def test_doctest(module_name):
     """Test doctests for a specific module."""
+    if module_name in _CUDA_ONLY_DOCTEST_MODULES and not (torch.cuda.is_available() and backend_available()):
+        pytest.skip(
+            f"{module_name}'s doctests exercise a CUDA-only tsgu:: op; no CUDA device "
+            "and/or loaded, version-matched torchsparsegradutils_cuda backend available here."
+        )
     try:
         # Import the module
         import importlib

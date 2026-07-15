@@ -18,9 +18,26 @@ from test_sparse_logsumexp import (
 )
 
 from torchsparsegradutils import sparse_bidir_logsumexp, sparse_logsumexp
+from torchsparsegradutils._dispatch import backend_available
 from torchsparsegradutils.ops.logsumexp import _bidir_2d, _bidir_batched
 
 _NESTED_OK = parse_version(torch.__version__) >= parse_version("2.4")
+
+
+def _skip_if_cpu_needs_seglse(device):
+    """The five tests below compare sparse_bidir_logsumexp (still its
+    pure-PyTorch _legacy_* body -- untouched by spec/commit.md Phase 3 commit
+    12) against sparse_logsumexp as a two-call reference. sparse_logsumexp
+    itself is CUDA-only as of commit 12 (tsgu::seglse, architecture.md §4),
+    so that comparison can't run on cpu -- skip cleanly rather than hit
+    sparse_logsumexp's NotImplementedError, matching test_sparse_logsumexp.py's
+    device fixture."""
+    if not (device.type == "cuda" and backend_available()):
+        pytest.skip(
+            "two-call reference uses sparse_logsumexp, which is CUDA-only as of "
+            "spec/commit.md Phase 3 commit 12 -- no CUDA device and/or loaded "
+            "torchsparsegradutils_cuda backend available here."
+        )
 
 
 @pytest.fixture(params=SPARSE_LAYOUTS, ids=[layout_id(x) for x in SPARSE_LAYOUTS])
@@ -60,6 +77,7 @@ def include_zeros(request):
 
 def test_matches_two_call_and_dense(fwd_layout, device, value_dtype, index_dtype, include_zeros):
     """(col_lse, row_lse) equals two sparse_logsumexp calls and the dense reference."""
+    _skip_if_cpu_needs_seglse(device)
     dense = _make_dense(device, value_dtype, seed=0)  # 5x4: has an all-zero row and column
     sp = _to_layout(dense, fwd_layout, index_dtype)
     col_lse, row_lse = sparse_bidir_logsumexp(sp, include_zeros=include_zeros)
@@ -152,6 +170,7 @@ def test_positive_inf_value_both_axes(fwd_layout, device, include_zeros):
 
 
 def test_batched_matches_two_call(device, value_dtype, include_zeros):
+    _skip_if_cpu_needs_seglse(device)
     dense = _make_batched_dense(device, value_dtype, seed=4)  # (3, 5, 4)
     sp = dense.to_sparse_coo()
     col_lse, row_lse = sparse_bidir_logsumexp(sp, include_zeros=include_zeros)
@@ -196,6 +215,7 @@ def test_batched_all_layouts_match_two_call(batched_layout, device, value_dtype,
     """Batched COO, CSR and CSC agree with the two-call baseline. The compressed layouts
     take a different route in (converted, since batched CSR/CSC expose no per-slice index
     accessors), so COO coverage alone would not exercise them."""
+    _skip_if_cpu_needs_seglse(device)
     dense = _make_batched_dense_equal_nnz(device, value_dtype, seed=4)
     sp = _to_layout(dense, batched_layout)
     col_lse, row_lse = sparse_bidir_logsumexp(sp, include_zeros=include_zeros)
@@ -242,6 +262,7 @@ def test_bidir_returns_share_one_allocation(device):
 def test_gradient_parity_with_two_call(layout, device):
     """The values.expand(2, nnz) backward must sum each nonzero's row + column
     gradient — identical to summing the two separate reductions' gradients."""
+    _skip_if_cpu_needs_seglse(device)
     dense = _make_dense(device, torch.float64, seed=6)
 
     def _grad(bidir):
@@ -260,6 +281,7 @@ def test_gradient_parity_with_two_call(layout, device):
 def test_batched_gradient_parity_with_two_call(device):
     """_bidir_batched is a distinct backward path; its gradient must still match the
     sum of the two separate batched reductions' gradients."""
+    _skip_if_cpu_needs_seglse(device)
     dense = _make_batched_dense(device, torch.float64, seed=6)  # (3, 5, 4)
 
     def _grad(bidir):

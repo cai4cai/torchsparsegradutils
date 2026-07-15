@@ -61,17 +61,17 @@ Stated once here; per-op specifics live in the **Contract** column of §1.
 Names are final — [naming.md](naming.md) §2 governs; implementers copy them
 verbatim, never invent. `spmv` = `spmm` with `p = 1` (no separate op).
 
-| Public API | Forward | Backward | Kernel dir(s) |
-|------------|---------|----------|---------------|
-| `sparse_mm` | `tsgu::spmm` | gradA `tsgu::sddmm` · gradB `tsgu::spmm` (on cached CSC) | `spmm/`, `sddmm/` |
-| `sparse_triangular_solve` | `tsgu::spsm` | gradB `tsgu::spsm` (transposed plan) · gradA `tsgu::sddmm` (negate epilogue) | `spsm/`, `sddmm/` |
-| `sparse_generic_solve` | host loop → `tsgu::spmm` | host `transpose_solve` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` |
-| `sparse_generic_lstsq` | host loop → `tsgu::spmm` (A and cached CSC) | host `transpose_lstsq` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` |
-| `sparse_logsumexp` | `tsgu::seglse` | `tsgu::seglse_bwd` (uses saved `lse`) | `logsumexp/` |
-| `sparse_bidir_logsumexp` | `tsgu::seglse_bidir` | `tsgu::seglse_bidir_bwd` | `logsumexp/` |
-| `segment_mm` | `tsgu::grouped_gemm` | both grads `tsgu::grouped_gemm` (transposed operands) | `grouped_gemm/` |
-| `gather_mm` | `tsgu::grouped_gemm` (gather prologue) | both grads `tsgu::grouped_gemm` | `grouped_gemm/` |
-| `convert_coo_to_csr*` | `tsgu::coo2csr` | — (index-only, no grad) | `convert/` |
+| Public API | Forward | Backward | Kernel dir(s) | Status |
+|------------|---------|----------|---------------|--------|
+| `sparse_mm` | `tsgu::spmm` | gradA `tsgu::sddmm` · gradB `tsgu::spmm` (on cached CSC) | `spmm/`, `sddmm/` | pending |
+| `sparse_triangular_solve` | `tsgu::spsm` | gradB `tsgu::spsm` (transposed plan) · gradA `tsgu::sddmm` (negate epilogue) | `spsm/`, `sddmm/` | pending |
+| `sparse_generic_solve` | host loop → `tsgu::spmm` | host `transpose_solve` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` | pending |
+| `sparse_generic_lstsq` | host loop → `tsgu::spmm` (A and cached CSC) | host `transpose_lstsq` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` | pending |
+| `sparse_logsumexp` | `tsgu::seglse` | `tsgu::seglse_bwd` (uses saved `lse`) | `logsumexp/` | ✅ live (commit 12) |
+| `sparse_bidir_logsumexp` | `tsgu::seglse_bidir` | `tsgu::seglse_bidir_bwd` | `logsumexp/` | pending (commit 13) |
+| `segment_mm` | `tsgu::grouped_gemm` | both grads `tsgu::grouped_gemm` (transposed operands) | `grouped_gemm/` | pending |
+| `gather_mm` | `tsgu::grouped_gemm` (gather prologue) | both grads `tsgu::grouped_gemm` | `grouped_gemm/` | pending |
+| `convert_coo_to_csr*` | `tsgu::coo2csr` | — (index-only, no grad) | `convert/` | pending |
 
 Composites route through the table: iterative solvers (§2) call `tsgu::spmm`;
 distributions/encoder (§6–7) call the §1 ops and never touch `tsgu::` directly.

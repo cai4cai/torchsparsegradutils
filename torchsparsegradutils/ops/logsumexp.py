@@ -10,14 +10,17 @@ __all__ = ["sparse_logsumexp", "sparse_bidir_logsumexp"]
 # tsgu::seglse / tsgu::seglse_bwd / tsgu::seglse_bidir / tsgu::seglse_bidir_bwd
 # — op schemas, fake kernels, autograd registration.
 # spec/commit.md Phase 1 #9; routing verbatim from spec/map.md "Kernel
-# routing". Schemas take plain dense tensors only (architecture.md §2). The
-# `sparse_logsumexp`/`sparse_bidir_logsumexp` wrappers below still call their
-# `_legacy_*` bodies; nothing wires these ops in until commits 12/13
-# (spec/commit.md Phase 3).
+# routing". Schemas take plain dense tensors only (architecture.md §2).
 #
-# No CUDA/CPU implementation is registered in this commit — each op exists
-# only as schema + fake (meta) kernel and raises NotImplementedError if
-# actually invoked.
+# spec/commit.md Phase 3 commit 12: `sparse_logsumexp` now dispatches to
+# `tsgu::seglse` / `tsgu::seglse_bwd` (CUDA implementation registered in
+# cuda/csrc/kernels/logsumexp/seglse.cu) -- its `_legacy_*` body is deleted.
+# `sparse_bidir_logsumexp` still calls its `_legacy_*` body; `seglse_bidir`
+# wires in at commit 13.
+#
+# `seglse_bidir` / `seglse_bidir_bwd` have no CUDA/CPU implementation yet —
+# each still exists only as schema + fake (meta) kernel and raises
+# NotImplementedError if actually invoked.
 # ---------------------------------------------------------------------------
 
 
@@ -124,7 +127,13 @@ def _seglse_backward(ctx, grad_output):
     vals, rowptr, lse = ctx.saved_tensors
     grad_vals = None
     if ctx.vals_requires_grad:
-        grad_vals = torch.ops.tsgu.seglse_bwd(vals, rowptr, lse, grad_output, ctx.B, ctx.n)
+        # grad_output can arrive as a broadcast/expanded view (e.g. a stride-0
+        # tensor from a reduction's backward, such as .sum()) rather than a
+        # materialized (B, n) buffer -- the CUDA kernel indexes it with a
+        # plain contiguous pointer, so it must be made contiguous here first
+        # (never inside the kernel launcher, which has no autograd context to
+        # do this safely).
+        grad_vals = torch.ops.tsgu.seglse_bwd(vals, rowptr, lse, grad_output.contiguous(), ctx.B, ctx.n)
     return grad_vals, None, None, None, None, None
 
 
@@ -339,73 +348,110 @@ def _row_col_val(input: Tensor, nrows: int, ncols: int):
     return rows, cols, coo.values(), None, None
 
 
+# ---------------------------------------------------------------------------
+# sparse_logsumexp's tsgu::seglse-backed reduction (spec/commit.md Phase 3
+# commit 12). sparse_bidir_logsumexp (below, via _scatter_logsumexp /
+# _row_col_val / _bidir_2d / _bidir_batched) is unaffected -- it stays on its
+# pure-PyTorch body until its own kernel commit (13).
+# ---------------------------------------------------------------------------
+
+
+def _seglse_dispatch(vals: Tensor, rowptr: Tensor, num_segments: int, full_size: int, include_zeros: bool) -> Tensor:
+    """Thin call-through to ``torch.ops.tsgu.seglse`` (kernels.md Family 2):
+    ``B=1`` is passed regardless of any logical batching -- the op only ever
+    needs ``total_segs = B * n`` and the reduced axis's full size, and
+    folding batch structure into ``rowptr``/``num_segments`` up front (as
+    every caller below does) is exactly equivalent for its purposes.
+    """
+    index_dtype = rowptr.dtype if rowptr.dtype in (torch.int32, torch.int64) else torch.int64
+    rowptr = rowptr.to(index_dtype)
+    lse = torch.ops.tsgu.seglse(vals, rowptr, 1, num_segments, full_size, include_zeros)
+    return lse.reshape(num_segments)
+
+
+def _seglse_sorted(seg_idx: Tensor, vals: Tensor, num_segments: int, full_size: int, include_zeros: bool,
+                    counts: Union[Tensor, None] = None) -> Tensor:
+    """``_seglse_dispatch`` for a segment axis that is *not* already
+    contiguous in ``vals`` (e.g. dim=0 on a CSR input, dim=1 on a CSC input,
+    or any axis of a COO input) -- sorts ``vals`` into contiguous per-segment
+    groups first (kernels.md: "CSR rows are sorted for free ... COO/CSC must
+    not assume sorted order"). ``vals.index_select`` is autograd-differentiable,
+    so gradients flow back to ``vals``'s original order automatically -- no
+    manual un-permutation needed.
+    """
+    order = torch.argsort(seg_idx, stable=True)
+    vals_sorted = vals.index_select(0, order)
+    if counts is None:
+        counts = torch.bincount(seg_idx, minlength=num_segments)
+    index_dtype = torch.int32 if max(num_segments, vals.numel()) < 2**31 else torch.int64
+    rowptr = torch.zeros(num_segments + 1, dtype=index_dtype, device=vals.device)
+    rowptr[1:] = torch.cumsum(counts, dim=0).to(index_dtype)
+    return _seglse_dispatch(vals_sorted, rowptr, num_segments, full_size, include_zeros)
+
+
 def _logsumexp_2d(input: Tensor, dims, keepdim: bool, include_zeros: bool) -> Tensor:
-    """Reduction for an unbatched 2-D sparse tensor (see :func:`sparse_logsumexp`)."""
+    """Reduction for an unbatched 2-D sparse tensor (see :func:`sparse_logsumexp`),
+    dispatching to ``tsgu::seglse``."""
     nrows, ncols = input.shape
 
-    # One scatter path for every layout/axis: segment_reduce fits only the natural
-    # CSR/CSC axis and measured 1.5x-13x slower than scatter on GPU, worst with the
-    # many-small-segments common case.
-    rows, cols, vals, row_nnz, col_nnz = _row_col_val(input, nrows, ncols)
-
     if dims == [0, 1]:
-        # Reduce everything -> scalar. n_zeros structural zeros == one entry of log(n_zeros).
-        flat = vals
-        if include_zeros:
-            n_zeros = nrows * ncols - vals.numel()
-            if n_zeros > 0:
-                log_nz = torch.full((1,), float(n_zeros), device=vals.device, dtype=vals.dtype).log()
-                flat = torch.cat([vals, log_nz])
-        result = torch.logsumexp(flat, dim=0)
+        # Reduce everything -> scalar; one segment holding every stored value.
+        vals = input.values() if input.layout != torch.sparse_coo else (
+            input if input.is_coalesced() else input.coalesce()
+        ).values()
+        n_specified = vals.numel()
+        rowptr = torch.tensor([0, n_specified], dtype=torch.int64, device=vals.device)
+        result = _seglse_dispatch(vals, rowptr, 1, nrows * ncols, include_zeros)[0]
         return result.reshape(1, 1) if keepdim else result
 
-    # dims == [1]: reduce columns -> one value per row.
-    # dims == [0]: reduce rows    -> one value per column.
     if dims == [1]:
-        scatter_idx, n_groups, axis_nnz, full, keep_ax = rows, nrows, row_nnz, ncols, 1
-    else:
-        scatter_idx, n_groups, axis_nnz, full, keep_ax = cols, ncols, col_nnz, nrows, 0
+        # Reduce columns -> one value per row. CSR rows are already
+        # contiguous (rowptr = crow_indices, no sort needed); every other
+        # layout sorts by row first.
+        if input.layout == torch.sparse_csr:
+            result = _seglse_dispatch(input.values(), input.crow_indices(), nrows, ncols, include_zeros)
+        else:
+            rows, _cols, vals, row_nnz, _col_nnz = _row_col_val(input, nrows, ncols)
+            result = _seglse_sorted(rows, vals, nrows, ncols, include_zeros, counts=row_nnz)
+        return result.unsqueeze(1) if keepdim else result
 
-    if include_zeros:
-        axis_nnz = axis_nnz if axis_nnz is not None else torch.bincount(scatter_idx, minlength=n_groups)
-        n_zeros = (full - axis_nnz).to(vals.dtype)
+    # dims == [0]: reduce rows -> one value per column. CSC columns are
+    # already contiguous (colptr = ccol_indices); every other layout sorts.
+    if input.layout == torch.sparse_csc:
+        result = _seglse_dispatch(input.values(), input.ccol_indices(), ncols, nrows, include_zeros)
     else:
-        n_zeros = None
-    result = _scatter_logsumexp(vals, scatter_idx, n_groups, n_zeros)
-    return result.unsqueeze(keep_ax) if keepdim else result
+        _rows, cols, vals, _row_nnz, col_nnz = _row_col_val(input, nrows, ncols)
+        result = _seglse_sorted(cols, vals, ncols, nrows, include_zeros, counts=col_nnz)
+    return result.unsqueeze(0) if keepdim else result
 
 
 def _logsumexp_batched(input: Tensor, dims, keepdim: bool, include_zeros: bool) -> Tensor:
-    """Reduction within each batch slice ``input[k]`` of a batched 3-D sparse tensor.
+    """Reduction within each batch slice ``input[k]`` of a batched 3-D sparse
+    tensor, dispatching to ``tsgu::seglse``.
 
-    Each ``(rows, cols)`` matrix ``input[k]`` is reduced independently: the batch
-    index is folded into the scatter index, so a single scatter reduces every slice
-    at once. Batched inputs go through COO (batched CSR/CSC require equal nnz per
-    slice in PyTorch).
+    Each ``(rows, cols)`` matrix ``input[k]`` is reduced independently: the
+    batch index is folded into the segment index (naming.md §2 folded row),
+    so a single kernel launch reduces every slice at once. Batched inputs go
+    through COO (batched CSR/CSC require equal nnz per slice in PyTorch).
     """
-    # Not _scatter_logsumexp's batch axis: it needs a rectangular (*batch, nnz), but COO slices can
-    # have unequal nnz (unlike CSR/CSC, which PyTorch forces equal). Padding them rectangular
-    # measured 2.6x slower, and far worse under skew.
     b, nrows, ncols = input.shape
     coo = input if (input.layout == torch.sparse_coo and input.is_coalesced()) else input.to_sparse_coo().coalesce()
     bidx, rows, cols = coo.indices()
     vals = coo.values()
 
     if dims == [1, 2]:
-        # Reduce each whole slice -> (b,).
-        n_zeros = (nrows * ncols - torch.bincount(bidx, minlength=b)).to(vals.dtype) if include_zeros else None
-        result = _scatter_logsumexp(vals, bidx, b, n_zeros)
+        # Reduce each whole slice -> (b,); segments = batch index.
+        result = _seglse_sorted(bidx, vals, b, nrows * ncols, include_zeros)
         return result.reshape(b, 1, 1) if keepdim else result
 
-    # dims == [2]: reduce columns -> (b, rows).
-    # dims == [1]: reduce rows    -> (b, cols).
+    # dims == [2]: reduce columns -> (b, rows); segments = folded row b*nrows+r.
+    # dims == [1]: reduce rows    -> (b, cols); segments = folded col b*ncols+c.
     if dims == [2]:
-        scatter_idx, n_groups, full, out_shape, keep_ax = bidx * nrows + rows, b * nrows, ncols, (b, nrows), 2
+        seg_idx, num_segments, full_size, out_shape, keep_ax = bidx * nrows + rows, b * nrows, ncols, (b, nrows), 2
     else:
-        scatter_idx, n_groups, full, out_shape, keep_ax = bidx * ncols + cols, b * ncols, nrows, (b, ncols), 1
+        seg_idx, num_segments, full_size, out_shape, keep_ax = bidx * ncols + cols, b * ncols, nrows, (b, ncols), 1
 
-    n_zeros = (full - torch.bincount(scatter_idx, minlength=n_groups)).to(vals.dtype) if include_zeros else None
-    result = _scatter_logsumexp(vals, scatter_idx, n_groups, n_zeros).reshape(out_shape)
+    result = _seglse_sorted(seg_idx, vals, num_segments, full_size, include_zeros).reshape(out_shape)
     return result.unsqueeze(keep_ax) if keepdim else result
 
 
@@ -533,25 +579,28 @@ def sparse_logsumexp(
 
     Examples
     --------
+    ``tsgu::seglse`` (spec/commit.md Phase 3 commit 12) is CUDA-only
+    (architecture.md §4) -- these examples run on a CUDA tensor.
+
     >>> i = torch.tensor([[0, 1, 1], [1, 0, 2]])
     >>> v = torch.tensor([1.0, 2.0, 3.0])
-    >>> x = torch.sparse_coo_tensor(i, v, (3, 3))
+    >>> x = torch.sparse_coo_tensor(i, v, (3, 3)).cuda()
     >>> sparse_logsumexp(x, dim=1, include_zeros=False)
-    tensor([1.0000, 3.3133,   -inf])
+    tensor([1.0000, 3.3133,   -inf], device='cuda:0')
     >>> sparse_logsumexp(x, dim=1, include_zeros=True)
-    tensor([1.5514, 3.3490, 1.0986])
+    tensor([1.5514, 3.3490, 1.0986], device='cuda:0')
 
     ``include_zeros=True`` agrees with the dense reference:
 
     >>> torch.logsumexp(x.to_dense(), dim=1)
-    tensor([1.5514, 3.3490, 1.0986])
+    tensor([1.5514, 3.3490, 1.0986], device='cuda:0')
 
     Batched 3-D input, reducing within each slice:
 
     >>> xb = torch.stack([x.to_dense(), x.to_dense()]).to_sparse_coo()
     >>> sparse_logsumexp(xb, dim=2)
     tensor([[1.5514, 3.3490, 1.0986],
-            [1.5514, 3.3490, 1.0986]])
+            [1.5514, 3.3490, 1.0986]], device='cuda:0')
     """
     if input.ndim not in (2, 3):
         raise NotImplementedError(
@@ -579,11 +628,8 @@ def sparse_logsumexp(
         raise RuntimeError("sparse_logsumexp: dim contains a repeated dimension.")
     dims = sorted(normalised)
 
-    return _legacy_sparse_logsumexp(input, dims, keepdim, include_zeros)
-
-
-# deleted by its kernel commit (spec/commit.md Phase 3)
-def _legacy_sparse_logsumexp(input: Tensor, dims, keepdim: bool, include_zeros: bool) -> Tensor:
+    # tsgu::seglse live (spec/commit.md Phase 3 commit 12) -- _legacy_sparse_logsumexp
+    # deleted in this commit; sparse_bidir_logsumexp (below) is untouched.
     if input.ndim == 2:
         return _logsumexp_2d(input, dims, keepdim, include_zeros)
 
@@ -676,14 +722,18 @@ def sparse_bidir_logsumexp(
 
     Examples
     --------
+    This example's second block compares against :func:`sparse_logsumexp`
+    (``tsgu::seglse`` as of spec/commit.md Phase 3 commit 12), which is
+    CUDA-only (architecture.md §4) -- run on a CUDA tensor throughout.
+
     >>> i = torch.tensor([[0, 1, 1], [1, 0, 2]])
     >>> v = torch.tensor([1.0, 2.0, 3.0])
-    >>> x = torch.sparse_coo_tensor(i, v, (3, 3))
+    >>> x = torch.sparse_coo_tensor(i, v, (3, 3)).cuda()
     >>> col_lse, row_lse = sparse_bidir_logsumexp(x)
     >>> col_lse  # dim=0 reduction (one value per column)
-    tensor([2.2395, 1.5514, 3.0949])
+    tensor([2.2395, 1.5514, 3.0949], device='cuda:0')
     >>> row_lse  # dim=1 reduction (one value per row)
-    tensor([1.5514, 3.3490, 1.0986])
+    tensor([1.5514, 3.3490, 1.0986], device='cuda:0')
 
     Agrees with two separate :func:`sparse_logsumexp` calls:
 
@@ -694,7 +744,7 @@ def sparse_bidir_logsumexp(
 
     >>> sparse_bidir_logsumexp(x, output_layout="padded")
     tensor([[2.2395, 1.5514, 3.0949],
-            [1.5514, 3.3490, 1.0986]])
+            [1.5514, 3.3490, 1.0986]], device='cuda:0')
     """
     if input.ndim not in (2, 3):
         raise NotImplementedError(

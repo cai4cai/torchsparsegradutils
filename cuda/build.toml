@@ -36,6 +36,7 @@ backend = "cuda"
 depends = ["torch"]
 src = [
   "csrc/kernels/_smoke/_smoke.cu",
+  "csrc/kernels/logsumexp/seglse.cu",
   "csrc/common/batched_csr.cuh",
   "csrc/common/dispatch.cuh",
   "csrc/common/reduce.cuh",

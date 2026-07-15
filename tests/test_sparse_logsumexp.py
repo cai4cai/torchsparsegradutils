@@ -3,6 +3,7 @@ import torch
 from test_config import DEVICES, INDEX_DTYPES, SPARSE_LAYOUTS, VALUE_DTYPES, Tolerances
 
 from torchsparsegradutils import sparse_logsumexp
+from torchsparsegradutils._dispatch import backend_available
 
 # dim arguments to exercise: per-row, per-column, and full reduction.
 DIMS = [0, 1, [0, 1]]
@@ -71,8 +72,25 @@ def fwd_layout(request):
     return request.param
 
 
-@pytest.fixture(params=DEVICES, ids=[device_id(d) for d in DEVICES])
+# spec/commit.md Phase 3 commit 12: sparse_logsumexp now dispatches to
+# tsgu::seglse, which is CUDA-only (architecture.md §4: "CUDA-required at
+# runtime" -- no CPU implementation ships). DEVICES still includes cpu (other
+# suites use it), so the `device` fixture below skips cleanly on a cpu
+# parametrization instead of hitting the op's NotImplementedError -- the
+# expected degraded-mode outcome on a machine without a compatible CUDA
+# backend (spec/testing.md "CPU CI (no GPU)"), mirroring tests/test_gate1_smoke.py's
+# skipif pattern for tsgu::_smoke.
+_CUDA_DEVICES = [d for d in DEVICES if d.type == "cuda"] if backend_available() else []
+
+
+@pytest.fixture(params=_CUDA_DEVICES or [None], ids=[device_id(d) for d in _CUDA_DEVICES] or ["cuda-unavailable"])
 def device(request):
+    if request.param is None:
+        pytest.skip(
+            "sparse_logsumexp requires a CUDA device and a loaded tsgu backend "
+            "(spec/commit.md Phase 3 commit 12: tsgu::seglse is CUDA-only) -- "
+            "none available on this machine."
+        )
     return request.param
 
 
