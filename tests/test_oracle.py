@@ -95,15 +95,22 @@ def test_oracle_sparse_logsumexp_matches_live():
     assert torch.allclose(live, oracle)
 
 
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and backend_available()),
+    reason=(
+        "sparse_bidir_logsumexp dispatches to tsgu::seglse_bidir as of spec/commit.md "
+        "Phase 3 commit 13 -- CUDA-only (architecture.md §4); no CUDA device available here."
+    ),
+)
 def test_oracle_sparse_bidir_logsumexp_matches_live():
     i = torch.tensor([[0, 1, 1], [1, 0, 2]])
     v = torch.tensor([1.0, 2.0, 3.0])
-    x = torch.sparse_coo_tensor(i, v, (3, 3))
+    x = torch.sparse_coo_tensor(i, v, (3, 3)).cuda()
 
     live_col, live_row = sparse_bidir_logsumexp(x)
-    oracle_col, oracle_row = oracle_sparse_bidir_logsumexp(x)
-    assert torch.allclose(live_col, oracle_col)
-    assert torch.allclose(live_row, oracle_row)
+    oracle_col, oracle_row = oracle_sparse_bidir_logsumexp(x.cpu())
+    assert torch.allclose(live_col, oracle_col.cuda())
+    assert torch.allclose(live_row, oracle_row.cuda())
 
 
 def test_oracle_segment_mm_matches_live():

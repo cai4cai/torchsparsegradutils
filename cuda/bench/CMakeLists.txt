@@ -35,3 +35,8 @@ target_link_libraries(bench_smoke PRIVATE nvbench::nvbench nvbench::main)
 # tsgu::seglse (spec/commit.md Phase 3 commit 12) — kernels.md Family 2.
 add_executable(bench_seglse bench_seglse.cu)
 target_link_libraries(bench_seglse PRIVATE nvbench::nvbench nvbench::main)
+
+# tsgu::seglse_bidir (spec/commit.md Phase 3 commit 13) — kernels.md Family 2
+# fused bidirectional variant.
+add_executable(bench_seglse_bidir bench_seglse_bidir.cu)
+target_link_libraries(bench_seglse_bidir PRIVATE nvbench::nvbench nvbench::main)

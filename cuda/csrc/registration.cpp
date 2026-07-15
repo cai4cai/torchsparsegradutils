@@ -34,10 +34,22 @@ torch::stable::Tensor tsgu_seglse_bwd_launch(torch::stable::Tensor const &vals, 
                                               torch::stable::Tensor const &lse, torch::stable::Tensor const &gout,
                                               int64_t B, int64_t n);
 
+// Commit 13 (spec/commit.md Phase 3): tsgu::seglse_bidir + tsgu::seglse_bidir_bwd
+// — fused row+column Family 2 variant (kernels.md). Defined in
+// csrc/kernels/logsumexp/seglse_bidir.cu.
+torch::stable::Tensor tsgu_seglse_bidir_launch(torch::stable::Tensor const &vals, torch::stable::Tensor const &rowptr,
+                                                torch::stable::Tensor const &col, int64_t B, int64_t n, int64_t m,
+                                                bool include_zeros);
+torch::stable::Tensor tsgu_seglse_bidir_bwd_launch(torch::stable::Tensor const &vals, torch::stable::Tensor const &rowptr,
+                                                    torch::stable::Tensor const &col, torch::stable::Tensor const &padded,
+                                                    torch::stable::Tensor const &gout, int64_t B, int64_t n, int64_t m);
+
 STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
   m.impl("_smoke", TORCH_BOX(&tsgu_smoke_launch));
   m.impl("seglse", TORCH_BOX(&tsgu_seglse_launch));
   m.impl("seglse_bwd", TORCH_BOX(&tsgu_seglse_bwd_launch));
+  m.impl("seglse_bidir", TORCH_BOX(&tsgu_seglse_bidir_launch));
+  m.impl("seglse_bidir_bwd", TORCH_BOX(&tsgu_seglse_bidir_bwd_launch));
 }
 
 // --- Python extension module entry point ------------------------------------
