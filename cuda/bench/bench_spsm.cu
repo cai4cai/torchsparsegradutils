@@ -1,11 +1,11 @@
 // NVBench target for tsgu::spsm (spec/commit.md Phase 3 commit 16, T3;
 // kernels.md Family 3 SpSM row). Axes are the SOLVE kernel's tuning knobs
-// (cuda/csrc/kernels/spsm/spsm.cu's spsm_level_kernel): matrix size `n`,
-// the dense rhs width `p`, and `n_levels` — the level-schedule DEPTH, this
-// kernel's dominant cost axis (module comment in spsm.cu: level count/
-// launch latency, not per-row FMA throughput, is what drives SpSM time; a
-// deep chain means many small launches, a shallow/wide schedule means few
-// large ones).
+// (cuda/csrc/kernels/spsm/spsm.cu's spsm_syncfree_kernel): matrix size `n`,
+// the dense rhs width `p`, and `n_levels` — the dependency-chain DEPTH,
+// this kernel's dominant cost axis (module comment in spsm.cu: the serial
+// chain's per-hop latency, not per-row FMA throughput, is what drives SpSM
+// time; the sync-free single launch replaced commit 16's one-launch-per-
+// level v1 whose cost was launch latency times the level count).
 //
 // This target benches the SOLVE kernel directly, with a level schedule
 // already known (built host-side, by construction, from a synthetic
@@ -36,39 +36,97 @@ constexpr int kWarpSize = 32;
 constexpr int kWarpsPerBlock = 8;
 constexpr int kThreadsPerBlock = kWarpSize * kWarpsPerBlock;
 
-// Mirrors csrc/kernels/spsm/spsm.cu's spsm_level_kernel exactly (float
+// Mirrors csrc/kernels/spsm/spsm.cu's spsm_syncfree_kernel exactly (float
 // values, int64_t plan indices — the plan's arrays are always int64
-// regardless of the caller's rowptr/col dtype, per plan.h).
-__global__ void spsm_level_kernel(float *__restrict__ x, int64_t const *__restrict__ eff_ptr,
-                                   int64_t const *__restrict__ eff_dep, int64_t const *__restrict__ eff_val_idx,
-                                   int64_t const *__restrict__ diag_val_idx, int64_t const *__restrict__ row_order,
-                                   int64_t level_start, int64_t level_size, float const *__restrict__ vals,
-                                   float const *__restrict__ rhs, int64_t p, bool unitriangular) {
-  int64_t warp_in_block = threadIdx.x / kWarpSize;
-  int64_t lane = threadIdx.x % kWarpSize;
-  int64_t idx = static_cast<int64_t>(blockIdx.x) * kWarpsPerBlock + warp_in_block;
-  if (idx >= level_size) return;
-  int64_t owner = row_order[level_start + idx];
+// regardless of the caller's rowptr/col dtype, per plan.h): persistent
+// warps claim kRowsPerTicket-row chunks of row_order via an atomic ticket,
+// spin on per-row done-flags for cross-warp dependencies, entry-group ×
+// column lane split for p <= 16.
+constexpr int kRowsPerTicket = 8;
 
-  int64_t start = eff_ptr[owner];
-  int64_t end = eff_ptr[owner + 1];
+__global__ void spsm_syncfree_kernel(float *__restrict__ x, int64_t const *__restrict__ eff_ptr,
+                                     int64_t const *__restrict__ eff_dep, int64_t const *__restrict__ eff_val_idx,
+                                     int64_t const *__restrict__ diag_val_idx, int64_t const *__restrict__ row_order,
+                                     int64_t total_rows, float const *__restrict__ vals,
+                                     float const *__restrict__ rhs, int64_t p, bool unitriangular,
+                                     int *__restrict__ work) {
+  int lane = static_cast<int>(threadIdx.x) % kWarpSize;
+  int *ticket_counter = work;
+  int *done = work + 1;
 
-  float diag = 1.0f;
-  if (!unitriangular) diag = vals[diag_val_idx[owner]];
+  while (true) {
+    int ticket = 0;
+    if (lane == 0) ticket = atomicAdd(ticket_counter, 1);
+    ticket = __shfl_sync(0xffffffffU, ticket, 0);
+    int64_t chunk_base = static_cast<int64_t>(ticket) * kRowsPerTicket;
+    if (chunk_base >= total_rows) return;
+    int64_t chunk_end = min(chunk_base + kRowsPerTicket, total_rows);
 
-  float *x_row = x + owner * p;
-  float const *rhs_row = rhs + owner * p;
+    for (int64_t pos = chunk_base; pos < chunk_end; ++pos) {
+      int64_t owner = row_order[pos];
+      int64_t start = eff_ptr[owner];
+      int64_t end = eff_ptr[owner + 1];
 
-  for (int64_t j = lane; j < p; j += kWarpSize) {
-    float acc = 0.0f;
-    for (int64_t k = start; k < end; ++k) {
-      int64_t dep = eff_dep[k];
-      if (dep == owner) continue;
-      acc += vals[eff_val_idx[k]] * x[dep * p + j];
+      for (int64_t k = start + lane; k < end; k += kWarpSize) {
+        int64_t dep = eff_dep[k];
+        if (dep == owner) continue;
+        while (atomicAdd(done + dep, 0) == 0) {
+#if __CUDA_ARCH__ >= 700
+          __nanosleep(40);
+#endif
+        }
+      }
+      __syncwarp();
+      __threadfence();
+
+      float diag = 1.0f;
+      if (!unitriangular) diag = vals[diag_val_idx[owner]];
+
+      float *x_row = x + owner * p;
+      float const *rhs_row = rhs + owner * p;
+
+      if (p <= 16) {
+        int p_pad = 1;
+        while (p_pad < static_cast<int>(p)) p_pad <<= 1;
+        int group = lane / p_pad;
+        int groups = kWarpSize / p_pad;
+        int j = lane % p_pad;
+
+        float acc = 0.0f;
+        if (j < p) {
+          for (int64_t k = start + group; k < end; k += groups) {
+            int64_t dep = eff_dep[k];
+            if (dep == owner) continue;
+            acc += vals[eff_val_idx[k]] * x[dep * p + j];
+          }
+        }
+#pragma unroll
+        for (int offset = kWarpSize / 2; offset >= 1; offset >>= 1) {
+          if (offset >= p_pad) acc += __shfl_down_sync(0xffffffffU, acc, offset);
+        }
+        if (group == 0 && j < p) {
+          float result = rhs_row[j] - acc;
+          if (!unitriangular) result = result / diag;
+          x_row[j] = result;
+        }
+      } else {
+        for (int64_t j = lane; j < p; j += kWarpSize) {
+          float acc = 0.0f;
+          for (int64_t k = start; k < end; ++k) {
+            int64_t dep = eff_dep[k];
+            if (dep == owner) continue;
+            acc += vals[eff_val_idx[k]] * x[dep * p + j];
+          }
+          float result = rhs_row[j] - acc;
+          if (!unitriangular) result = result / diag;
+          x_row[j] = result;
+        }
+      }
+
+      __syncwarp();
+      __threadfence();
+      if (lane == 0) atomicExch(done + owner, 1);
     }
-    float result = rhs_row[j] - acc;
-    if (!unitriangular) result = result / diag;
-    x_row[j] = result;
   }
 }
 
@@ -166,19 +224,26 @@ void bench_spsm_solve(nvbench::state &state) {
   thrust::device_vector<float> rhs = rhs_h;
   thrust::device_vector<float> x(n * p);
 
+  thrust::device_vector<int> work(n + 1);
+
   state.exec([&](nvbench::launch &launch) {
-    for (size_t l = 0; l + 1 < s.level_ptr.size(); ++l) {
-      int64_t level_start = s.level_ptr[l];
-      int64_t level_size = s.level_ptr[l + 1] - level_start;
-      if (level_size == 0) continue;
-      int64_t blocks = (level_size + kWarpsPerBlock - 1) / kWarpsPerBlock;
-      spsm_level_kernel<<<blocks, kThreadsPerBlock, 0, launch.get_stream()>>>(
-          thrust::raw_pointer_cast(x.data()), thrust::raw_pointer_cast(eff_ptr.data()),
-          thrust::raw_pointer_cast(eff_dep.data()), thrust::raw_pointer_cast(eff_val_idx.data()),
-          thrust::raw_pointer_cast(diag_val_idx.data()), thrust::raw_pointer_cast(row_order.data()), level_start,
-          level_size, thrust::raw_pointer_cast(vals.data()), thrust::raw_pointer_cast(rhs.data()), p,
-          /*unitriangular=*/false);
-    }
+    cudaMemsetAsync(thrust::raw_pointer_cast(work.data()), 0, static_cast<size_t>(n + 1) * sizeof(int),
+                    launch.get_stream());
+    int device = 0;
+    cudaGetDevice(&device);
+    int sm_count = 1;
+    cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device);
+    int blocks_per_sm = 1;
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks_per_sm, spsm_syncfree_kernel, kThreadsPerBlock, 0);
+    int64_t tickets = (n + kRowsPerTicket - 1) / kRowsPerTicket;
+    int64_t needed = (tickets + kWarpsPerBlock - 1) / kWarpsPerBlock;
+    int64_t blocks = std::min<int64_t>(needed, static_cast<int64_t>(sm_count) * std::max(blocks_per_sm, 1));
+    spsm_syncfree_kernel<<<blocks, kThreadsPerBlock, 0, launch.get_stream()>>>(
+        thrust::raw_pointer_cast(x.data()), thrust::raw_pointer_cast(eff_ptr.data()),
+        thrust::raw_pointer_cast(eff_dep.data()), thrust::raw_pointer_cast(eff_val_idx.data()),
+        thrust::raw_pointer_cast(diag_val_idx.data()), thrust::raw_pointer_cast(row_order.data()), n,
+        thrust::raw_pointer_cast(vals.data()), thrust::raw_pointer_cast(rhs.data()), p,
+        /*unitriangular=*/false, thrust::raw_pointer_cast(work.data()));
   });
 }
 }  // namespace
