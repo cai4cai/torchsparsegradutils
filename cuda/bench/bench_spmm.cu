@@ -38,8 +38,11 @@ __device__ __forceinline__ float warp_reduce_sum(float val) {
   return val;
 }
 
-// Mirrors csrc/kernels/spmm/spmm.cu's spmm_wide_kernel (p >= kWarpSize):
-// column-tiled, one warp per folded row, row's entries walked once per tile.
+// Mirrors csrc/kernels/spmm/spmm.cu's spmm_wide_kernel (p > 16): column-
+// tiled, one warp per folded row, entries staged in 32-entry chunks via
+// warp-shuffle broadcast, kTiles = compile-time unroll width chosen by the
+// dispatcher below ({1,2,4,8,16}, smallest with kTiles*32 >= p).
+template <int kTiles>
 __global__ void spmm_wide_kernel(float *__restrict__ out, int32_t const *__restrict__ rowptr,
                                   int32_t const *__restrict__ col, float const *__restrict__ vals,
                                   float const *__restrict__ dense, int64_t total_rows, int64_t n, int64_t m,
@@ -57,33 +60,49 @@ __global__ void spmm_wide_kernel(float *__restrict__ out, int32_t const *__restr
 
   float *out_row = out + row_g * p;
   float const *dense_b = dense + b * m * p;
-  int64_t const tile_width = static_cast<int64_t>(kWarpSize) * kMaxRegTiles;
+  int64_t const tile_width = static_cast<int64_t>(kWarpSize) * kTiles;
 
   for (int64_t col_base = 0; col_base < p; col_base += tile_width) {
-    float acc[kMaxRegTiles];
+    float acc[kTiles];
 #pragma unroll
-    for (int t = 0; t < kMaxRegTiles; ++t) acc[t] = 0.0f;
+    for (int t = 0; t < kTiles; ++t) acc[t] = 0.0f;
 
-    for (int64_t k = start; k < end; ++k) {
-      float v = vals[k];
-      float const *mat_row = dense_b + static_cast<int64_t>(col[k]) * p + col_base;
+    bool valid[kTiles];
 #pragma unroll
-      for (int t = 0; t < kMaxRegTiles; ++t) {
-        int64_t j = static_cast<int64_t>(lane) + static_cast<int64_t>(t) * kWarpSize;
-        if (col_base + j < p) acc[t] += v * mat_row[j];
+    for (int t = 0; t < kTiles; ++t) {
+      valid[t] = col_base + static_cast<int64_t>(lane) + static_cast<int64_t>(t) * kWarpSize < p;
+    }
+
+    for (int64_t chunk = start; chunk < end; chunk += kWarpSize) {
+      int64_t kk = chunk + lane;
+      float v_lane = kk < end ? vals[kk] : 0.0f;
+      int64_t c_lane = kk < end ? static_cast<int64_t>(col[kk]) : 0;
+      int chunk_len = static_cast<int>(min(static_cast<int64_t>(kWarpSize), end - chunk));
+
+      for (int i = 0; i < chunk_len; ++i) {
+        float v = __shfl_sync(0xffffffffU, v_lane, i);
+        int64_t c = __shfl_sync(0xffffffffU, c_lane, i);
+        float const *mat_row = dense_b + c * p + col_base + lane;
+#pragma unroll
+        for (int t = 0; t < kTiles; ++t) {
+          if (valid[t]) acc[t] += v * mat_row[static_cast<int64_t>(t) * kWarpSize];
+        }
       }
     }
 
 #pragma unroll
-    for (int t = 0; t < kMaxRegTiles; ++t) {
-      int64_t j = static_cast<int64_t>(lane) + static_cast<int64_t>(t) * kWarpSize;
-      if (col_base + j < p) out_row[col_base + j] = acc[t];
+    for (int t = 0; t < kTiles; ++t) {
+      if (valid[t]) {
+        out_row[col_base + static_cast<int64_t>(lane) + static_cast<int64_t>(t) * kWarpSize] = acc[t];
+      }
     }
   }
 }
 
-// Mirrors spmm_narrow_kernel (p < kWarpSize, the SpMV-shaped regime):
-// entry-parallel, warp_reduce_sum per output column.
+// Mirrors spmm_narrow_kernel (p <= 16, the SpMV-shaped regime): entry-
+// parallel, warp_reduce_sum per output column, kP = p rounded up to
+// {1,2,4,8,16}.
+template <int kP>
 __global__ void spmm_narrow_kernel(float *__restrict__ out, int32_t const *__restrict__ rowptr,
                                     int32_t const *__restrict__ col, float const *__restrict__ vals,
                                     float const *__restrict__ dense, int64_t total_rows, int64_t n, int64_t m,
@@ -100,26 +119,55 @@ __global__ void spmm_narrow_kernel(float *__restrict__ out, int32_t const *__res
   int64_t end = static_cast<int64_t>(rowptr[row_g + 1]);
   float const *dense_b = dense + b * m * p;
 
-  float acc[kWarpSize];
+  float acc[kP];
 #pragma unroll
-  for (int j = 0; j < kWarpSize; ++j) acc[j] = 0.0f;
+  for (int j = 0; j < kP; ++j) acc[j] = 0.0f;
 
   for (int64_t k = start + lane; k < end; k += kWarpSize) {
     float v = vals[k];
     float const *mat_row = dense_b + static_cast<int64_t>(col[k]) * p;
 #pragma unroll
-    for (int j = 0; j < kWarpSize; ++j) {
+    for (int j = 0; j < kP; ++j) {
       if (j < p) acc[j] += v * mat_row[j];
     }
   }
 
   float *out_row = out + row_g * p;
 #pragma unroll
-  for (int j = 0; j < kWarpSize; ++j) {
+  for (int j = 0; j < kP; ++j) {
     if (j < p) {
       float reduced = warp_reduce_sum(acc[j]);
       if (lane == 0) out_row[j] = reduced;
     }
+  }
+}
+
+// Mirrors the launcher's templated dispatch (p > 16 wide, p <= 16 narrow).
+void launch_spmm(float *out, int32_t const *rowptr, int32_t const *col, float const *vals, float const *dense,
+                 int64_t total_rows, int64_t n, int64_t m, int64_t p, int64_t blocks, cudaStream_t stream) {
+  if (p > 16) {
+    int64_t tiles = (p + kWarpSize - 1) / kWarpSize;
+    if (tiles <= 1) {
+      spmm_wide_kernel<1><<<blocks, kThreadsPerBlock, 0, stream>>>(out, rowptr, col, vals, dense, total_rows, n, m, p);
+    } else if (tiles <= 2) {
+      spmm_wide_kernel<2><<<blocks, kThreadsPerBlock, 0, stream>>>(out, rowptr, col, vals, dense, total_rows, n, m, p);
+    } else if (tiles <= 4) {
+      spmm_wide_kernel<4><<<blocks, kThreadsPerBlock, 0, stream>>>(out, rowptr, col, vals, dense, total_rows, n, m, p);
+    } else if (tiles <= 8) {
+      spmm_wide_kernel<8><<<blocks, kThreadsPerBlock, 0, stream>>>(out, rowptr, col, vals, dense, total_rows, n, m, p);
+    } else {
+      spmm_wide_kernel<16><<<blocks, kThreadsPerBlock, 0, stream>>>(out, rowptr, col, vals, dense, total_rows, n, m, p);
+    }
+  } else if (p <= 1) {
+    spmm_narrow_kernel<1><<<blocks, kThreadsPerBlock, 0, stream>>>(out, rowptr, col, vals, dense, total_rows, n, m, p);
+  } else if (p <= 2) {
+    spmm_narrow_kernel<2><<<blocks, kThreadsPerBlock, 0, stream>>>(out, rowptr, col, vals, dense, total_rows, n, m, p);
+  } else if (p <= 4) {
+    spmm_narrow_kernel<4><<<blocks, kThreadsPerBlock, 0, stream>>>(out, rowptr, col, vals, dense, total_rows, n, m, p);
+  } else if (p <= 8) {
+    spmm_narrow_kernel<8><<<blocks, kThreadsPerBlock, 0, stream>>>(out, rowptr, col, vals, dense, total_rows, n, m, p);
+  } else {
+    spmm_narrow_kernel<16><<<blocks, kThreadsPerBlock, 0, stream>>>(out, rowptr, col, vals, dense, total_rows, n, m, p);
   }
 }
 
@@ -183,17 +231,9 @@ void bench_spmm_fwd(nvbench::state &state) {
 
   state.exec([&](nvbench::launch &launch) {
     int64_t blocks = (total_rows + kWarpsPerBlock - 1) / kWarpsPerBlock;
-    if (p >= kWarpSize) {
-      spmm_wide_kernel<<<blocks, kThreadsPerBlock, 0, launch.get_stream()>>>(
-          thrust::raw_pointer_cast(out.data()), thrust::raw_pointer_cast(rowptr.data()),
-          thrust::raw_pointer_cast(col.data()), thrust::raw_pointer_cast(vals.data()),
-          thrust::raw_pointer_cast(dense.data()), total_rows, n, m, p);
-    } else {
-      spmm_narrow_kernel<<<blocks, kThreadsPerBlock, 0, launch.get_stream()>>>(
-          thrust::raw_pointer_cast(out.data()), thrust::raw_pointer_cast(rowptr.data()),
-          thrust::raw_pointer_cast(col.data()), thrust::raw_pointer_cast(vals.data()),
-          thrust::raw_pointer_cast(dense.data()), total_rows, n, m, p);
-    }
+    launch_spmm(thrust::raw_pointer_cast(out.data()), thrust::raw_pointer_cast(rowptr.data()),
+                thrust::raw_pointer_cast(col.data()), thrust::raw_pointer_cast(vals.data()),
+                thrust::raw_pointer_cast(dense.data()), total_rows, n, m, p, blocks, launch.get_stream());
   });
   (void)actual_nse;
 }
