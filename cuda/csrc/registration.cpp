@@ -53,6 +53,14 @@ torch::stable::Tensor tsgu_sddmm_launch(torch::stable::Tensor const &rowptr, tor
                                          torch::stable::Tensor const &g, torch::stable::Tensor const &mat, int64_t B,
                                          int64_t n, int64_t m, bool negate);
 
+// Commit 15 (spec/commit.md Phase 3): tsgu::spmm — Family 3 "Vendor-baseline
+// forwards" SpMM row (kernels.md). Defined in csrc/kernels/spmm/spmm.cu.
+// Serves sparse_mm's forward, its gradB (called on the cached CSC transpose),
+// and spmv (p = 1, no separate op).
+torch::stable::Tensor tsgu_spmm_launch(torch::stable::Tensor const &vals, torch::stable::Tensor const &rowptr,
+                                        torch::stable::Tensor const &col, torch::stable::Tensor const &dense,
+                                        int64_t B, int64_t n, int64_t m);
+
 STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
   m.impl("_smoke", TORCH_BOX(&tsgu_smoke_launch));
   m.impl("seglse", TORCH_BOX(&tsgu_seglse_launch));
@@ -60,6 +68,7 @@ STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
   m.impl("seglse_bidir", TORCH_BOX(&tsgu_seglse_bidir_launch));
   m.impl("seglse_bidir_bwd", TORCH_BOX(&tsgu_seglse_bidir_bwd_launch));
   m.impl("sddmm", TORCH_BOX(&tsgu_sddmm_launch));
+  m.impl("spmm", TORCH_BOX(&tsgu_spmm_launch));
 }
 
 // --- Python extension module entry point ------------------------------------

@@ -39,6 +39,7 @@ src = [
   "csrc/kernels/logsumexp/seglse.cu",
   "csrc/kernels/logsumexp/seglse_bidir.cu",
   "csrc/kernels/sddmm/sddmm.cu",
+  "csrc/kernels/spmm/spmm.cu",
   "csrc/common/batched_csr.cuh",
   "csrc/common/dispatch.cuh",
   "csrc/common/reduce.cuh",

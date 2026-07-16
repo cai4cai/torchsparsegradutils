@@ -27,7 +27,7 @@ from typing import List, Sequence, Tuple, Union
 
 import torch
 
-from torchsparsegradutils.utils.convert import _compress_row_indices, _sort_coo_indices
+from torchsparsegradutils.utils.convert import _compress_row_indices
 
 # int32 index arrays can address at most 2**31 - 1 positions; the eligibility
 # bound (architecture.md §3 / naming.md §2) checks nse_total, rowptr length,
@@ -72,17 +72,37 @@ def _fold_coo_to_csr(
     n_rows: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sort scattered (batch, row_local, col_local) coordinates and compress
-    them into a folded CSR ``(rowptr, col, values)`` triple, reusing
-    ``utils.convert``'s COO→CSR building blocks (kernel replaces these
-    internals in commit 19). Callers must guarantee no duplicate coordinates
-    (a valid CSR/CSC pattern has none) — duplicates are silently dropped by
-    the underlying unique-based sort, not summed.
+    them into a folded CSR ``(rowptr, col, values)`` triple (kernel replaces
+    these internals in commit 19). Callers must guarantee no duplicate
+    coordinates (a valid CSR/CSC pattern has none) — with no duplicates
+    present this is exactly a stable lexicographic sort by
+    ``(row_global, col_local)``, which is why it's implemented as one below
+    rather than reused from ``utils.convert``'s ``_sort_coo_indices``: that
+    helper sorts via ``torch.unique(..., return_inverse=True)``, whose output
+    is dedup'd and therefore data-dependent in *size* — commit 15
+    (spec/commit.md Phase 3; tsgu::spmm's gradB, the first real caller of
+    this lazy member, torchsparsegradutils/ops/matmul.py) surfaced that as a
+    ``GuardOnDataDependentSymNode`` failure under opcheck's AOTAutograd
+    dynamic-shape test, since the folded row/col arrays here are themselves
+    already data-dependent-length (derived from another row's ``rowptr``
+    diffs). A two-pass **stable** ``argsort`` (secondary key first, then
+    primary — the standard multi-key stable-sort composition) produces the
+    identical total order without ever changing the array's length, so no
+    unbacked symint is created.
     """
-    coo_indices = torch.stack([batch, row_local, col_local], dim=0)
-    sorted_indices, permutation = _sort_coo_indices(coo_indices)
-    batch_sorted, row_local_sorted, col_sorted = sorted_indices
-    row_global_sorted = batch_sorted * n_rows + row_local_sorted
-    rowptr = _compress_row_indices(row_global_sorted, batch_size * n_rows)
+    row_global = batch * n_rows + row_local
+    permutation_secondary = torch.argsort(col_local, stable=True)
+    row_global_by_secondary = row_global[permutation_secondary]
+    permutation_primary = torch.argsort(row_global_by_secondary, stable=True)
+    permutation = permutation_secondary[permutation_primary]
+
+    row_global_sorted = row_global[permutation]
+    col_sorted = col_local[permutation]
+    # _validate=False: row_global_sorted is derived from already-validated
+    # batch/row_local inputs (never raw user input) -- see
+    # _compress_row_indices's "Notes on _validate" for why this also avoids
+    # a GuardOnDataDependentSymNode under dynamic-shape tracing.
+    rowptr = _compress_row_indices(row_global_sorted, batch_size * n_rows, _validate=False)
     return rowptr, col_sorted, values[permutation]
 
 

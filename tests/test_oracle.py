@@ -36,14 +36,21 @@ from torchsparsegradutils._dispatch import backend_available
 from torchsparsegradutils.utils import linear_cg
 
 
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and backend_available()),
+    reason=(
+        "sparse_mm dispatches to tsgu::spmm as of spec/commit.md Phase 3 "
+        "commit 15 -- CUDA-only (architecture.md §4); no CUDA device available here."
+    ),
+)
 def test_oracle_sparse_mm_matches_live():
     indices = torch.tensor([[0, 0, 1, 1, 2, 2], [0, 2, 1, 3, 0, 2]])
     values = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    A = torch.sparse_coo_tensor(indices, values, (3, 4))
-    B = torch.randn(4, 2)
+    A = torch.sparse_coo_tensor(indices, values, (3, 4)).cuda()
+    B = torch.randn(4, 2).cuda()
 
     live = sparse_mm(A, B)
-    oracle = oracle_sparse_mm(A, B)
+    oracle = oracle_sparse_mm(A.cpu(), B.cpu()).cuda()
     assert torch.allclose(live, oracle)
 
 

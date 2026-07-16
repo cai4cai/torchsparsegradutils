@@ -35,7 +35,15 @@ DOCTEST_MODULES = [
 # ships). torchsparsegradutils.ops.logsumexp's examples call
 # sparse_logsumexp (tsgu::seglse as of spec/commit.md Phase 3 commit 12) both
 # directly and from sparse_bidir_logsumexp's own docstring.
-_CUDA_ONLY_DOCTEST_MODULES = {"torchsparsegradutils.ops.logsumexp"}
+# torchsparsegradutils.ops.matmul's examples call sparse_mm (tsgu::spmm as of
+# spec/commit.md Phase 3 commit 15). torchsparsegradutils.distributions.
+# sparse_multivariate_normal's SparseMultivariateNormal/_batch_sparse_mv
+# examples route sample()/rsample() through sparse_mm too.
+_CUDA_ONLY_DOCTEST_MODULES = {
+    "torchsparsegradutils.ops.logsumexp",
+    "torchsparsegradutils.ops.matmul",
+    "torchsparsegradutils.distributions.sparse_multivariate_normal",
+}
 
 
 @pytest.mark.parametrize("module_name", DOCTEST_MODULES)

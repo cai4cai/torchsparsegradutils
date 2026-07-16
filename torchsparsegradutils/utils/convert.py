@@ -215,6 +215,8 @@ def _sort_coo_indices(
 def _compress_row_indices(
     row_indices: torch.Tensor,
     num_rows: int,
+    *,
+    _validate: bool = True,
 ) -> torch.Tensor:
     """
     Convert COO row indices to CSR crow-indices.
@@ -273,6 +275,24 @@ def _compress_row_indices(
     --------
     convert_coo_to_csr_indices_values : Convert full COO (row,col,values) to CSR arrays.
     torch.sparse_csr_tensor : Construct a CSR sparse tensor from (crow, col, values).
+
+    Notes on ``_validate``
+    ----------------------
+    ``_validate=False`` (internal use only, e.g. ``_batched.py``'s
+    ``_fold_coo_to_csr``) skips the two ``torch.any(...)`` content checks
+    below for callers that pass already-trusted, internally-derived indices
+    (never raw user input). This isn't just an optimisation: those checks
+    convert a tensor to a Python ``bool`` via ``if``, which commit 15
+    (spec/commit.md Phase 3; ``BatchedCSR.transposed``, the first caller to
+    run this function inside a differentiable backward) surfaced as a
+    ``GuardOnDataDependentSymNode`` failure under opcheck's AOTAutograd
+    dynamic-shape test — the tensor's *size* there is already data-dependent
+    (an unbacked SymInt, from an upstream ``torch.repeat_interleave`` with a
+    data-dependent repeat count), and PyTorch's functionalization pass can't
+    resolve a content-dependent boolean on such a tensor during tracing.
+    Skipping validation for trusted-internal callers avoids the guard
+    entirely rather than working around it; public/user-facing callers keep
+    ``_validate=True`` (the default) and its full error-checking contract.
     """
     if not isinstance(row_indices, torch.Tensor):
         raise TypeError("row_indices must be a torch.Tensor.")
@@ -282,13 +302,30 @@ def _compress_row_indices(
         raise TypeError("row_indices must have integer dtype (torch.int32 or torch.int64).")
     if not isinstance(num_rows, int) or num_rows <= 0:
         raise ValueError("num_rows must be a positive integer.")
-    if row_indices.numel() > 0:
+    if _validate:
         if torch.any(row_indices < 0):
             raise ValueError("row_indices contains negative entries.")
         if torch.any(row_indices >= num_rows):
             raise ValueError("row_indices contains entries >= num_rows.")
-    # Compute the number of non-zero elements in each row
-    counts = torch.bincount(row_indices, minlength=num_rows).to(row_indices.dtype)
+    # Compute the number of non-zero elements in each row. Not
+    # torch.bincount(row_indices, minlength=num_rows): bincount's output
+    # length is max(minlength, row_indices.max() + 1) -- by this function's
+    # own contract that's always exactly num_rows (every value is < num_rows,
+    # enforced above when _validate=True, guaranteed by construction
+    # otherwise), but PyTorch can't know that *statically* when
+    # row_indices's own length is an unbacked SymInt (commit 15,
+    # spec/commit.md Phase 3: BatchedCSR.transposed's internal
+    # _validate=False call chain), making bincount's output length itself an
+    # unbacked SymInt and any later shape comparison against the Python int
+    # `num_rows` a GuardOnDataDependentSymNode. A `zeros(num_rows) +
+    # scatter_add_` computes the identical per-row counts with an output
+    # shape that is `num_rows` unconditionally (a plain Python int, never
+    # data-dependent) -- friendly to dynamic-shape/export tracing regardless
+    # of row_indices's own shape.
+    ones = torch.ones(row_indices.shape[0], dtype=row_indices.dtype, device=row_indices.device)
+    counts = torch.zeros(num_rows, dtype=row_indices.dtype, device=row_indices.device).scatter_add_(
+        0, row_indices.to(torch.int64), ones
+    )
 
     # Compute the cumulative sum of counts to get CSR indices
     crow_indices = torch.cat([torch.zeros(1, dtype=row_indices.dtype, device=counts.device), counts.cumsum_(dim=0)])

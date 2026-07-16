@@ -4,6 +4,7 @@ from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, get_confidence_leve
 from torch.distributions.multivariate_normal import _batch_mv
 
 from torchsparsegradutils import sparse_mm
+from torchsparsegradutils._dispatch import backend_available
 from torchsparsegradutils.distributions import SparseMultivariateNormal, SparseMultivariateNormalNative
 from torchsparsegradutils.distributions.sparse_multivariate_normal import _batch_sparse_mv
 from torchsparsegradutils.utils import rand_sparse_tri
@@ -63,6 +64,27 @@ def index_dtype(request):
 
 @pytest.fixture(params=DEVICES, ids=[device_id(d) for d in DEVICES])
 def device(request):
+    return request.param
+
+
+# spec/commit.md Phase 3 commit 15: SparseMultivariateNormal.rsample's LDL^T/
+# LL^T chain calls sparse_mm internally, which now dispatches to tsgu::spmm
+# -- CUDA-only (architecture.md §4). SparseMultivariateNormalNative uses
+# plain torch.sparse.mm only (map.md) and is unaffected, so it keeps the
+# plain `device` fixture above; the SparseMultivariateNormal-based tests
+# below use this CUDA-only fixture instead, mirroring
+# test_sparse_logsumexp.py's identical fix from commit 12.
+_CUDA_DEVICES = [d for d in DEVICES if d.type == "cuda"] if backend_available() else []
+
+
+@pytest.fixture(params=_CUDA_DEVICES or [None], ids=[device_id(d) for d in _CUDA_DEVICES] or ["cuda-unavailable"])
+def cuda_device(request):
+    if request.param is None:
+        pytest.skip(
+            "SparseMultivariateNormal.rsample requires a CUDA device and a loaded tsgu "
+            "backend (spec/commit.md Phase 3 commit 15: tsgu::spmm is CUDA-only) -- none "
+            "available on this machine."
+        )
     return request.param
 
 
@@ -181,18 +203,18 @@ def compute_sample_statistics(samples):
 # Define Tests
 
 
-def test_rsample_forward_cov(device, layout, sizes, parameterization, value_dtype, index_dtype):
+def test_rsample_forward_cov(cuda_device, layout, sizes, parameterization, value_dtype, index_dtype):
     """Test sampling from covariance parameterization using proper statistical tests."""
 
-    dist = construct_distribution(sizes, layout, "cov", parameterization, value_dtype, index_dtype, device)
+    dist = construct_distribution(sizes, layout, "cov", parameterization, value_dtype, index_dtype, cuda_device)
     n_samples = 10_000
     samples = dist.rsample((n_samples,))
 
     covariance_ref = compute_reference_covariance(dist, "cov")
     sample_mean, sample_cov = compute_sample_statistics(samples)
     is_batched = len(samples.shape) != 2
-    mean_conf = get_confidence_level(device, value_dtype, is_batched, is_covariance_test=False)
-    cov_conf = get_confidence_level(device, value_dtype, is_batched, is_covariance_test=True)
+    mean_conf = get_confidence_level(cuda_device, value_dtype, is_batched, is_covariance_test=False)
+    cov_conf = get_confidence_level(cuda_device, value_dtype, is_batched, is_covariance_test=True)
 
     # Test mean using Hotelling's T² test
     if not is_batched:
@@ -230,18 +252,18 @@ def test_rsample_forward_cov(device, layout, sizes, parameterization, value_dtyp
         )
 
 
-def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dtype, index_dtype):
+def test_rsample_forward_prec(cuda_device, layout, sizes, parameterization, value_dtype, index_dtype):
     """Test sampling from precision parameterization using proper statistical tests."""
 
-    dist = construct_distribution(sizes, layout, "prec", parameterization, value_dtype, index_dtype, device)
+    dist = construct_distribution(sizes, layout, "prec", parameterization, value_dtype, index_dtype, cuda_device)
     n_samples = 10_000
     samples = dist.rsample((n_samples,))
 
     covariance_ref = compute_reference_covariance(dist, "prec")
     sample_mean, sample_cov = compute_sample_statistics(samples)
     is_batched = len(samples.shape) != 2
-    mean_conf = get_confidence_level(device, value_dtype, is_batched, is_covariance_test=False)
-    cov_conf = get_confidence_level(device, value_dtype, is_batched, is_covariance_test=True)
+    mean_conf = get_confidence_level(cuda_device, value_dtype, is_batched, is_covariance_test=False)
+    cov_conf = get_confidence_level(cuda_device, value_dtype, is_batched, is_covariance_test=True)
 
     # Test mean using Hotelling's T² test
     if not is_batched:
@@ -285,10 +307,10 @@ def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dty
         )
 
 
-def test_parameterization_property(device, layout, sizes, parameterization, value_dtype, index_dtype):
+def test_parameterization_property(cuda_device, layout, sizes, parameterization, value_dtype, index_dtype):
     """Test that the parameterization property works correctly."""
 
-    dist = construct_distribution(sizes, layout, "cov", parameterization, value_dtype, index_dtype, device)
+    dist = construct_distribution(sizes, layout, "cov", parameterization, value_dtype, index_dtype, cuda_device)
 
     if parameterization == "ldlt":
         assert dist.is_ldlt_parameterization, "Expected LDL^T parameterization"
@@ -298,22 +320,22 @@ def test_parameterization_property(device, layout, sizes, parameterization, valu
         assert dist.diagonal is None, "Expected diagonal to be None for LL^T"
 
 
-def test_rsample_backward_cov(device, layout, sizes, parameterization, value_dtype, index_dtype):
+def test_rsample_backward_cov(cuda_device, layout, sizes, parameterization, value_dtype, index_dtype):
     """Test backward pass for covariance parameterization."""
 
     dist = construct_distribution(
-        sizes, layout, "cov", parameterization, value_dtype, index_dtype, device, requires_grad=True
+        sizes, layout, "cov", parameterization, value_dtype, index_dtype, cuda_device, requires_grad=True
     )
     samples = dist.rsample((10,))
 
     samples.sum().backward()
 
 
-def test_rsample_backward_prec(device, layout, sizes, parameterization, value_dtype, index_dtype):
+def test_rsample_backward_prec(cuda_device, layout, sizes, parameterization, value_dtype, index_dtype):
     """Test backward pass for precision parameterization."""
 
     dist = construct_distribution(
-        sizes, layout, "prec", parameterization, value_dtype, index_dtype, device, requires_grad=True
+        sizes, layout, "prec", parameterization, value_dtype, index_dtype, cuda_device, requires_grad=True
     )
     samples = dist.rsample((10,))
 
@@ -335,8 +357,17 @@ def batch_mv_test_data(request):
     return request.param
 
 
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and backend_available()),
+    reason=(
+        "_batch_sparse_mv(sparse_mm, ...) needs sparse_mm, which dispatches to tsgu::spmm "
+        "as of spec/commit.md Phase 3 commit 15 -- CUDA-only (architecture.md §4); no CUDA "
+        "device available here."
+    ),
+)
 def test_sparse_batch_mv(batch_mv_test_data):
     bmat, bvec = batch_mv_test_data
+    bmat, bvec = bmat.cuda(), bvec.cuda()
     res_ref = _batch_mv(bmat, bvec)
     res_test = _batch_sparse_mv(sparse_mm, bmat.to_sparse(), bvec)
     assert torch.allclose(res_ref, res_test)

@@ -69,16 +69,20 @@ def _batch_sparse_mv(op, bmat, bvec, **kwargs):
 
     Examples
     --------
+    ``spmm`` (this module's alias for :func:`torchsparsegradutils.sparse_mm`)
+    dispatches to ``tsgu::spmm`` (spec/commit.md Phase 3 commit 15), which is
+    CUDA-only (architecture.md §4) -- these examples run on a CUDA tensor.
+
     Vector RHS (2D × 1D)::
 
-        >>> A = torch.eye(4, dtype=torch.float64).to_sparse_csr()
-        >>> v = torch.arange(4., dtype=torch.float64)
+        >>> A = torch.eye(4, dtype=torch.float64).to_sparse_csr().cuda()
+        >>> v = torch.arange(4., dtype=torch.float64).cuda()
         >>> _batch_sparse_mv(spmm, A, v).shape
         torch.Size([4])
 
     Matrix RHS (2D × 2D)::
 
-        >>> X = torch.randn(5, 4, dtype=torch.float64)  # 5 vectors of size 4
+        >>> X = torch.randn(5, 4, dtype=torch.float64).cuda()  # 5 vectors of size 4
         >>> _batch_sparse_mv(spmm, A, X).shape
         torch.Size([5, 4])
 
@@ -87,7 +91,7 @@ def _batch_sparse_mv(op, bmat, bvec, **kwargs):
         >>> # Create batched sparse tensors using stack_csr utility
         >>> from torchsparsegradutils.utils import stack_csr
         >>> Ab = stack_csr([A, A])  # (B=2, 4, 4)
-        >>> vb = torch.randn(2, 4, dtype=torch.float64)
+        >>> vb = torch.randn(2, 4, dtype=torch.float64).cuda()
         >>> _batch_sparse_mv(spmm, Ab, vb).shape
         torch.Size([2, 4])
     """
@@ -195,18 +199,22 @@ class SparseMultivariateNormal(Distribution):
 
     Examples
     --------
+    ``sample``/``rsample`` route through :func:`torchsparsegradutils.sparse_mm`
+    (``tsgu::spmm`` as of spec/commit.md Phase 3 commit 15), which is
+    CUDA-only (architecture.md §4) -- these examples run on a CUDA tensor.
+
     :math:`L L^\top` parameterization with sparse covariance::
 
         >>> import torch
         >>> from torchsparsegradutils.distributions import SparseMultivariateNormal
-        >>> loc = torch.zeros(4)
+        >>> loc = torch.zeros(4).cuda()
         >>> indices = torch.tensor([[1, 2, 2, 3], [0, 0, 1, 2]])
         >>> values = torch.tensor([0.5, 0.3, 0.8, 0.2])
         >>> diag_indices = torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]])
         >>> diag_values = torch.tensor([1.0, 1.0, 1.0, 1.0])
         >>> all_indices = torch.cat([diag_indices, indices], dim=1)
         >>> all_values = torch.cat([diag_values, values])
-        >>> scale_tril = torch.sparse_coo_tensor(all_indices, all_values, (4, 4))
+        >>> scale_tril = torch.sparse_coo_tensor(all_indices, all_values, (4, 4)).cuda()
         >>> mvn = SparseMultivariateNormal(loc=loc, scale_tril=scale_tril)
         >>> samples = mvn.sample((100,))
         >>> samples.shape
@@ -214,16 +222,16 @@ class SparseMultivariateNormal(Distribution):
 
     :math:`L D L^\top` parameterization with diagonal precision::
 
-        >>> diagonal = torch.tensor([2.0, 1.5, 3.0, 1.0])  # Precision diagonal
-        >>> precision_tril = torch.sparse_coo_tensor(indices, values, (4, 4))
+        >>> diagonal = torch.tensor([2.0, 1.5, 3.0, 1.0]).cuda()  # Precision diagonal
+        >>> precision_tril = torch.sparse_coo_tensor(indices, values, (4, 4)).cuda()
         >>> mvn_ldlt = SparseMultivariateNormal(loc=loc, diagonal=diagonal,
         ...                                     precision_tril=precision_tril)
         >>> samples = mvn_ldlt.sample((50,))
 
     Batched distributions::
 
-        >>> loc_batch = torch.randn(3, 4)
-        >>> diagonal_batch = torch.abs(torch.randn(3, 4)) + 0.1
+        >>> loc_batch = torch.randn(3, 4).cuda()
+        >>> diagonal_batch = torch.abs(torch.randn(3, 4)).cuda() + 0.1
         >>> precision_batch = torch.stack([precision_tril] * 3)
         >>> mvn_batch = SparseMultivariateNormal(loc=loc_batch, diagonal=diagonal_batch,
         ...                                      precision_tril=precision_batch)
