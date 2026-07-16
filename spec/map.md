@@ -64,7 +64,7 @@ verbatim, never invent. `spmv` = `spmm` with `p = 1` (no separate op).
 | Public API | Forward | Backward | Kernel dir(s) | Status |
 |------------|---------|----------|---------------|--------|
 | `sparse_mm` | `tsgu::spmm` | gradA `tsgu::sddmm` · gradB `tsgu::spmm` (on cached CSC) | `spmm/`, `sddmm/` | ✅ live (commit 15) |
-| `sparse_triangular_solve` | `tsgu::spsm` | gradB `tsgu::spsm` (transposed plan) · gradA `tsgu::sddmm` (negate epilogue) | `spsm/`, `sddmm/` | pending |
+| `sparse_triangular_solve` | `tsgu::spsm` | gradB `tsgu::spsm` (transposed plan) · gradA `tsgu::sddmm` (negate epilogue) | `spsm/`, `sddmm/` | ✅ live (commit 16) |
 | `sparse_generic_solve` | host loop → `tsgu::spmm` | host `transpose_solve` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` | pending |
 | `sparse_generic_lstsq` | host loop → `tsgu::spmm` (A and cached CSC) | host `transpose_lstsq` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` | pending |
 | `sparse_logsumexp` | `tsgu::seglse` | `tsgu::seglse_bwd` (uses saved `lse`) | `logsumexp/` | ✅ live (commit 12) |

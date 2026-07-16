@@ -36,12 +36,16 @@ DOCTEST_MODULES = [
 # sparse_logsumexp (tsgu::seglse as of spec/commit.md Phase 3 commit 12) both
 # directly and from sparse_bidir_logsumexp's own docstring.
 # torchsparsegradutils.ops.matmul's examples call sparse_mm (tsgu::spmm as of
-# spec/commit.md Phase 3 commit 15). torchsparsegradutils.distributions.
+# spec/commit.md Phase 3 commit 15). torchsparsegradutils.ops.triangular_solve's
+# examples call sparse_triangular_solve (tsgu::spsm as of spec/commit.md
+# Phase 3 commit 16). torchsparsegradutils.distributions.
 # sparse_multivariate_normal's SparseMultivariateNormal/_batch_sparse_mv
-# examples route sample()/rsample() through sparse_mm too.
+# examples route sample()/rsample() through sparse_mm (and, via LDL^T/LL^T
+# scale_tril solves, sparse_triangular_solve) too.
 _CUDA_ONLY_DOCTEST_MODULES = {
     "torchsparsegradutils.ops.logsumexp",
     "torchsparsegradutils.ops.matmul",
+    "torchsparsegradutils.ops.triangular_solve",
     "torchsparsegradutils.distributions.sparse_multivariate_normal",
 }
 

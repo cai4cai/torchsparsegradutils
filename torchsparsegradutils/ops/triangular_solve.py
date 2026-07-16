@@ -1,24 +1,24 @@
-from typing import cast
-
 import torch
 from torch import Tensor
 
-from torchsparsegradutils.utils import convert_coo_to_csr, sparse_block_diag, sparse_block_diag_split, stack_csr
+from torchsparsegradutils._batched import BatchedCSR
 
 # ---------------------------------------------------------------------------
 # tsgu::spsm — op schema, fake kernel, autograd registration.
 # spec/commit.md Phase 1 #9; routing verbatim from spec/map.md "Kernel
-# routing". Schema takes plain dense tensors only (architecture.md §2). The
-# `sparse_triangular_solve` wrapper below still calls
-# `_legacy_sparse_triangular_solve`; nothing wires this op in until commit 16
-# (spec/commit.md Phase 3), which also adds the real SpSM analysis-plan
-# cache (architecture.md §3).
+# routing". Schema takes plain dense tensors only (architecture.md §2):
+# BatchedCSR's `values`/`rowptr`/`col` fields (naming.md §2 kernel short
+# names) plus shape ints `B`/`n` and the `upper`/`unitriangular`/`transpose`
+# flags kept verbatim from the public contract — never a torch.sparse_*
+# tensor or a BatchedCSR object crosses this boundary.
 #
-# No CUDA/CPU implementation is registered in this commit — the op exists
-# only as schema + fake (meta) kernel and raises NotImplementedError if
-# actually invoked. Its `register_autograd` backward below therefore also
-# references torch.ops.tsgu.spsm / torch.ops.tsgu.sddmm with no real
-# implementation yet; nothing exercises those code paths until later.
+# spec/commit.md Phase 3 commit 16: `sparse_triangular_solve` dispatches to
+# `tsgu::spsm` (forward, and its own gradB via the "transposed plan" — the
+# same op with `transpose` flipped) + `tsgu::sddmm` (gradA, negate
+# epilogue) below -- its `_legacy_sparse_triangular_solve`/
+# `SparseTriangularSolve` bodies are deleted in this commit. The CUDA
+# implementation (cuda/csrc/kernels/spsm/spsm.cu + plan.cpp's analysis-plan
+# cache, architecture.md §3) is registered.
 # ---------------------------------------------------------------------------
 
 
@@ -36,9 +36,11 @@ def spsm(
 ) -> Tensor:
     r"""Batched sparse triangular solve (map.md: ``sparse_triangular_solve``
     forward; also serves its own ``gradB`` via the "transposed plan" —
-    calling this same op again with ``transpose`` flipped, map.md routing;
-    the real analysis-plan cache reuse, architecture.md §3, lands with the
-    kernel in commit 16).
+    calling this same op again with ``transpose`` flipped, map.md routing).
+    The analysis-plan cache (architecture.md §3) lives C++-side, keyed on
+    this call's ``rowptr``/``col`` tensor identity (cuda/csrc/kernels/spsm/
+    plan.h/plan.cpp) — there is no plan-tensor argument on this schema (see
+    that file's module comment for why).
 
     Solves, per batch item ``b``, :math:`A[b]\,x[b] = \mathrm{rhs}[b]` (or
     :math:`A[b]^\top\,x[b] = \mathrm{rhs}[b]` when ``transpose=True``) for
@@ -67,7 +69,9 @@ def spsm(
         Solution ``x``, same shape as ``rhs``.
     """
     raise NotImplementedError(
-        "tsgu::spsm has no implementation registered yet — lands in spec/commit.md Phase 3 (commit 16)."
+        "tsgu::spsm has no Python/CPU implementation (architecture.md §4: CUDA-required at runtime) — "
+        "this schema body only runs as a CPU/meta fallback; the real CUDA implementation is registered "
+        "from cuda/csrc/kernels/spsm/spsm.cu."
     )
 
 
@@ -114,12 +118,34 @@ def _spsm_backward(ctx, grad_output):
     grad_vals = None
     if ctx.vals_requires_grad:
         # gradA (map.md): sampled outer product -gradB @ x^T at A's own
-        # pattern, via tsgu::sddmm's negate epilogue. NOTE: this uses the
-        # non-transposed (g=gradB, mat=x) index convention; the exact
-        # row/col role swap the reference implementation applies when
-        # transpose=True (see the legacy SparseTriangularSolve.backward) is
-        # a kernel-commit-16 detail, not a schema-level concern here.
-        grad_vals = torch.ops.tsgu.sddmm(rowptr, col, gradB, x, B, n, n, True)
+        # pattern, via tsgu::sddmm's negate epilogue.
+        #
+        # commit-9 flag, resolved here (commit 16): tsgu::sddmm's contract
+        # is out[k] = dot(g[row(k), :], mat[col(k), :]) (negated). For
+        # transpose=False this is directly gradA[i, j] = -dot(gradB[i,:],
+        # x[j,:]) -- sddmm(rowptr, col, g=gradB, mat=x, negate=True).
+        #
+        # For transpose=True the legacy SparseTriangularSolve.backward
+        # swaps which array A_row_idx/A_col_idx index into:
+        #   mgradbselect = -gradB[A_col_idx, :]   (i.e. -gradB[j, :])
+        #   xselect      =  x[A_row_idx, :]       (i.e.  x[i, :])
+        #   gradA[k] = sum(mgradbselect * xselect) = -dot(gradB[j,:], x[i,:])
+        # Re-derived independently from the effective system M = A^T (the
+        # one actually solved when transpose=True): dL/dM = -(M^{-T} G) x^T
+        # with M^{-T} = A^{-1}, so dL/dM = -gradB x^T (gradB = A^{-1} G,
+        # exactly what the op call above computes for transpose=True).
+        # M[p, q] = A[q, p], so dL/dA[q, p] = dL/dM[p, q] = -dot(gradB[p,:],
+        # x[q,:]); for a stored entry at (row=i, col=j) — i.e. q=i, p=j —
+        # this is gradA[i,j] = -dot(gradB[j,:], x[i,:]), matching the legacy
+        # code exactly.
+        #
+        # tsgu::sddmm has no row/col-swap flag, but A is square (n_rows ==
+        # n_cols == n for a triangular solve) and dot() is commutative, so
+        # -dot(gradB[j,:], x[i,:]) = -dot(x[row(k),:], gradB[col(k),:]) is
+        # realized by swapping the *dense operands* (g <-> mat), not the
+        # pattern -- gradA stays aligned with A's own rowptr/col either way.
+        g, mat = (x, gradB) if ctx.transpose else (gradB, x)
+        grad_vals = torch.ops.tsgu.sddmm(rowptr, col, g, mat, B, n, n, True)
 
     grad_rhs = gradB if ctx.rhs_requires_grad else None
 
@@ -127,6 +153,33 @@ def _spsm_backward(ctx, grad_output):
 
 
 spsm.register_autograd(_spsm_backward, setup_context=_spsm_setup_context)
+
+
+# ---------------------------------------------------------------------------
+# tsgu::_spsm_plan_cache_stats — test/introspection-only op (spec/commit.md
+# Phase 3 commit 16 T5: "plan-cache tests: same BatchedCSR solved twice ->
+# analysis computed once (assert via the lazy member's identity/a
+# counter)"). The plan cache itself lives in C++ (cuda/csrc/kernels/spsm/
+# plan.h/plan.cpp's module comment has the full design) -- this is the only
+# way to observe its process-wide (builds, hits) counters from Python,
+# since nothing else about that cache crosses the op boundary. `anchor` is
+# any CUDA tensor (device/dtype-inheritance only, per the `new_empty`
+# convention every other op in this file uses) -- its values are never
+# read.
+# ---------------------------------------------------------------------------
+
+
+@torch.library.custom_op("tsgu::_spsm_plan_cache_stats", mutates_args=())
+def _spsm_plan_cache_stats(anchor: Tensor) -> Tensor:
+    raise NotImplementedError(
+        "tsgu::_spsm_plan_cache_stats has no Python/CPU implementation -- test/introspection-only op; "
+        "the real CUDA implementation reads cuda/csrc/kernels/spsm/plan.cpp's process-wide counters."
+    )
+
+
+@_spsm_plan_cache_stats.register_fake
+def _spsm_plan_cache_stats_fake(anchor: Tensor) -> Tensor:
+    return anchor.new_empty(2, dtype=torch.int64)
 
 
 def sparse_triangular_solve(
@@ -222,13 +275,16 @@ def sparse_triangular_solve(
 
     Examples
     --------
+    ``tsgu::spsm`` (spec/commit.md Phase 3 commit 16) is CUDA-only
+    (architecture.md §4) -- these examples run on a CUDA tensor.
+
     Upper-triangular::
 
         >>> import torch
         >>> from torchsparsegradutils import sparse_triangular_solve
         >>> A = torch.sparse_csr_tensor([0, 2, 3, 4], [0, 2, 1, 2],
-        ...                             torch.tensor([2.0, 1.0, 3.0, 1.0]), (3, 3))
-        >>> B = torch.tensor([[1.0], [2.0], [3.0]])
+        ...                             torch.tensor([2.0, 1.0, 3.0, 1.0]), (3, 3)).cuda()
+        >>> B = torch.tensor([[1.0], [2.0], [3.0]]).cuda()
         >>> x = sparse_triangular_solve(A, B, upper=True)
         >>> x.shape
         torch.Size([3, 1])
@@ -236,7 +292,7 @@ def sparse_triangular_solve(
     Lower-triangular::
 
         >>> A_low = torch.sparse_csr_tensor([0, 1, 3, 5], [0, 0, 1, 0, 2],
-        ...                                 torch.tensor([2.0, 1.0, 3.0, 0.5, 1.0]), (3, 3))
+        ...                                 torch.tensor([2.0, 1.0, 3.0, 0.5, 1.0]), (3, 3)).cuda()
         >>> x = sparse_triangular_solve(A_low, B, upper=False)
 
     Batched::
@@ -267,118 +323,38 @@ def sparse_triangular_solve(
     if A.dim() == 3 and A.size(0) != B.size(0):
         raise ValueError("If batched, A and B must have the same batch size")
 
-    return _legacy_sparse_triangular_solve(A, B, upper, unitriangular, transpose)
+    return _tsgu_sparse_triangular_solve(A, B, upper, unitriangular, transpose)
 
 
-# deleted by its kernel commit (spec/commit.md Phase 3)
-def _legacy_sparse_triangular_solve(
+def _tsgu_sparse_triangular_solve(
     A: torch.Tensor, B: torch.Tensor, upper: bool, unitriangular: bool, transpose: bool
 ) -> torch.Tensor:
-    return cast(torch.Tensor, SparseTriangularSolve.apply(A, B, upper, unitriangular, transpose))
+    """``tsgu::spsm``-backed forward (spec/commit.md Phase 3 commit 16;
+    map.md routing: ``sparse_triangular_solve`` forward -> ``tsgu::spsm``,
+    replacing ``_legacy_sparse_triangular_solve``/``SparseTriangularSolve``,
+    deleted in this commit).
 
+    Unwraps ``A`` into its ``BatchedCSR`` descriptor at the boundary
+    (architecture.md §2; COO inputs go through ``BatchedCSR.from_torch``'s
+    own coalesce+compress, matching the docstring's "COO inputs are
+    converted to CSR internally") and calls the kernel op directly on plain
+    tensors -- no manual backward wiring is written here, same pattern as
+    ``ops/matmul.py``'s ``_tsgu_sparse_mm``: PyTorch's built-in sparse-tensor
+    ``values()``/``coalesce()`` autograd reconstructs a sparse gradient at
+    A's own indices/layout automatically, so gradients flow through
+    ``torch.ops.tsgu.spsm``'s own ``register_autograd`` (above, commit 9;
+    transpose-indexing resolved commit 16) and back through the extraction
+    chain with no explicit rewrap call needed here.
 
-class SparseTriangularSolve(torch.autograd.Function):
-    r"""
-    Autograd function for memory-efficient sparse triangular system solving.
-
-    See Also
-    --------
-    sparse_triangular_solve : User-facing function that calls this autograd function.
-    torch.triangular_solve : PyTorch's native triangular solver.
+    ``B`` is unsqueezed to ``(1, n, p)`` for the unbatched case (``tsgu::spsm``
+    always takes a batched ``(B, n, p)`` rhs); ``unsqueeze``/``squeeze`` are
+    themselves differentiable views, so ``B``'s gradient shape is restored
+    automatically too.
     """
-
-    @staticmethod
-    def forward(ctx, A, B, upper, unitriangular, transpose):
-        ctx.batch_size = B.size()[0] if B.dim() == 3 else None
-        ctx.A_shape = A.size()  # (b), m, m
-        ctx.B_shape = B.size()  # (b), m, p
-        ctx.csr = True
-        ctx.upper = upper
-        ctx.unitriangular = unitriangular
-        ctx.transpose = transpose
-
-        grad_flag = A.requires_grad or B.requires_grad
-
-        if ctx.batch_size is not None:
-            A = sparse_block_diag(*A)
-            B = B.reshape(-1, B.size(-1))
-
-        if A.layout == torch.sparse_coo:
-            A = convert_coo_to_csr(A)  # NOTE: triangular solve doesn't work with sparse coo
-            ctx.csr = False
-
-        # NOTE: DEPRECATED: Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
-
-        x = torch.triangular_solve(
-            B.detach(), A.detach(), upper=upper, unitriangular=unitriangular, transpose=transpose
-        ).solution
-
-        x.requires_grad = grad_flag
-        ctx.save_for_backward(A, x.detach())
-
-        if ctx.batch_size is not None:
-            x = x.view(ctx.batch_size, ctx.A_shape[-2], ctx.B_shape[-1])
-
-        return x
-
-    @staticmethod
-    def backward(ctx, grad):  # type: ignore[override]
-        if ctx.batch_size is not None:
-            grad = grad.reshape(-1, grad.size(-1))
-
-        A, x = ctx.saved_tensors
-
-        # Backprop rule: gradB = A^{-T} grad
-        # NOTE: DEPRECATED: Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
-
-        gradB = torch.triangular_solve(
-            grad, A, upper=ctx.upper, transpose=not ctx.transpose, unitriangular=ctx.unitriangular
-        ).solution
-
-        # The gradient with respect to the matrix A seen as a dense matrix would
-        # lead to a backprop rule as follows
-        # gradA = -(A^{-T} grad)(A^{-1} B) = - gradB @ x.T
-        # but we are only interested in the gradient with respect to
-        # the (non-zero) values of A. To save memory, instead of computing the full
-        # dense matrix gradB @ x.T and then subsampling at the nnz locations in a,
-        # we can directly only compute the required values:
-        # gradA[i,j] = - dotprod(gradB[i,:], x[j,:])
-
-        # We start by getting the i and j indices:
-        A_col_idx = A.col_indices()
-        A_crow_idx = A.crow_indices()
-        # Uncompress row indices:
-        A_row_idx = torch.repeat_interleave(
-            torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
-        )
-
-        if ctx.transpose:
-            mgradbselect = -gradB.index_select(0, A_col_idx)  # -gradB[j, :]
-            xselect = x.index_select(0, A_row_idx)  # x[i, :]
-        else:
-            mgradbselect = -gradB.index_select(0, A_row_idx)  # -gradB[i, :]
-            xselect = x.index_select(0, A_col_idx)  # x[j, :]
-
-        if ctx.unitriangular is True and torch.any(A_row_idx == A_col_idx):
-            raise ValueError("First input should be strictly triangular (i.e. unit diagonals is implicit)")
-
-        # Dot product:
-        mgbx = mgradbselect * xselect
-        gradA = torch.sum(mgbx, dim=1)
-
-        if ctx.csr is False:
-            gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
-        else:
-            gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
-
-        if ctx.batch_size is not None:
-            shapes = ctx.A_shape[0] * (ctx.A_shape[-2:],)
-            gradA = sparse_block_diag_split(gradA, *shapes)
-            if not ctx.csr:
-                gradA = torch.stack([*gradA])
-            else:
-                gradA = stack_csr([*gradA])
-
-            gradB = gradB.view(ctx.B_shape)
-
-        return gradA, gradB, None, None, None
+    batched = A.dim() == 3
+    csr = BatchedCSR.from_torch(A)
+    rhs = B if batched else B.unsqueeze(0)
+    out = torch.ops.tsgu.spsm(
+        csr.values, csr.rowptr, csr.col, rhs, csr.shape[0], csr.shape[1], upper, unitriangular, transpose
+    )
+    return out if batched else out.squeeze(0)

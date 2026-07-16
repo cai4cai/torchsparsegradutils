@@ -54,12 +54,19 @@ def test_oracle_sparse_mm_matches_live():
     assert torch.allclose(live, oracle)
 
 
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and backend_available()),
+    reason=(
+        "sparse_triangular_solve dispatches to tsgu::spsm as of spec/commit.md Phase 3 "
+        "commit 16 -- CUDA-only (architecture.md §4); no CUDA device available here."
+    ),
+)
 def test_oracle_sparse_triangular_solve_matches_live():
-    A = torch.sparse_csr_tensor([0, 2, 3, 4], [0, 2, 1, 2], torch.tensor([2.0, 1.0, 3.0, 1.0]), (3, 3))
-    B = torch.tensor([[1.0], [2.0], [3.0]])
+    A = torch.sparse_csr_tensor([0, 2, 3, 4], [0, 2, 1, 2], torch.tensor([2.0, 1.0, 3.0, 1.0]), (3, 3)).cuda()
+    B = torch.tensor([[1.0], [2.0], [3.0]]).cuda()
 
     live = sparse_triangular_solve(A, B, upper=True)
-    oracle = oracle_sparse_triangular_solve(A, B, upper=True)
+    oracle = oracle_sparse_triangular_solve(A.cpu(), B.cpu(), upper=True).cuda()
     assert torch.allclose(live, oracle)
 
 

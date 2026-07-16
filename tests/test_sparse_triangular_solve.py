@@ -5,6 +5,7 @@ import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
 from torchsparsegradutils import sparse_triangular_solve
+from torchsparsegradutils._dispatch import backend_available
 from torchsparsegradutils.utils import rand_sparse_tri
 
 TEST_DATA = [
@@ -69,8 +70,23 @@ def index_dtype(request):
     return request.param
 
 
-@pytest.fixture(params=DEVICES, ids=[device_id(d) for d in DEVICES])
+# spec/commit.md Phase 3 commit 16: sparse_triangular_solve now dispatches
+# to tsgu::spsm, which is CUDA-only (architecture.md §4: "CUDA-required at
+# runtime" -- no CPU implementation ships). DEVICES still includes cpu
+# (other suites use it), so the `device` fixture below skips cleanly on a
+# cpu parametrization instead of hitting the op's NotImplementedError --
+# mirrors test_sparse_matmul.py's identical fix from commit 15 (and
+# test_sparse_logsumexp.py's from commit 12).
+_CUDA_DEVICES = [d for d in DEVICES if d.type == "cuda"] if backend_available() else []
+
+
+@pytest.fixture(params=_CUDA_DEVICES or [None], ids=[device_id(d) for d in _CUDA_DEVICES] or ["cuda-unavailable"])
 def device(request):
+    if request.param is None:
+        pytest.skip(
+            "sparse_triangular_solve requires a CUDA device and a loaded tsgu backend "
+            "(spec/commit.md Phase 3 commit 16: tsgu::spsm is CUDA-only) -- none available on this machine."
+        )
     return request.param
 
 

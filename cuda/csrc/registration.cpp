@@ -61,6 +61,18 @@ torch::stable::Tensor tsgu_spmm_launch(torch::stable::Tensor const &vals, torch:
                                         torch::stable::Tensor const &col, torch::stable::Tensor const &dense,
                                         int64_t B, int64_t n, int64_t m);
 
+// Commit 16 (spec/commit.md Phase 3): tsgu::spsm — Family 3 "Vendor-baseline
+// forwards" Triangular SpSM row (kernels.md), architecture.md §3's SpSM
+// analysis-plan cache. Defined in csrc/kernels/spsm/spsm.cu (plan cache:
+// csrc/kernels/spsm/plan.cpp). Serves sparse_triangular_solve's forward and
+// (via its own `transpose` flag, no separate op) its gradB.
+torch::stable::Tensor tsgu_spsm_launch(torch::stable::Tensor const &vals, torch::stable::Tensor const &rowptr,
+                                        torch::stable::Tensor const &col, torch::stable::Tensor const &rhs,
+                                        int64_t B, int64_t n, bool upper, bool unitriangular, bool transpose);
+// Test/introspection-only (spsm.cu's own comment): plan-cache (builds, hits)
+// counters, spec/commit.md Phase 3 commit 16 T5.
+torch::stable::Tensor tsgu_spsm_plan_cache_stats_launch(torch::stable::Tensor const &anchor);
+
 STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
   m.impl("_smoke", TORCH_BOX(&tsgu_smoke_launch));
   m.impl("seglse", TORCH_BOX(&tsgu_seglse_launch));
@@ -69,6 +81,8 @@ STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
   m.impl("seglse_bidir_bwd", TORCH_BOX(&tsgu_seglse_bidir_bwd_launch));
   m.impl("sddmm", TORCH_BOX(&tsgu_sddmm_launch));
   m.impl("spmm", TORCH_BOX(&tsgu_spmm_launch));
+  m.impl("spsm", TORCH_BOX(&tsgu_spsm_launch));
+  m.impl("_spsm_plan_cache_stats", TORCH_BOX(&tsgu_spsm_plan_cache_stats_launch));
 }
 
 // --- Python extension module entry point ------------------------------------

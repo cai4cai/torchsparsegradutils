@@ -48,3 +48,9 @@ target_link_libraries(bench_sddmm PRIVATE nvbench::nvbench nvbench::main)
 # tsgu::spmm (spec/commit.md Phase 3 commit 15) — kernels.md Family 3.
 add_executable(bench_spmm bench_spmm.cu)
 target_link_libraries(bench_spmm PRIVATE nvbench::nvbench nvbench::main)
+
+# tsgu::spsm (spec/commit.md Phase 3 commit 16) — kernels.md Family 3
+# Triangular SpSM row; benches the level-scheduled solve kernel (the "warm"
+# path — plan already built).
+add_executable(bench_spsm bench_spsm.cu)
+target_link_libraries(bench_spsm PRIVATE nvbench::nvbench nvbench::main)
