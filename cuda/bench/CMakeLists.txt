@@ -40,3 +40,7 @@ target_link_libraries(bench_seglse PRIVATE nvbench::nvbench nvbench::main)
 # fused bidirectional variant.
 add_executable(bench_seglse_bidir bench_seglse_bidir.cu)
 target_link_libraries(bench_seglse_bidir PRIVATE nvbench::nvbench nvbench::main)
+
+# tsgu::sddmm (spec/commit.md Phase 3 commit 14) — kernels.md Family 1.
+add_executable(bench_sddmm bench_sddmm.cu)
+target_link_libraries(bench_sddmm PRIVATE nvbench::nvbench nvbench::main)

@@ -44,12 +44,22 @@ torch::stable::Tensor tsgu_seglse_bidir_bwd_launch(torch::stable::Tensor const &
                                                     torch::stable::Tensor const &col, torch::stable::Tensor const &padded,
                                                     torch::stable::Tensor const &gout, int64_t B, int64_t n, int64_t m);
 
+// Commit 14 (spec/commit.md Phase 3): tsgu::sddmm — Family 1 "SDDMM (the
+// shared backward)" (kernels.md). Defined in csrc/kernels/sddmm/sddmm.cu.
+// No wrapper routes to it yet (nothing in ops/ is switched over this
+// commit) -- registered here so it is callable directly (torch.ops.tsgu.sddmm)
+// for its own gates and as the future backward primitive commits 15-17 wire in.
+torch::stable::Tensor tsgu_sddmm_launch(torch::stable::Tensor const &rowptr, torch::stable::Tensor const &col,
+                                         torch::stable::Tensor const &g, torch::stable::Tensor const &mat, int64_t B,
+                                         int64_t n, int64_t m, bool negate);
+
 STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
   m.impl("_smoke", TORCH_BOX(&tsgu_smoke_launch));
   m.impl("seglse", TORCH_BOX(&tsgu_seglse_launch));
   m.impl("seglse_bwd", TORCH_BOX(&tsgu_seglse_bwd_launch));
   m.impl("seglse_bidir", TORCH_BOX(&tsgu_seglse_bidir_launch));
   m.impl("seglse_bidir_bwd", TORCH_BOX(&tsgu_seglse_bidir_bwd_launch));
+  m.impl("sddmm", TORCH_BOX(&tsgu_sddmm_launch));
 }
 
 // --- Python extension module entry point ------------------------------------
