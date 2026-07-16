@@ -12,16 +12,36 @@
 // and is not touched here — this file supplies the one CUDA implementation
 // that schema has been missing.
 //
-// Parallelisation (kernels.md Family 1: "one warp per specified entry,
-// warp-reduce over p"): one warp per `k` in `[0, nse_total)`, not one warp
-// per row as in the seglse family — the reduction axis here is `p` (the
-// dense inner dimension), not the segment's member count, so each lane
-// strides its slice of `p` and a warp-shuffle sum-reduction (reduce.cuh's
-// warp_reduce_sum) finishes it. Shared-memory G-row tiling for large `p`
-// (kernels.md's "optional optimisation") is not pursued here — the plain
-// warp path is exercised by the benchmark (bench_sddmm.cu) up to p=512 and
-// is not "clearly poor" at that width, so the optional path is skipped per
-// the family section's own guidance.
+// Parallelisation — two kernels, chosen host-side by the launcher:
+//
+// 1. `sddmm_row_kernel` (the hot path): one warp per FOLDED ROW. The warp
+//    stages `g[row, :]` into shared memory once, then walks the row's
+//    entries doing one warp-reduced dot against `mat[col[k], :]` per entry.
+//    This is kernels.md Family 1's "tile G rows through shared memory for
+//    large p" — with ~hundreds of entries per row (the benchmark corpus,
+//    and any real gradient pattern of similar density), the warp-per-entry
+//    design re-reads the same G row once PER ENTRY, which put commit 14's
+//    first cut at 0.73x of cuSPARSE (11.81ms vs 8.66ms, 4096^2/1.68M/p=128):
+//    it was already at the no-reuse roofline (~150 GB/s of ~176 GB/s peak),
+//    so the only way forward was to stop paying for G. Row-tiling reads G
+//    exactly once per row (n*p total instead of nse*p) — a ~2x traffic cut
+//    at that density. Row lookup also becomes free (row = warp id), killing
+//    the per-entry binary search.
+//
+// 2. `sddmm_kernel` (fallback): one warp per SPECIFIED ENTRY with a per-warp
+//    binary search for the row — kernels.md's "good for small p" baseline
+//    design, kept for the patterns where row-tiling has nothing to reuse or
+//    can't run: near-diagonal patterns (avg < 2 entries/row — the G-row
+//    staging would be pure overhead and warp-per-row underparallelises),
+//    and p too large for the shared-memory budget (row of f64 at
+//    kWarpsPerBlock rows/block must fit the 48KB default smem window).
+//    It is also perfectly load-balanced, which the row kernel is not —
+//    acceptable because skewed-row load balancing is spmm's problem
+//    (merge-path, kernels.md Family 3), not the backward's.
+//
+// Both kernels write each output element from exactly one warp — no atomics,
+// both deterministic, so the heuristic switch is invisible to the
+// determinism contract (gate 5 run-twice holds regardless of path).
 //
 // Row lookup: the schema gives each entry only `col[k]`, not its row —
 // `rowptr` is monotonic non-decreasing over folded rows (naming.md §2:
@@ -132,6 +152,56 @@ __global__ void sddmm_kernel(scalar_t *__restrict__ out, index_t const *__restri
   }
 }
 
+// Row-tiled hot path (module comment §1): one warp per folded row, G row
+// staged through dynamic shared memory (`kWarpsPerBlock * p * sizeof(scalar)`
+// per block — the launcher only selects this kernel when that fits the 48KB
+// default window). Empty rows return immediately; `out[k]` is written by the
+// single warp owning row(k), so no atomics and bitwise-deterministic output.
+template <typename scalar_t, typename index_t>
+__global__ void sddmm_row_kernel(scalar_t *__restrict__ out, index_t const *__restrict__ rowptr,
+                                  index_t const *__restrict__ col, scalar_t const *__restrict__ g,
+                                  scalar_t const *__restrict__ mat, int64_t total_rows, int64_t n, int64_t m,
+                                  int64_t p, bool negate) {
+  extern __shared__ unsigned char smem_raw[];
+  scalar_t *g_smem_block = reinterpret_cast<scalar_t *>(smem_raw);
+
+  int64_t warp_in_block = threadIdx.x / kWarpSize;
+  int64_t lane = threadIdx.x % kWarpSize;
+  int64_t row_g = static_cast<int64_t>(blockIdx.x) * kWarpsPerBlock + warp_in_block;
+  if (row_g >= total_rows) {
+    return;
+  }
+
+  int64_t start = static_cast<int64_t>(rowptr[row_g]);
+  int64_t end = static_cast<int64_t>(rowptr[row_g + 1]);
+  if (start == end) {
+    return;
+  }
+
+  // Stage this warp's G row once; every entry of the row reuses it.
+  scalar_t *g_smem = g_smem_block + warp_in_block * p;
+  scalar_t const *g_row = g + row_g * p;  // (b * n + local_row) * p == row_g * p
+  for (int64_t j = lane; j < p; j += kWarpSize) {
+    g_smem[j] = g_row[j];
+  }
+  __syncwarp();
+
+  int64_t b = row_g / n;
+  scalar_t const *mat_b = mat + b * m * p;
+
+  for (int64_t k = start; k < end; ++k) {
+    scalar_t const *mat_row = mat_b + static_cast<int64_t>(col[k]) * p;
+    scalar_t partial = scalar_t(0);
+    for (int64_t j = lane; j < p; j += kWarpSize) {
+      partial += g_smem[j] * mat_row[j];
+    }
+    partial = tsgu::warp_reduce_sum<scalar_t>(partial);
+    if (lane == 0) {
+      out[k] = negate ? -partial : partial;
+    }
+  }
+}
+
 }  // namespace
 
 torch::stable::Tensor tsgu_sddmm_launch(torch::stable::Tensor const &rowptr, torch::stable::Tensor const &col,
@@ -184,14 +254,27 @@ torch::stable::Tensor tsgu_sddmm_launch(torch::stable::Tensor const &rowptr, tor
   }
 
   int64_t total_rows = B * n;
-  int64_t blocks = (nse_total + kWarpsPerBlock - 1) / kWarpsPerBlock;
 
   TSGU_DISPATCH_VALUE(g.scalar_type(), "tsgu::sddmm", [&] {
     TSGU_DISPATCH_INDEX(rowptr.scalar_type(), "tsgu::sddmm", [&] {
-      sddmm_kernel<scalar_t, index_t><<<blocks, kThreadsPerBlock, 0, guard.stream()>>>(
-          static_cast<scalar_t *>(out.mutable_data_ptr()), static_cast<index_t const *>(rowptr.data_ptr()),
-          static_cast<index_t const *>(col.data_ptr()), static_cast<scalar_t const *>(g_c.data_ptr()),
-          static_cast<scalar_t const *>(mat_c.data_ptr()), total_rows, nse_total, n, m, p, negate);
+      // Path choice (module comment): row-tiling pays only when rows have
+      // entries to reuse the staged G row on (avg >= 2 entries/row) and the
+      // per-block staging buffer fits the 48KB default shared-memory window.
+      size_t row_smem = static_cast<size_t>(kWarpsPerBlock) * static_cast<size_t>(p) * sizeof(scalar_t);
+      bool use_row_path = nse_total >= 2 * total_rows && row_smem <= 48 * 1024;
+      if (use_row_path) {
+        int64_t blocks = (total_rows + kWarpsPerBlock - 1) / kWarpsPerBlock;
+        sddmm_row_kernel<scalar_t, index_t><<<blocks, kThreadsPerBlock, row_smem, guard.stream()>>>(
+            static_cast<scalar_t *>(out.mutable_data_ptr()), static_cast<index_t const *>(rowptr.data_ptr()),
+            static_cast<index_t const *>(col.data_ptr()), static_cast<scalar_t const *>(g_c.data_ptr()),
+            static_cast<scalar_t const *>(mat_c.data_ptr()), total_rows, n, m, p, negate);
+      } else {
+        int64_t blocks = (nse_total + kWarpsPerBlock - 1) / kWarpsPerBlock;
+        sddmm_kernel<scalar_t, index_t><<<blocks, kThreadsPerBlock, 0, guard.stream()>>>(
+            static_cast<scalar_t *>(out.mutable_data_ptr()), static_cast<index_t const *>(rowptr.data_ptr()),
+            static_cast<index_t const *>(col.data_ptr()), static_cast<scalar_t const *>(g_c.data_ptr()),
+            static_cast<scalar_t const *>(mat_c.data_ptr()), total_rows, nse_total, n, m, p, negate);
+      }
     });
   });
 

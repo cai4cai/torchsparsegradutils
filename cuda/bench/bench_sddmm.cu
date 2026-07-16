@@ -1,11 +1,13 @@
 // NVBench target for tsgu::sddmm (spec/commit.md Phase 3 commit 14, T3;
 // kernels.md Family 1). Axes are the kernel's tuning knobs
-// (cuda/csrc/kernels/sddmm/sddmm.cu): total specified entries (`nse_total`,
-// one warp launched per entry), the dense inner dimension `p` (each warp's
-// own reduction length), and batch size `B` (affects the per-warp `rowptr`
-// binary-search depth via `total_rows = B * n`). Standalone CMake +
-// FetchContent, same pattern as bench_seglse.cu (deliberately independent of
-// the kernel-builder Nix build).
+// (cuda/csrc/kernels/sddmm/sddmm.cu): total specified entries (`nse_total`),
+// the dense inner dimension `p` (each warp's reduction length), batch size
+// `B` (affects `total_rows = B * n`), and `path` — 0 = warp-per-entry
+// fallback, 1 = row-tiled hot path (G row staged in shared memory; the
+// launcher's production heuristic picks it when avg entries/row >= 2 and the
+// staging buffer fits 48KB). Standalone CMake + FetchContent, same pattern
+// as bench_seglse.cu (deliberately independent of the kernel-builder Nix
+// build).
 //
 // A vendor-baseline (cuSPARSE cusparseSDDMM, CSR, unbatched) row is *not*
 // duplicated here: benchmarks.md's acceptance layer is the op-level Python
@@ -88,6 +90,51 @@ __global__ void sddmm_kernel(float *__restrict__ out, int32_t const *__restrict_
   }
 }
 
+// Row-tiled hot path — mirrors csrc/kernels/sddmm/sddmm.cu's
+// sddmm_row_kernel: one warp per folded row, G row staged once through
+// dynamic shared memory, one warp-reduced dot per entry of the row.
+__global__ void sddmm_row_kernel(float *__restrict__ out, int32_t const *__restrict__ rowptr,
+                                  int32_t const *__restrict__ col, float const *__restrict__ g,
+                                  float const *__restrict__ mat, int64_t total_rows, int64_t n, int64_t m,
+                                  int64_t p) {
+  extern __shared__ float g_smem_block[];
+
+  int64_t warp_in_block = threadIdx.x / kWarpSize;
+  int64_t lane = threadIdx.x % kWarpSize;
+  int64_t row_g = static_cast<int64_t>(blockIdx.x) * kWarpsPerBlock + warp_in_block;
+  if (row_g >= total_rows) {
+    return;
+  }
+
+  int64_t start = static_cast<int64_t>(rowptr[row_g]);
+  int64_t end = static_cast<int64_t>(rowptr[row_g + 1]);
+  if (start == end) {
+    return;
+  }
+
+  float *g_smem = g_smem_block + warp_in_block * p;
+  float const *g_row = g + row_g * p;
+  for (int64_t j = lane; j < p; j += kWarpSize) {
+    g_smem[j] = g_row[j];
+  }
+  __syncwarp();
+
+  int64_t b = row_g / n;
+  float const *mat_b = mat + b * m * p;
+
+  for (int64_t k = start; k < end; ++k) {
+    float const *mat_row = mat_b + static_cast<int64_t>(col[k]) * p;
+    float partial = 0.0f;
+    for (int64_t j = lane; j < p; j += kWarpSize) {
+      partial += g_smem[j] * mat_row[j];
+    }
+    partial = warp_reduce_sum(partial);
+    if (lane == 0) {
+      out[k] = partial;
+    }
+  }
+}
+
 // Builds a synthetic CSR-like `rowptr` (average `nse_per_row` specified
 // entries per folded row, `total_rows = B * n`) and dense `g`/`mat` operands
 // -- mirrors benchmarks.md's synthetic tier (bench_seglse.cu's
@@ -117,6 +164,13 @@ void bench_sddmm_fwd(nvbench::state &state) {
   int64_t const nse_total = state.get_int64("nse_total");
   int64_t const p = state.get_int64("p");
   int64_t const B = state.get_int64("B");
+  bool const row_path = state.get_int64("path") == 1;
+
+  size_t const row_smem = static_cast<size_t>(kWarpsPerBlock) * static_cast<size_t>(p) * sizeof(float);
+  if (row_path && row_smem > 48 * 1024) {
+    state.skip("row path exceeds 48KB shared-memory window at this p");
+    return;
+  }
 
   // ~8 specified entries/row on average (DLMC-shaped sparsity), split evenly
   // across B batch items.
@@ -145,11 +199,19 @@ void bench_sddmm_fwd(nvbench::state &state) {
   thrust::device_vector<float> out(actual_nse);
 
   state.exec([&](nvbench::launch &launch) {
-    int64_t blocks = (actual_nse + kWarpsPerBlock - 1) / kWarpsPerBlock;
-    sddmm_kernel<<<blocks, kThreadsPerBlock, 0, launch.get_stream()>>>(
-        thrust::raw_pointer_cast(out.data()), thrust::raw_pointer_cast(rowptr.data()),
-        thrust::raw_pointer_cast(col.data()), thrust::raw_pointer_cast(g.data()), thrust::raw_pointer_cast(mat.data()),
-        total_rows, actual_nse, n, m, p);
+    if (row_path) {
+      int64_t blocks = (total_rows + kWarpsPerBlock - 1) / kWarpsPerBlock;
+      sddmm_row_kernel<<<blocks, kThreadsPerBlock, row_smem, launch.get_stream()>>>(
+          thrust::raw_pointer_cast(out.data()), thrust::raw_pointer_cast(rowptr.data()),
+          thrust::raw_pointer_cast(col.data()), thrust::raw_pointer_cast(g.data()),
+          thrust::raw_pointer_cast(mat.data()), total_rows, n, m, p);
+    } else {
+      int64_t blocks = (actual_nse + kWarpsPerBlock - 1) / kWarpsPerBlock;
+      sddmm_kernel<<<blocks, kThreadsPerBlock, 0, launch.get_stream()>>>(
+          thrust::raw_pointer_cast(out.data()), thrust::raw_pointer_cast(rowptr.data()),
+          thrust::raw_pointer_cast(col.data()), thrust::raw_pointer_cast(g.data()),
+          thrust::raw_pointer_cast(mat.data()), total_rows, actual_nse, n, m, p);
+    }
   });
 }
 }  // namespace
@@ -157,4 +219,5 @@ void bench_sddmm_fwd(nvbench::state &state) {
 NVBENCH_BENCH(bench_sddmm_fwd)
     .add_int64_axis("nse_total", {1 << 14, 1 << 17, 1 << 20})
     .add_int64_axis("p", {1, 8, 32, 128, 512})
-    .add_int64_axis("B", {1, 8, 64});
+    .add_int64_axis("B", {1, 8, 64})
+    .add_int64_axis("path", {0, 1});
