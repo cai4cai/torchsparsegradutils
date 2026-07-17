@@ -10,12 +10,6 @@ Sparse Matrix Multiplication
 
 .. autofunction:: sparse_mm
 
-.. autoclass:: SparseMatMul
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :exclude-members: forward, backward
-
 Indexed Matrix Multiplication
 -----------------------------
 
@@ -41,19 +35,7 @@ Sparse Linear Solvers
 
 .. autofunction:: sparse_triangular_solve
 
-.. autoclass:: SparseTriangularSolve
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :exclude-members: forward, backward
-
 .. autofunction:: sparse_generic_solve
-
-.. autoclass:: SparseGenericSolve
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :exclude-members: forward, backward
 
 Sparse Least Squares
 ---------------------
@@ -61,9 +43,3 @@ Sparse Least Squares
 .. currentmodule:: torchsparsegradutils.sparse_lstsq
 
 .. autofunction:: sparse_generic_lstsq
-
-.. autoclass:: SparseGenericLstsq
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :exclude-members: forward, backward

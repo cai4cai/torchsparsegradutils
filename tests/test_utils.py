@@ -4,7 +4,6 @@ import pytest
 import torch
 from test_config import DEVICES, devices_match
 
-from torchsparsegradutils.utils._block_diag import sparse_block_diag, sparse_block_diag_split
 from torchsparsegradutils.utils.convert import (
     _compress_row_indices,
     _demcompress_crow_indices,
@@ -188,103 +187,6 @@ def test_demcompress_crow_indices(device, size, nnz):
     row_indices = A_coo.indices()[0]
     decompressed = _demcompress_crow_indices(A_csr.crow_indices(), A_coo.size()[0])
     assert torch.equal(row_indices, decompressed)
-
-
-# Test sparse_block_diag forward for COO and CSR
-@pytest.mark.parametrize(
-    "layout, size, nnz",
-    [
-        ("coo", (1, 4, 4), 12),
-        ("coo", (4, 4, 4), 12),
-        ("coo", (6, 8, 14), 32),
-        ("csr", (1, 4, 4), 12),
-        ("csr", (4, 4, 4), 12),
-        ("csr", (6, 8, 14), 32),
-    ],
-)
-def test_sparse_block_diag_forward(device, layout, size, nnz):
-    if layout == "coo":
-        A = generate_random_sparse_coo_matrix(size, nnz, device=device)
-    else:
-        A = generate_random_sparse_csr_matrix(size, nnz, device=device)
-    A_d = A.to_dense()
-    B = sparse_block_diag(*A)
-    D = torch.block_diag(*A_d)
-    assert torch.equal(B.to_dense(), D)
-
-
-# Test sparse_block_diag backward for COO
-# TODO: what about CSR?
-@pytest.mark.parametrize(
-    "size, nnz",
-    [
-        ((1, 4, 4), 12),
-        ((4, 4, 4), 12),
-        ((6, 8, 14), 32),
-    ],
-)
-def test_sparse_block_diag_coo_backward(device, size, nnz):
-    A = generate_random_sparse_coo_matrix(size, nnz, device=device)
-    A_d = A.detach().clone().to_dense()
-    A.requires_grad_(True)
-    A_d.requires_grad_(True)
-    B = sparse_block_diag(*A)
-    D = torch.block_diag(*A_d)
-    torch.sparse.sum(B).backward()
-    D.sum().backward()
-    mask = A.grad.to_dense() != 0
-    assert torch.allclose(A.grad.to_dense()[mask], A_d.grad[mask])
-
-
-# Test sparse_block_diag error cases
-def test_sparse_block_diag_errors():
-    with pytest.raises(ValueError):
-        sparse_block_diag()
-    coo_tensor = Mock(spec=torch.Tensor)
-    coo_tensor.layout = torch.sparse_coo
-    csr_tensor = Mock(spec=torch.Tensor)
-    csr_tensor.layout = torch.sparse_csr
-    with pytest.raises(ValueError):
-        sparse_block_diag(coo_tensor, csr_tensor)
-    coo = Mock(spec=torch.Tensor)
-    coo.layout = torch.sparse_coo
-    coo.sparse_dim.return_value = 1
-    with pytest.raises(ValueError):
-        sparse_block_diag(coo)
-    coo.dense_dim.return_value = 1
-    with pytest.raises(ValueError):
-        sparse_block_diag(coo)
-    with pytest.raises(TypeError):
-        sparse_block_diag("not a list or tuple")
-    # generate a small sparse COO without specifying device (defaults to CPU)
-    tensor1 = generate_random_sparse_coo_matrix((5, 5), 5)
-    with pytest.raises(TypeError):
-        sparse_block_diag(tensor1, "bad")
-
-
-# Test sparse_block_diag_split
-@pytest.mark.parametrize(
-    "layout, shape, nnz",
-    [
-        ("coo", (1, 4, 4), 12),
-        ("coo", (4, 4, 4), 12),
-        ("coo", (6, 8, 14), 32),
-        ("csr", (1, 4, 4), 12),
-        ("csr", (4, 4, 4), 12),
-        ("csr", (6, 8, 14), 32),
-    ],
-)
-def test_sparse_block_diag_split(device, layout, shape, nnz):
-    if layout == "coo":
-        A = generate_random_sparse_coo_matrix(shape, nnz, device=device)
-    else:
-        A = generate_random_sparse_csr_matrix(shape, nnz, device=device)
-    B = sparse_block_diag(*A)
-    # build a tuple of original block shapes: (rows, cols) repeated batch times
-    block_shapes = tuple((shape[-2], shape[-1]) for _ in range(shape[0]))
-    parts = sparse_block_diag_split(B, *block_shapes)
-    for orig, part in zip(A, parts):
-        assert torch.equal(orig.to_dense(), part.to_dense())
 
 
 # Test sparse_eye

@@ -13,7 +13,7 @@ from torchsparsegradutils._batched import BatchedCSR
 #
 # spec/commit.md Phase 3 commit 15: `sparse_mm` dispatches to `tsgu::spmm`
 # (forward and, on the cached CSC, gradB) + `tsgu::sddmm` (gradA) below --
-# its `_legacy_sparse_mm`/`SparseMatMul` bodies are deleted in this commit.
+# the pre-rewrite pure-PyTorch bodies were deleted in that commit.
 # Both CUDA implementations are registered (cuda/csrc/kernels/spmm/spmm.cu,
 # cuda/csrc/kernels/sddmm/sddmm.cu, commits 14-15).
 # ---------------------------------------------------------------------------
@@ -200,9 +200,8 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
      :math:`\mathbf{A} \in \mathbb{R}^{n\times m}` is sparse (COO/CSR),
      :math:`\mathbf{B} \in \mathbb{R}^{m\times p}` is dense, and
      :math:`\mathbf{C} \in \mathbb{R}^{n\times p}`. Gradients preserve the sparsity pattern
-     of :math:`\mathbf{A}`. Supports unbatched 2D ``(n,m) @ (m,p)`` and batched 3D inputs by
-     block–diagonalising the batch of sparse matrices and concatenating dense matrices along
-     the batch dimension.
+     of :math:`\mathbf{A}`. Supports unbatched 2D ``(n,m) @ (m,p)`` and batched 3D inputs
+     natively (one leading batch axis; ragged nse per batch item supported for COO).
 
      Let the upstream gradient be :math:`\mathbf{G} = \frac{\partial \mathcal{L}}{\partial \mathbf{C}} \in \mathbb{R}^{n\times p}`.
      The gradients are:
@@ -323,7 +322,7 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
 def _tsgu_sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     """``tsgu::spmm``-backed forward (spec/commit.md Phase 3 commit 15;
     map.md routing: ``sparse_mm`` forward -> ``tsgu::spmm``, replacing
-    ``_legacy_sparse_mm``/``SparseMatMul``, deleted in this commit).
+    the pre-rewrite pure-PyTorch implementation, retired in that commit).
 
     Unwraps ``A`` into its ``BatchedCSR`` descriptor at the boundary
     (architecture.md §2) and calls the kernel op directly on plain tensors

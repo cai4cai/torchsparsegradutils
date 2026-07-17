@@ -8,7 +8,7 @@ re-exports it, and no op wires it in yet — that starts in later commits
 the descriptor is how those tensors get assembled/disassembled from user
 layouts).
 
-One frozen descriptor replaces the block-diag batching hack everywhere, with
+One frozen descriptor replaces the retired block-diagonal batching hack, with
 ragged ``nse`` per batch item as first-class:
 
 - ``values (nse_total,)`` · ``rowptr (B·n+1,)`` absolute over folded rows

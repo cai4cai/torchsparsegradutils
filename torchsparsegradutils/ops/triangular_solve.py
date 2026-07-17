@@ -15,8 +15,8 @@ from torchsparsegradutils._batched import BatchedCSR
 # spec/commit.md Phase 3 commit 16: `sparse_triangular_solve` dispatches to
 # `tsgu::spsm` (forward, and its own gradB via the "transposed plan" — the
 # same op with `transpose` flipped) + `tsgu::sddmm` (gradA, negate
-# epilogue) below -- its `_legacy_sparse_triangular_solve`/
-# `SparseTriangularSolve` bodies are deleted in this commit. The CUDA
+# epilogue) below -- its pre-rewrite pure-PyTorch bodies were deleted in
+# that commit. The CUDA
 # implementation (cuda/csrc/kernels/spsm/spsm.cu + plan.cpp's analysis-plan
 # cache, architecture.md §3) is registered.
 # ---------------------------------------------------------------------------
@@ -331,7 +331,7 @@ def _tsgu_sparse_triangular_solve(
 ) -> torch.Tensor:
     """``tsgu::spsm``-backed forward (spec/commit.md Phase 3 commit 16;
     map.md routing: ``sparse_triangular_solve`` forward -> ``tsgu::spsm``,
-    replacing ``_legacy_sparse_triangular_solve``/``SparseTriangularSolve``,
+    replacing the pre-rewrite pure-PyTorch implementation,
     deleted in this commit).
 
     Unwraps ``A`` into its ``BatchedCSR`` descriptor at the boundary

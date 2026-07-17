@@ -14,13 +14,13 @@ __all__ = ["sparse_logsumexp", "sparse_bidir_logsumexp"]
 #
 # spec/commit.md Phase 3 commit 12: `sparse_logsumexp` dispatches to
 # `tsgu::seglse` / `tsgu::seglse_bwd` (CUDA implementation registered in
-# cuda/csrc/kernels/logsumexp/seglse.cu) -- its `_legacy_*` body was deleted
+# cuda/csrc/kernels/logsumexp/seglse.cu) -- its pre-rewrite body was deleted
 # there.
 #
 # spec/commit.md Phase 3 commit 13: `sparse_bidir_logsumexp` now dispatches
 # to `tsgu::seglse_bidir` / `tsgu::seglse_bidir_bwd` (CUDA implementation
 # registered in cuda/csrc/kernels/logsumexp/seglse_bidir.cu) -- its
-# `_legacy_*` body (`_bidir_2d` / `_bidir_batched` / `_scatter_logsumexp`) is
+# pre-rewrite body (`_bidir_2d` / `_bidir_batched` / `_scatter_logsumexp`) is
 # deleted in this commit.
 # ---------------------------------------------------------------------------
 
@@ -592,7 +592,7 @@ def sparse_logsumexp(
         raise RuntimeError("sparse_logsumexp: dim contains a repeated dimension.")
     dims = sorted(normalised)
 
-    # tsgu::seglse live (spec/commit.md Phase 3 commit 12) -- _legacy_sparse_logsumexp
+    # tsgu::seglse live (spec/commit.md Phase 3 commit 12) -- the pure-PyTorch body
     # deleted in this commit; sparse_bidir_logsumexp (below) is untouched.
     if input.ndim == 2:
         return _logsumexp_2d(input, dims, keepdim, include_zeros)

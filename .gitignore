@@ -166,3 +166,4 @@ cuda/torch-ext/*/_ops.py
 cuda/torch-ext/*/*.so
 cuda/.compile-commands/
 cuda/bench/compile_commands.json
+/result

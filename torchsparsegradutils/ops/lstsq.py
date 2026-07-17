@@ -171,8 +171,8 @@ def _tsgu_sparse_generic_lstsq(A, B, lstsq, transpose_lstsq):
     commit 17; map.md routing: ``sparse_generic_lstsq`` forward = host loop →
     ``tsgu::spmm`` on A and its cached CSC — inside lsmr, via
     ``solvers/_matvec.py`` — backward = host ``transpose_lstsq`` → gradA
-    ``tsgu::sddmm``; replaces ``_legacy_sparse_generic_lstsq`` /
-    ``SparseGenericLstsq``, deleted in this commit).
+    ``tsgu::sddmm``; the pre-rewrite pure-PyTorch implementation was
+    retired in this commit).
 
     Same construction as ``_tsgu_sparse_generic_solve``: the pluggable
     ``lstsq``/``transpose_lstsq`` callables cannot cross a ``torch.library``

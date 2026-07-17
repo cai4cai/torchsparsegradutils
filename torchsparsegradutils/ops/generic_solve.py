@@ -178,8 +178,8 @@ def _tsgu_sparse_generic_solve(A, B, solve, transpose_solve, kwargs):
     commit 17; map.md routing: ``sparse_generic_solve`` forward = host loop →
     ``tsgu::spmm`` — the default solvers route their matvecs through the
     kernel via ``solvers/_matvec.py`` — backward = host ``transpose_solve`` →
-    gradA ``tsgu::sddmm``; replaces ``_legacy_sparse_generic_solve`` /
-    ``SparseGenericSolve``, deleted in this commit).
+    gradA ``tsgu::sddmm``; the pre-rewrite pure-PyTorch implementation
+    was retired in this commit).
 
     Unwraps ``A`` into its ``BatchedCSR`` descriptor at the boundary
     (architecture.md §2) and threads the descriptor's stored values through

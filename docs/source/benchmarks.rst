@@ -142,7 +142,7 @@ This benchmark compares batching strategies for performing many independent spar
      - List comprehension executing per-item tsgu sparse @ dense implementation
      - tsgu list
    * - ``tsgu.sparse_mm(A_batch, B_batch)``
-     - Batched variant operating on a block-diagonal sparse assembly under the hood (``sparse_block_diag`` / split helpers)
+     - Batched variant (native batched kernels; the block-diagonal assembly helpers were retired in the CUDA rewrite)
      - tsgu batched
 
 **Methodology:**

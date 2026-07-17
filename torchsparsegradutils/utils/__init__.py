@@ -1,5 +1,4 @@
 from ..solvers import BICGSTABSettings, LinearCGSettings, MINRESSettings, bicgstab, linear_cg, lsmr, minres
-from ._block_diag import sparse_block_diag, sparse_block_diag_split
 from .convert import (
     convert_coo_to_csr,
     convert_coo_to_csr_indices_values,
@@ -19,10 +18,8 @@ __all__ = [
     "lsmr",
     "convert_coo_to_csr_indices_values",
     "convert_coo_to_csr",
-    "sparse_block_diag",
     "rand_sparse",
     "rand_sparse_tri",
-    "sparse_block_diag_split",
     "stack_csr",
     "sparse_eye",
     "mean_hotelling_t2_test",

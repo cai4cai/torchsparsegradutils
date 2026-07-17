@@ -9,8 +9,8 @@ from torch import Tensor
 # both gradients through this single op ("transposed operands"). Schema
 # takes plain dense tensors only (architecture.md §2); per architecture.md
 # §6 this op bypasses BatchedCSR entirely — nothing sparse touches it. As of
-# commit 18 the wrappers below call the op directly (their ``_legacy_*``
-# nested-tensor bodies are deleted in the same commit, per the kernel-commit
+# commit 18 the wrappers below call the op directly (their pre-rewrite
+# nested-tensor bodies were deleted in the same commit, per the kernel-commit
 # template T4) and the CUDA implementation is registered
 # (cuda/csrc/kernels/grouped_gemm/).
 # ---------------------------------------------------------------------------

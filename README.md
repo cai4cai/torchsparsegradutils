@@ -420,8 +420,6 @@ Results are automatically saved to `torchsparsegradutils/benchmarks/results/` as
 #### `torchsparsegradutils.utils.utils`
 
 **Sparse Matrix Operations**
-- **`sparse_block_diag(*sparse_tensors)`**: Create block diagonal sparse matrix from multiple sparse tensors
-- **`sparse_block_diag_split(sparse_block_diag_tensor, *shapes)`**: Split block diagonal sparse matrix into original sparse tensors
 - **`sparse_eye(size, layout=torch.sparse_coo, **kwargs)`**: Create batched or unbatched sparse identity matrices
 - **`stack_csr(tensors, dim=0)`**: Stack CSR tensors along batch dimension (like torch.stack for CSR)
 
