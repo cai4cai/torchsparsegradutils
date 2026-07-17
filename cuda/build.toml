@@ -41,6 +41,7 @@ src = [
   "csrc/kernels/sddmm/sddmm.cu",
   "csrc/kernels/spmm/spmm.cu",
   "csrc/kernels/grouped_gemm/grouped_gemm.cu",
+  "csrc/kernels/convert/coo2csr.cu",
   "csrc/kernels/spsm/plan.cpp",
   "csrc/kernels/spsm/spsm.cu",
   "csrc/kernels/spsm/plan.h",

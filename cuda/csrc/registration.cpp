@@ -21,6 +21,8 @@
 #include <torch/csrc/stable/library.h>
 #include <torch/csrc/stable/tensor.h>
 
+#include <vector>
+
 // Declared, not defined, here: this is the only translation unit that needs
 // the launcher's signature. Defined in csrc/kernels/_smoke/_smoke.cu.
 torch::stable::Tensor tsgu_smoke_launch(torch::stable::Tensor const &x);
@@ -83,6 +85,17 @@ torch::stable::Tensor tsgu_spsm_plan_cache_stats_launch(torch::stable::Tensor co
 torch::stable::Tensor tsgu_grouped_gemm_launch(torch::stable::Tensor const &a, torch::stable::Tensor const &b,
                                                 torch::stable::Tensor const &idx, int64_t num_groups, bool reduce);
 
+// Commit 19 (spec/commit.md Phase 3): tsgu::coo2csr — Family 3 "Vendor-
+// baseline forwards" coo2csr row (kernels.md: fused sort+compress, int32
+// native). Defined in csrc/kernels/convert/coo2csr.cu. Serves
+// convert_coo_to_csr* and BatchedCSR.from_torch's COO path (map.md routing;
+// index-only, no grad). The schema returns a List[Tensor] —
+// [rowptr, col_sorted, permutation] — boxed as std::vector (stable-ABI
+// feature version >= 2.10; build.toml pins 2.11).
+std::vector<torch::stable::Tensor> tsgu_coo2csr_launch(torch::stable::Tensor const &batch,
+                                                        torch::stable::Tensor const &row,
+                                                        torch::stable::Tensor const &col, int64_t B, int64_t n);
+
 STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
   m.impl("_smoke", TORCH_BOX(&tsgu_smoke_launch));
   m.impl("seglse", TORCH_BOX(&tsgu_seglse_launch));
@@ -94,6 +107,7 @@ STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
   m.impl("spsm", TORCH_BOX(&tsgu_spsm_launch));
   m.impl("_spsm_plan_cache_stats", TORCH_BOX(&tsgu_spsm_plan_cache_stats_launch));
   m.impl("grouped_gemm", TORCH_BOX(&tsgu_grouped_gemm_launch));
+  m.impl("coo2csr", TORCH_BOX(&tsgu_coo2csr_launch));
 }
 
 // --- Python extension module entry point ------------------------------------

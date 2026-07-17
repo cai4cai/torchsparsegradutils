@@ -10,6 +10,7 @@ from torchsparsegradutils.utils.convert import (
     _demcompress_crow_indices,
     _sort_coo_indices,
     convert_coo_to_csr,
+    convert_coo_to_csr_indices_values,
     sparse_eye,
     stack_csr,
 )
@@ -114,6 +115,63 @@ def test_convert_coo_to_csr(device, size, nnz):
     assert torch.equal(A_csr.crow_indices(), A_csr_2.crow_indices())
     assert torch.equal(A_csr.col_indices(), A_csr_2.col_indices())
     assert torch.equal(A_csr.values(), A_csr_2.values())
+
+
+# Test convert_coo_to_csr_indices_values directly (commit 19 regressions:
+# the batched path used to derive num_batches via torch.unique(batch_indices),
+# silently DROPPING batch items with zero entries — wrong num_batches,
+# misaligned (num_batches, -1) reshapes. It now derives num_batches from
+# max(batch)+1 and raises a clear ValueError on ragged nse per item instead
+# of silently mis-reshaping.)
+
+
+def test_convert_coo_to_csr_indices_values_unbatched(device):
+    A_coo = generate_random_sparse_coo_matrix((6, 5), 10, device=device)
+    crow, col, vals = convert_coo_to_csr_indices_values(A_coo.indices(), 6, A_coo.values())
+    A_csr = A_coo.to_sparse_csr()
+    assert torch.equal(crow, A_csr.crow_indices())
+    assert torch.equal(col, A_csr.col_indices())
+    assert torch.equal(vals, A_csr.values())
+
+
+def test_convert_coo_to_csr_indices_values_unbatched_permutation(device):
+    A_coo = generate_random_sparse_coo_matrix((6, 5), 10, device=device)
+    crow, col, perm = convert_coo_to_csr_indices_values(A_coo.indices(), 6)
+    # values is None -> third output is the sort permutation: applying it to
+    # the input-order values must reproduce the values-aligned conversion.
+    _, _, vals = convert_coo_to_csr_indices_values(A_coo.indices(), 6, A_coo.values())
+    assert torch.equal(A_coo.values()[perm.long()], vals)
+
+
+def test_convert_coo_to_csr_indices_values_batched_equal_nse(device):
+    A_coo = generate_random_sparse_coo_matrix((3, 4, 5), 6, device=device)  # equal nse per item by construction
+    crow, col, vals = convert_coo_to_csr_indices_values(A_coo.indices(), 4, A_coo.values())
+    assert crow.shape == (3, 5)
+    assert col.shape == (3, 6)
+    assert vals.shape == (3, 6)
+    for b in range(3):
+        item_csr = A_coo[b].detach().to_sparse_csr()
+        assert torch.equal(crow[b], item_csr.crow_indices())
+        assert torch.equal(col[b], item_csr.col_indices())
+        assert torch.equal(vals[b], item_csr.values())
+
+
+def test_convert_coo_to_csr_indices_values_raises_on_empty_batch_item(device):
+    # Batch item 1 has zero entries. An empty item among non-empty ones is
+    # ragged nse — pre-fix this silently produced wrong-shaped output
+    # (torch.unique dropped item 1 entirely); now it must raise clearly.
+    indices = torch.tensor([[0, 0, 2, 2], [0, 1, 0, 1], [1, 0, 1, 0]], device=device)
+    values = torch.arange(4.0, device=device)
+    with pytest.raises(ValueError, match="equal nse per batch item"):
+        convert_coo_to_csr_indices_values(indices, 2, values)
+
+
+def test_convert_coo_to_csr_indices_values_raises_on_ragged_nse(device):
+    # nse per item [1, 2]: previously silently mis-reshaped; now raises.
+    indices = torch.tensor([[0, 1, 1], [0, 0, 1], [1, 0, 1]], device=device)
+    values = torch.arange(3.0, device=device)
+    with pytest.raises(ValueError, match="equal nse per batch item"):
+        convert_coo_to_csr_indices_values(indices, 2, values)
 
 
 # Test CSR to COO conversion row indices decompression

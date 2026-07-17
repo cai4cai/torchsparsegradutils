@@ -71,7 +71,7 @@ verbatim, never invent. `spmv` = `spmm` with `p = 1` (no separate op).
 | `sparse_bidir_logsumexp` | `tsgu::seglse_bidir` | `tsgu::seglse_bidir_bwd` | `logsumexp/` | ✅ live (commit 13) — correctness bar met, fusion perf bar NOT met (see commit message) |
 | `segment_mm` | `tsgu::grouped_gemm` | both grads `tsgu::grouped_gemm` (transposed operands) | `grouped_gemm/` | ✅ live (commit 18) — correctness bars met; cuBLAS-parity bar NOT met (scatter/gradB 0.83× after vectorised LDS.128 frags; gather 0.5–0.78× — its mixed path needs the opposite lane mapping, so the follow-up is a uniform/mixed two-kernel split + warptiling, measured flat for double buffering; see kernel_best_practices.md) |
 | `gather_mm` | `tsgu::grouped_gemm` (gather prologue) | both grads `tsgu::grouped_gemm` | `grouped_gemm/` | ✅ live (commit 18) — beats gather+per-group-cuBLAS 2.6–3.1× and legacy nested 3.5–6.9×; segment-shape parity pending with the above |
-| `convert_coo_to_csr*` | `tsgu::coo2csr` | — (index-only, no grad) | `convert/` | pending |
+| `convert_coo_to_csr*` | `tsgu::coo2csr` | — (index-only, no grad) | `convert/` | ✅ live (commit 19) — 1.18× vs thrust+Xcoo2csr (NVBench), 1.9–3.7× vs pure-torch path |
 
 Composites route through the table: iterative solvers (§2) call `tsgu::spmm`;
 distributions/encoder (§6–7) call the §1 ops and never touch `tsgu::` directly.

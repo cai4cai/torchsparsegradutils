@@ -66,6 +66,25 @@ def _coo2csr_fake(batch: Tensor, row: Tensor, col: Tensor, B: int, n: int) -> Li
     return [rowptr, col_sorted, permutation]
 
 
+def _coo2csr_backend_ready(index_tensor: torch.Tensor) -> bool:
+    """Whether ``tsgu::coo2csr``'s CUDA kernel can serve ``index_tensor``:
+    the tensor lives on CUDA, a loaded + version-matched backend is present
+    (``torchsparsegradutils._dispatch.backend_available``), AND the coo2csr
+    kernel is actually registered for the CUDA dispatch key. The last check
+    keeps callers degrading to the pure-torch path (not erroring) when the
+    front-package wiring is present but the ``cuda/`` tree has not yet been
+    rebuilt with the convert kernel (commit 19 is developed in two
+    concurrent lanes -- same guard as the grouped_gemm gate files).
+    """
+    if not index_tensor.is_cuda:
+        return False
+    # Deferred import: _dispatch is this package's own init-time module; the
+    # function-local import keeps convert.py importable in any order.
+    from torchsparsegradutils import _dispatch
+
+    return _dispatch.backend_available() and torch._C._dispatch_has_kernel_for_dispatch_key("tsgu::coo2csr", "CUDA")
+
+
 def stack_csr(
     tensors: List[torch.Tensor],
     dim: int = 0,
@@ -370,7 +389,30 @@ def convert_coo_to_csr_indices_values(coo_indices, num_rows, values=None):
     ------
     ValueError
         If indices tensor has wrong number of dimensions, row indices exceed
-        num_rows, or values shape doesn't match indices.
+        num_rows, values shape doesn't match indices, or (batched) the nse
+        per batch item is ragged — torch batched-CSR storage requires equal
+        nse per item, and this function's batched return convention reshapes
+        to ``(num_batches, -1)``. Previously ragged input was silently
+        accepted and mis-reshaped; it now raises (map.md invariant 7).
+
+    Notes
+    -----
+    - **Batched item count** is derived as ``batch_indices.max() + 1``, so
+      batch items with zero entries *between* occupied items are counted
+      (they then trip the equal-nse check above with a clear error rather
+      than silently vanishing — the pre-commit-19 ``torch.unique``-based
+      derivation dropped them, producing a wrong ``num_batches`` and
+      misaligned reshapes). Trailing all-empty items remain inherently
+      unknowable from the index data alone — unchanged limitation.
+    - **CUDA route** (spec/commit.md commit 19): on CUDA input with a
+      loaded backend and the ``tsgu::coo2csr`` kernel registered, the
+      sort+compress runs as one fused kernel call; otherwise the pure-torch
+      path below runs. On the kernel path, duplicate coordinates are the
+      caller's responsibility (a valid sparse pattern has none): they are
+      kept, in stable input order — never deduplicated. (The legacy
+      pure-torch path's ``torch.unique``-based sort silently deduplicated
+      the sorted *index* arrays but not ``values`` — a latent inconsistency
+      the kernel path deliberately does not reproduce.)
 
     Examples
     --------
@@ -418,29 +460,60 @@ def convert_coo_to_csr_indices_values(coo_indices, num_rows, values=None):
             f"Number of values ({values.shape[0]}) does not match number of indices ({coo_indices.shape[1]})"
         )
 
-    coo_indices, permutation = _sort_coo_indices(coo_indices)
-
     if coo_indices.shape[0] == 2:
-        row_indices, col_indices = coo_indices
-        crow_indices = _compress_row_indices(row_indices, num_rows)
+        if _coo2csr_backend_ready(coo_indices):
+            # Unbatched == a batch of one (naming.md §2): batch is all-zero.
+            row_indices, col_indices = coo_indices[0], coo_indices[1]
+            crow_indices, col_indices, permutation = torch.ops.tsgu.coo2csr(
+                torch.zeros_like(row_indices), row_indices, col_indices, 1, num_rows
+            )
+        else:
+            sorted_indices, permutation = _sort_coo_indices(coo_indices)
+            row_indices, col_indices = sorted_indices
+            crow_indices = _compress_row_indices(row_indices, num_rows)
 
-        values = values[permutation] if values is not None else permutation
+        # index_select (not values[permutation]): permutation keeps the op's
+        # index dtype, and advanced indexing requires int64 while
+        # index_select accepts int32 or int64.
+        values = values.index_select(0, permutation) if values is not None else permutation
 
     else:
-        batch_indices, row_indices, col_indices = coo_indices
-        crow_indices = torch.cat(
-            [
-                _compress_row_indices(row_indices[batch_indices == batch], num_rows)
-                for batch in torch.unique(batch_indices)
-            ]
-        )
-        num_batches = torch.unique(batch_indices).shape[0]
+        batch_indices = coo_indices[0]
+        # num_batches from the max batch index, NOT torch.unique: unique
+        # silently dropped batch items with zero entries (wrong num_batches,
+        # misaligned reshapes below). See "Notes" in the docstring.
+        num_batches = int(batch_indices.max()) + 1
+        nse_per_item = torch.bincount(batch_indices.long(), minlength=num_batches)
+        if int(nse_per_item.min()) != int(nse_per_item.max()):
+            raise ValueError(
+                "convert_coo_to_csr_indices_values requires equal nse per batch item for batched COO "
+                "indices (batch, row, col) — torch batched-CSR storage constraint, and the batched "
+                f"return convention reshapes to (num_batches, -1); got ragged nse per item "
+                f"{nse_per_item.tolist()} across num_batches={num_batches} (batch items with zero "
+                "entries count as nse 0)."
+            )
 
-        crow_indices = crow_indices.reshape(num_batches, -1)
+        if _coo2csr_backend_ready(coo_indices):
+            rowptr, col_indices, permutation = torch.ops.tsgu.coo2csr(
+                batch_indices, coo_indices[1], coo_indices[2], num_batches, num_rows
+            )
+            # Per-item local crow from the folded absolute rowptr (naming.md
+            # §2), computed vectorially: crow[b] = rowptr[b*n : (b+1)*n + 1]
+            # minus that item's absolute offset rowptr[b*n].
+            item_starts = torch.arange(num_batches, device=rowptr.device) * num_rows
+            window = item_starts.unsqueeze(1) + torch.arange(num_rows + 1, device=rowptr.device)
+            crow_indices = rowptr[window] - rowptr[item_starts].unsqueeze(1)
+        else:
+            sorted_indices, permutation = _sort_coo_indices(coo_indices)
+            batch_sorted, row_sorted, col_indices = sorted_indices
+            crow_indices = torch.cat(
+                [_compress_row_indices(row_sorted[batch_sorted == batch], num_rows) for batch in range(num_batches)]
+            )
+            crow_indices = crow_indices.reshape(num_batches, -1)
+
+        values = values.index_select(0, permutation) if values is not None else permutation
+
         col_indices = col_indices.reshape(num_batches, -1)
-
-        values = values[permutation] if values is not None else permutation
-
         values = values.reshape(num_batches, -1)
 
     return crow_indices, col_indices, values

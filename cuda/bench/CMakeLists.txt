@@ -91,3 +91,9 @@ target_link_libraries(bench_spsm PRIVATE nvbench::nvbench nvbench::main)
 find_package(CUDAToolkit REQUIRED)
 add_executable(bench_grouped_gemm bench_grouped_gemm.cu)
 target_link_libraries(bench_grouped_gemm PRIVATE nvbench::nvbench nvbench::main CUDA::cublas)
+
+# tsgu::coo2csr (spec/commit.md Phase 3 commit 19) — kernels.md Family 3
+# coo2csr row. Links cuSPARSE for the in-binary vendor reference row
+# (kernels.md baseline: thrust sort over packed keys + cusparseXcoo2csr).
+add_executable(bench_coo2csr bench_coo2csr.cu)
+target_link_libraries(bench_coo2csr PRIVATE nvbench::nvbench nvbench::main CUDA::cusparse)

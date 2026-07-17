@@ -397,6 +397,67 @@ def test_post_init_rejects_unsupported_index_dtype():
 
 
 # --------------------------------------------------------------------------- #
+# tsgu::coo2csr internal switch (commit 19): from_torch's COO paths route
+# through the kernel when it is available; the descriptor must come out
+# IDENTICAL to the pure-torch compress path.
+# --------------------------------------------------------------------------- #
+
+
+def _coo2csr_cuda_kernel_ready() -> bool:
+    import torchsparsegradutils  # noqa: F401  (import side-effect: registers tsgu:: ops)
+    from torchsparsegradutils._dispatch import backend_available
+
+    return (
+        torch.cuda.is_available()
+        and backend_available()
+        and torch._C._dispatch_has_kernel_for_dispatch_key("tsgu::coo2csr", "CUDA")
+    )
+
+
+@pytest.mark.skipif(
+    not _coo2csr_cuda_kernel_ready(),
+    reason="tsgu::coo2csr has no CPU implementation (CUDA-only, architecture.md §4) -- "
+    "needs a CUDA device, a loaded backend, and the coo2csr kernel registered (commit 19 kernel lane)",
+)
+def test_from_coo_op_path_matches_pure_torch_path(monkeypatch):
+    import torchsparsegradutils.utils.convert as convert_mod
+
+    gen = torch.Generator().manual_seed(7)
+    batch_size, n_rows, n_cols = 4, 5, 6
+    # Random ragged batched COO, batch item 2 entirely empty (ragged nse is
+    # first-class for COO batching, naming.md §2).
+    coords = []
+    for b in range(batch_size):
+        if b == 2:
+            continue
+        n_item = int(torch.randint(1, n_rows * n_cols, (1,), generator=gen))
+        flat = torch.randperm(n_rows * n_cols, generator=gen)[:n_item]
+        coords.extend((b, int(f) // n_cols, int(f) % n_cols) for f in flat)
+    coo = _make_batched_coo(coords, batch_size, n_rows, n_cols, torch.float64).cuda().coalesce()
+
+    descriptor_op = BatchedCSR.from_torch(coo)
+
+    monkeypatch.setattr(convert_mod, "_coo2csr_backend_ready", lambda _t: False)
+    descriptor_torch = BatchedCSR.from_torch(coo)
+
+    assert descriptor_op.shape == descriptor_torch.shape
+    assert descriptor_op.index_dtype == descriptor_torch.index_dtype
+    assert torch.equal(descriptor_op.rowptr, descriptor_torch.rowptr)
+    assert torch.equal(descriptor_op.col, descriptor_torch.col)
+    assert torch.equal(descriptor_op.values, descriptor_torch.values)
+
+    # 2D (unbatched) path too.
+    coo_2d = _make_2d_coo([(2, 1), (0, 2), (1, 0), (0, 0)], 3, 3, torch.float32).cuda().coalesce()
+    monkeypatch.undo()
+    descriptor_op_2d = BatchedCSR.from_torch(coo_2d)
+    monkeypatch.setattr(convert_mod, "_coo2csr_backend_ready", lambda _t: False)
+    descriptor_torch_2d = BatchedCSR.from_torch(coo_2d)
+    assert torch.equal(descriptor_op_2d.rowptr, descriptor_torch_2d.rowptr)
+    assert torch.equal(descriptor_op_2d.col, descriptor_torch_2d.col)
+    assert torch.equal(descriptor_op_2d.values, descriptor_torch_2d.values)
+
+
+# --------------------------------------------------------------------------- #
 # Hypothesis property tests — round-trip exactness over random shapes/nse/dtypes.
 # --------------------------------------------------------------------------- #
 

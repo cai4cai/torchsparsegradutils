@@ -38,6 +38,17 @@ def _compress_row_indices(row_indices: torch.Tensor, n_rows: int, _validate: boo
     return _impl(row_indices, n_rows, _validate=_validate)
 
 
+def _coo2csr_kernel_ready(index_tensor: torch.Tensor) -> bool:
+    # Deferred import (commit 19): same circularity reason as
+    # _compress_row_indices above. True iff index_tensor is CUDA, the backend
+    # is loaded + version-matched, and the tsgu::coo2csr CUDA kernel is
+    # actually registered (so a front package built ahead of the cuda/ tree
+    # degrades to the pure-torch compress, never errors).
+    from torchsparsegradutils.utils.convert import _coo2csr_backend_ready
+
+    return _coo2csr_backend_ready(index_tensor)
+
+
 # int32 index arrays can address at most 2**31 - 1 positions; the eligibility
 # bound (architecture.md §3 / naming.md §2) checks nse_total, rowptr length,
 # and n_cols all stay strictly under this.
@@ -81,8 +92,13 @@ def _fold_coo_to_csr(
     n_rows: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sort scattered (batch, row_local, col_local) coordinates and compress
-    them into a folded CSR ``(rowptr, col, values)`` triple (kernel replaces
-    these internals in commit 19). Callers must guarantee no duplicate
+    them into a folded CSR ``(rowptr, col, values)`` triple. Commit 19
+    switched ``from_torch``'s COO paths to ``tsgu::coo2csr``; this helper
+    stays pure-torch because its callers (``transposed``) run inside traced
+    backwards where the proven dynamic-shape-safe form below matters — the
+    kernel implements the *identical* ordering contract (two-pass stable
+    sort into ``(row_global, col)`` lexicographic order, no dedup).
+    Callers must guarantee no duplicate
     coordinates (a valid CSR/CSC pattern has none) — with no duplicates
     present this is exactly a stable lexicographic sort by
     ``(row_global, col_local)``, which is why it's implemented as one below
@@ -242,11 +258,25 @@ class BatchedCSR:
         coalesced = tensor if tensor.is_coalesced() else tensor.coalesce()
         indices = coalesced.indices()
         row, col = indices[0], indices[1]
+        # Index dtype is resolved from the SOURCE and batch/row/col cast to it
+        # BEFORE any op call (commit 19): int32 eligibility is a property of
+        # the input, never of what the kernel happens to return.
         index_dtype = _resolve_index_dtype(indices.dtype, nse_total=row.shape[0], rowptr_len=n_rows + 1, n_cols=n_cols)
         row = row.to(index_dtype)
         col = col.to(index_dtype)
-        rowptr = _compress_row_indices(row, n_rows)
-        return cls(values=coalesced.values(), rowptr=rowptr, col=col, shape=(1, n_rows, n_cols))
+        values = coalesced.values()
+        if _coo2csr_kernel_ready(row):
+            # tsgu::coo2csr (commit 19): fused stable sort+compress on
+            # device. The input is coalesced — already (row, col)-
+            # lexicographic — so the stable sort's permutation is the
+            # identity ordering and the descriptor fields come out identical
+            # to the pure-torch compress below (values stay aligned via
+            # values[permutation]).
+            rowptr, col, permutation = torch.ops.tsgu.coo2csr(torch.zeros_like(row), row, col, 1, n_rows)
+            values = values.index_select(0, permutation)
+        else:
+            rowptr = _compress_row_indices(row, n_rows)
+        return cls(values=values, rowptr=rowptr, col=col, shape=(1, n_rows, n_cols))
 
     @classmethod
     def _from_coo_batched(cls, tensor: torch.Tensor) -> "BatchedCSR":
@@ -254,15 +284,23 @@ class BatchedCSR:
         coalesced = tensor if tensor.is_coalesced() else tensor.coalesce()
         indices = coalesced.indices()
         batch, row, col = indices[0], indices[1], indices[2]
+        # Index dtype resolved BEFORE the op call — see _from_coo_2d.
         index_dtype = _resolve_index_dtype(
             indices.dtype, nse_total=row.shape[0], rowptr_len=batch_size * n_rows + 1, n_cols=n_cols
         )
         batch = batch.to(index_dtype)
         row = row.to(index_dtype)
         col = col.to(index_dtype)
-        row_global = batch * n_rows + row
-        rowptr = _compress_row_indices(row_global, batch_size * n_rows)
-        return cls(values=coalesced.values(), rowptr=rowptr, col=col, shape=(batch_size, n_rows, n_cols))
+        values = coalesced.values()
+        if _coo2csr_kernel_ready(row):
+            # Coalesced (batch, row, col) order == folded (row_global, col)
+            # order, so the stable sort is an identity ordering here too.
+            rowptr, col, permutation = torch.ops.tsgu.coo2csr(batch, row, col, batch_size, n_rows)
+            values = values.index_select(0, permutation)
+        else:
+            row_global = batch * n_rows + row
+            rowptr = _compress_row_indices(row_global, batch_size * n_rows)
+        return cls(values=values, rowptr=rowptr, col=col, shape=(batch_size, n_rows, n_cols))
 
     @classmethod
     def _from_csr_batched(cls, tensor: torch.Tensor) -> "BatchedCSR":
