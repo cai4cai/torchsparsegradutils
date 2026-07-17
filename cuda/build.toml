@@ -40,6 +40,7 @@ src = [
   "csrc/kernels/logsumexp/seglse_bidir.cu",
   "csrc/kernels/sddmm/sddmm.cu",
   "csrc/kernels/spmm/spmm.cu",
+  "csrc/kernels/grouped_gemm/grouped_gemm.cu",
   "csrc/kernels/spsm/plan.cpp",
   "csrc/kernels/spsm/spsm.cu",
   "csrc/kernels/spsm/plan.h",

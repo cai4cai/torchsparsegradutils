@@ -84,3 +84,10 @@ target_link_libraries(bench_spmm PRIVATE nvbench::nvbench nvbench::main)
 # path — plan already built).
 add_executable(bench_spsm bench_spsm.cu)
 target_link_libraries(bench_spsm PRIVATE nvbench::nvbench nvbench::main)
+
+# tsgu::grouped_gemm (spec/commit.md Phase 3 commit 18) — kernels.md Family 3
+# Grouped GEMM row. Links cuBLAS for the in-binary vendor reference row
+# (benchmarks.md §3: cublasGemmGroupedBatched, TF32 off).
+find_package(CUDAToolkit REQUIRED)
+add_executable(bench_grouped_gemm bench_grouped_gemm.cu)
+target_link_libraries(bench_grouped_gemm PRIVATE nvbench::nvbench nvbench::main CUDA::cublas)

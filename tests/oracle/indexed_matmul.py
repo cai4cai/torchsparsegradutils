@@ -214,6 +214,12 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Te
 
     # Convert back to tensors, again, ideally this would be handled natively with no copy
     ab_segmented = torch.cat(nested_ab.unbind(), dim=0)
-    ab = torch.empty((N, D2), device=torchdevice)
+    # Sole deviation from f19d7b4 (commit 18): the original `torch.empty((N,
+    # D2), device=...)` omitted dtype and so silently allocated float32,
+    # making the index_put below RuntimeError for f64 inputs — a latent bug
+    # never hit upstream (the dgl fast path shadowed this fallback). Fixed
+    # minimally so Oracle A is usable at f64; Oracle B (fp64 dense reference)
+    # independently guards against bugs shared with the oracle.
+    ab = torch.empty((N, D2), device=torchdevice, dtype=a.dtype)
     ab[src_idx_reshuffled] = ab_segmented
     return ab

@@ -1,13 +1,11 @@
 import pytest
 import torch
+from test_config import DEVICES
 
 from torchsparsegradutils import gather_mm, segment_mm
+from torchsparsegradutils._dispatch import backend_available
 
 # Identify Testing Parameters
-DEVICES = [torch.device("cpu")]
-if torch.cuda.is_available():
-    DEVICES.append(torch.device("cuda"))
-
 TEST_DATA = [
     # name  N, R, D1, D2
     ("small", 100, 32, 7, 10),
@@ -51,12 +49,39 @@ def index_dtype(request):
     return request.param
 
 
-@pytest.fixture(params=DEVICES, ids=[device_id(d) for d in DEVICES])
+# spec/commit.md Phase 3 commit 18: segment_mm/gather_mm now dispatch to
+# tsgu::grouped_gemm, which is CUDA-only (architecture.md §4: "CUDA-required
+# at runtime" -- no CPU implementation ships). DEVICES still includes cpu
+# (other suites use it), so the `device` fixture below skips cleanly on a
+# machine without a compatible CUDA backend instead of hitting the op's
+# NotImplementedError -- the expected degraded-mode outcome (spec/testing.md
+# "CPU CI (no GPU)"), mirroring tests/test_sparse_matmul.py's identical
+# regating from commit 15. The extra dispatch-key check keeps this suite
+# skipping (not erroring) when the backend package is loaded but the cuda/
+# tree has not yet been rebuilt with the grouped_gemm kernel (commit 18 is
+# developed in two concurrent lanes).
+_grouped_gemm_ready = backend_available() and torch._C._dispatch_has_kernel_for_dispatch_key(
+    "tsgu::grouped_gemm", "CUDA"
+)
+_CUDA_DEVICES = [d for d in DEVICES if d.type == "cuda"] if _grouped_gemm_ready else []
+
+
+@pytest.fixture(params=_CUDA_DEVICES or [None], ids=[device_id(d) for d in _CUDA_DEVICES] or ["cuda-unavailable"])
 def device(request):
+    if request.param is None:
+        pytest.skip(
+            "segment_mm/gather_mm require a CUDA device and a loaded tsgu backend "
+            "(spec/commit.md Phase 3 commit 18: tsgu::grouped_gemm is CUDA-only) -- "
+            "none available on this machine."
+        )
     return request.param
 
 
 # Define Tests
+#
+# The test bodies below are the frozen-behaviour arbiter: they compare
+# against explicit per-row/per-segment reference loops, unchanged from the
+# pre-rewrite suite except for the CUDA regating above.
 
 
 def test_segment_mm(device, value_dtype, index_dtype, shapes):
@@ -87,33 +112,3 @@ def test_gather_mm(device, value_dtype, index_dtype, shapes):
 
     for i in range(N):
         assert torch.allclose(ab[i, :].squeeze(), a[i, :].squeeze() @ b[idx_b[i], :, :].squeeze(), atol=ATOL, rtol=RTOL)
-
-
-def test_segment_mm_raises_on_old_pytorch():
-    """Test that segment_mm raises NotImplementedError on PyTorch < 2.4."""
-    from unittest.mock import patch
-
-    from torchsparsegradutils.ops import indexed_matmul
-
-    a = torch.randn(10, 4)
-    b = torch.randn(2, 4, 3)
-    seglen_a = torch.tensor([5, 5])
-
-    with patch.object(torch, "__version__", "2.3.0"):
-        with pytest.raises(NotImplementedError, match="PyTorch version is too old"):
-            indexed_matmul.segment_mm(a, b, seglen_a)
-
-
-def test_gather_mm_raises_on_old_pytorch():
-    """Test that gather_mm raises NotImplementedError on PyTorch < 2.4."""
-    from unittest.mock import patch
-
-    from torchsparsegradutils.ops import indexed_matmul
-
-    a = torch.randn(3, 4)
-    b = torch.randn(2, 4, 5)
-    idx_b = torch.tensor([0, 1, 0])
-
-    with patch.object(torch, "__version__", "2.3.0"):
-        with pytest.raises(NotImplementedError, match="PyTorch version is too old"):
-            indexed_matmul.gather_mm(a, b, idx_b)

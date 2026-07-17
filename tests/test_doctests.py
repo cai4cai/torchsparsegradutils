@@ -46,6 +46,9 @@ _CUDA_ONLY_DOCTEST_MODULES = {
     "torchsparsegradutils.ops.logsumexp",
     "torchsparsegradutils.ops.matmul",
     "torchsparsegradutils.ops.triangular_solve",
+    # indexed_matmul (spec/commit.md Phase 3 commit 18): segment_mm/gather_mm
+    # dispatch to tsgu::grouped_gemm, so the examples run on CUDA tensors.
+    "torchsparsegradutils.ops.indexed_matmul",
     # generic_solve/lstsq (spec/commit.md Phase 3 commit 17): the forward host
     # loop runs anywhere, but their docstring gradient examples backward
     # through tsgu::sddmm, so the examples are written on CUDA tensors.
@@ -63,6 +66,13 @@ def test_doctest(module_name):
             f"{module_name}'s doctests exercise a CUDA-only tsgu:: op; no CUDA device "
             "and/or loaded, version-matched torchsparsegradutils_cuda backend available here."
         )
+    if module_name == "torchsparsegradutils.ops.indexed_matmul" and not torch._C._dispatch_has_kernel_for_dispatch_key(
+        "tsgu::grouped_gemm", "CUDA"
+    ):
+        # commit 18 is developed in two concurrent lanes: the wrapper wiring
+        # can be present while the cuda/ tree has not yet been rebuilt with
+        # the grouped_gemm kernel -- skip rather than error in that window.
+        pytest.skip("tsgu::grouped_gemm has no CUDA kernel registered in this build yet (commit 18 in flight).")
     try:
         # Import the module
         import importlib

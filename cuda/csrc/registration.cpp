@@ -73,6 +73,16 @@ torch::stable::Tensor tsgu_spsm_launch(torch::stable::Tensor const &vals, torch:
 // counters, spec/commit.md Phase 3 commit 16 T5.
 torch::stable::Tensor tsgu_spsm_plan_cache_stats_launch(torch::stable::Tensor const &anchor);
 
+// Commit 18 (spec/commit.md Phase 3): tsgu::grouped_gemm — Family 3 "Vendor-
+// baseline forwards" Grouped GEMM row (kernels.md). Defined in
+// csrc/kernels/grouped_gemm/grouped_gemm.cu. Serves segment_mm + gather_mm
+// (map.md routing: forward and both grads of each): reduce=false is gather
+// mode (out[i,:] = a[i,:] @ b[idx[i],:,:] — forward + gradA), reduce=true is
+// scatter-reduce mode (gradB; idx MUST be sorted non-decreasing — the op's
+// Python autograd guarantees it, see the kernel's module comment).
+torch::stable::Tensor tsgu_grouped_gemm_launch(torch::stable::Tensor const &a, torch::stable::Tensor const &b,
+                                                torch::stable::Tensor const &idx, int64_t num_groups, bool reduce);
+
 STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
   m.impl("_smoke", TORCH_BOX(&tsgu_smoke_launch));
   m.impl("seglse", TORCH_BOX(&tsgu_seglse_launch));
@@ -83,6 +93,7 @@ STABLE_TORCH_LIBRARY_IMPL(tsgu, CUDA, m) {
   m.impl("spmm", TORCH_BOX(&tsgu_spmm_launch));
   m.impl("spsm", TORCH_BOX(&tsgu_spsm_launch));
   m.impl("_spsm_plan_cache_stats", TORCH_BOX(&tsgu_spsm_plan_cache_stats_launch));
+  m.impl("grouped_gemm", TORCH_BOX(&tsgu_grouped_gemm_launch));
 }
 
 // --- Python extension module entry point ------------------------------------

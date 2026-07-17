@@ -127,21 +127,45 @@ def test_oracle_sparse_bidir_logsumexp_matches_live():
     assert torch.allclose(live_row, oracle_row.cuda())
 
 
+@pytest.mark.skipif(
+    not (
+        torch.cuda.is_available()
+        and backend_available()
+        and torch._C._dispatch_has_kernel_for_dispatch_key("tsgu::grouped_gemm", "CUDA")
+    ),
+    reason=(
+        "segment_mm dispatches to tsgu::grouped_gemm as of spec/commit.md Phase 3 "
+        "commit 18 -- CUDA-only (architecture.md §4); no CUDA device / registered "
+        "grouped_gemm kernel available here."
+    ),
+)
 def test_oracle_segment_mm_matches_live():
     a = torch.randn(18, 4)
     b = torch.randn(3, 4, 2)
     seglen_a = torch.tensor([10, 5, 3])
 
-    live = segment_mm(a, b, seglen_a)
+    live = segment_mm(a.cuda(), b.cuda(), seglen_a.cuda())
     oracle = oracle_segment_mm(a, b, seglen_a)
-    assert torch.allclose(live, oracle)
+    assert torch.allclose(live, oracle.cuda())
 
 
+@pytest.mark.skipif(
+    not (
+        torch.cuda.is_available()
+        and backend_available()
+        and torch._C._dispatch_has_kernel_for_dispatch_key("tsgu::grouped_gemm", "CUDA")
+    ),
+    reason=(
+        "gather_mm dispatches to tsgu::grouped_gemm as of spec/commit.md Phase 3 "
+        "commit 18 -- CUDA-only (architecture.md §4); no CUDA device / registered "
+        "grouped_gemm kernel available here."
+    ),
+)
 def test_oracle_gather_mm_matches_live():
     a = torch.randn(5, 3)
     b = torch.randn(3, 3, 2)
     idx_b = torch.tensor([0, 1, 0, 2, 1])
 
-    live = gather_mm(a, b, idx_b)
+    live = gather_mm(a.cuda(), b.cuda(), idx_b.cuda())
     oracle = oracle_gather_mm(a, b, idx_b)
-    assert torch.allclose(live, oracle)
+    assert torch.allclose(live, oracle.cuda())

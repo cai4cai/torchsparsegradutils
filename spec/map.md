@@ -69,8 +69,8 @@ verbatim, never invent. `spmv` = `spmm` with `p = 1` (no separate op).
 | `sparse_generic_lstsq` | host loop → `tsgu::spmm` (A and cached CSC) | host `transpose_lstsq` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` | ✅ live (commit 17) |
 | `sparse_logsumexp` | `tsgu::seglse` | `tsgu::seglse_bwd` (uses saved `lse`) | `logsumexp/` | ✅ live (commit 12) |
 | `sparse_bidir_logsumexp` | `tsgu::seglse_bidir` | `tsgu::seglse_bidir_bwd` | `logsumexp/` | ✅ live (commit 13) — correctness bar met, fusion perf bar NOT met (see commit message) |
-| `segment_mm` | `tsgu::grouped_gemm` | both grads `tsgu::grouped_gemm` (transposed operands) | `grouped_gemm/` | pending |
-| `gather_mm` | `tsgu::grouped_gemm` (gather prologue) | both grads `tsgu::grouped_gemm` | `grouped_gemm/` | pending |
+| `segment_mm` | `tsgu::grouped_gemm` | both grads `tsgu::grouped_gemm` (transposed operands) | `grouped_gemm/` | ✅ live (commit 18) — correctness bars met; cuBLAS-parity perf bar NOT met (see commit message) |
+| `gather_mm` | `tsgu::grouped_gemm` (gather prologue) | both grads `tsgu::grouped_gemm` | `grouped_gemm/` | ✅ live (commit 18) — beats gather+GEMM baselines; segment-shape cuBLAS parity pending with the above |
 | `convert_coo_to_csr*` | `tsgu::coo2csr` | — (index-only, no grad) | `convert/` | pending |
 
 Composites route through the table: iterative solvers (§2) call `tsgu::spmm`;
