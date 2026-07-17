@@ -26,3 +26,5 @@ Core Functions
    sparse_triangular_solve
    sparse_generic_solve
    sparse_generic_lstsq
+   sparse_logsumexp
+   sparse_bidir_logsumexp

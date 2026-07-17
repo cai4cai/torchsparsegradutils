@@ -1,37 +1,42 @@
 Utility Functions
 =================
 
-This module contains utility functions for sparse tensor operations.
-
-.. currentmodule:: torchsparsegradutils.utils
+Utility functions for sparse tensor operations, and the built-in iterative
+solvers. Everything below is re-exported from ``torchsparsegradutils.utils``.
 
 Iterative Solvers
 ------------------
 
-.. automodule:: torchsparsegradutils.utils.bicgstab
+Host-side Krylov loops whose matrix-vector products run on the native CUDA
+kernels. Each solver can be passed to
+:func:`~torchsparsegradutils.sparse_generic_solve` /
+:func:`~torchsparsegradutils.sparse_generic_lstsq` via their ``solve`` /
+``lstsq`` arguments.
+
+.. automodule:: torchsparsegradutils.solvers.bicgstab
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: torchsparsegradutils.utils.linear_cg
+.. automodule:: torchsparsegradutils.solvers.cg
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: torchsparsegradutils.utils.lsmr
+.. automodule:: torchsparsegradutils.solvers.lsmr
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: torchsparsegradutils.utils.minres
+.. automodule:: torchsparsegradutils.solvers.minres
    :members:
    :undoc-members:
    :show-inheritance:
 
-Sparse Utilities
------------------
+Sparse Utilities and Layout Conversion
+---------------------------------------
 
-.. automodule:: torchsparsegradutils.utils.utils
+.. automodule:: torchsparsegradutils.utils.convert
    :members:
    :undoc-members:
    :show-inheritance:

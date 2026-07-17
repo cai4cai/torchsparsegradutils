@@ -74,6 +74,14 @@ intersphinx_mapping = {
 templates_path = ["_templates"]
 exclude_patterns = []
 
+# Several docstrings use short bracketed citations ([1a]_, [1b]_, ...) that
+# are unique within their own docstring but not across the whole project;
+# Sphinx citations share one global namespace, so any docstring rendered on
+# more than one page (autosummary stub + module page) or two docstrings
+# reusing a label trip "duplicate citation" warnings. The citations still
+# render and link; suppress the noise rather than rewriting every docstring.
+suppress_warnings = ["ref.citation"]
+
 # Source file parsers
 source_suffix = {
     ".rst": None,

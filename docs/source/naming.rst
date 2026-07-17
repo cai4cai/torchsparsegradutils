@@ -80,7 +80,7 @@ Specified-element counts in batched layouts
 
 ``_nnz()`` is layout-specific for a batched sparse tensor. This distinction is
 exercised by the sparse-matrix multiplication backward tests in
-``torchsparsegradutils/tests/test_sparse_matmul.py``:
+``tests/test_sparse_matmul.py``:
 
 * For batched CSR, ``A.grad._nnz()`` is the number of specified entries
   **per batch element**.
@@ -215,6 +215,78 @@ Before submitting shape-related changes, make sure public inputs and outputs
 state explicit shapes; distinguish batch, matrix, spatial, channel, sample,
 and event axes; and separate COO-specific from compressed-layout-specific
 constraints.
+
+Rewrite vocabulary: descriptors, folded rows, and kernel names
+--------------------------------------------------------------
+
+The CUDA rewrite introduced an internal canonical representation and a set of
+kernel-facing names. The terms below are binding for code, docstrings, error
+messages, and reviews, in the same way as the conventions above.
+
+The ``BatchedCSR`` descriptor
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Internally, every sparse operand is normalised to a ``BatchedCSR`` (or
+transposed ``BatchedCSC``) **descriptor** — call it a descriptor, never a
+tensor: it is an object that *holds* tensors (``values``, ``rowptr``, ``col``)
+plus the logical shape ``(batch_size, n_rows, n_cols)``.
+
+* A **folded row** is the absolute row index
+  ``row_global = b * n_rows + r`` that the descriptor's row pointer runs
+  over. "Folded" is the word — not "flattened", "blocked", or "stacked".
+* A **local column** is a column index in ``[0, n_cols)``, *not* offset by
+  batch. Say "local" whenever ambiguity is possible; local columns are what
+  keep ``int32`` indices viable for large batches.
+* **``nse_total``** is the number of specified entries summed over the whole
+  batch (a COO-style whole-tensor count).
+* **``nse_per_item``** is the number of specified entries of one batch item.
+  Batch items may be **ragged**: ``nse_per_item`` may differ per item.
+* **``B = 1`` encodes unbatched** — an unbatched matrix is a batch of one.
+  Code paths never branch on "has a batch dimension".
+
+Kernel-side short names
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The section on shape symbols above permits short local names in compact
+numerical code. In C++/CUDA kernels and ``tsgu::`` op schemas the mapping is
+fixed:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 55 45
+
+   * - Full (Python-visible) name
+     - Kernel/schema short form
+   * - ``crow_indices`` (folded, absolute)
+     - ``rowptr``
+   * - ``col_indices`` (local)
+     - ``col``
+   * - ``values`` / stored values
+     - ``vals``
+   * - ``batch_size``, ``n_rows``, ``n_cols``, ``n_rhs``
+     - ``B``, ``n``, ``m``, ``p``
+   * - folded row index
+     - ``row_g``
+   * - batch index of an entry
+     - ``b``
+
+The mapping is one-way: a kernel may use the short form, but any
+Python-facing surface (public API, error messages, documentation) uses the
+full names.
+
+``tsgu::`` op names
+~~~~~~~~~~~~~~~~~~~~
+
+The kernel-backed custom ops are registered under the ``tsgu`` namespace:
+``spmm``, ``sddmm``, ``spsm``, ``seglse``, ``seglse_bwd``, ``seglse_bidir``,
+``seglse_bidir_bwd``, ``coo2csr``, and ``grouped_gemm`` — snake_case, each
+matching the ``cuda/csrc/kernels/`` directory that owns it. An op name states
+the operation, not the caller: the op behind ``sparse_mm``'s backward is
+``tsgu::sddmm``, not ``tsgu::sparse_mm_backward``. A dedicated backward
+kernel takes the ``_bwd`` suffix on its forward's name — but only when the
+backward is genuinely its own kernel (``seglse_bwd``); backwards expressed
+through existing ops reuse those ops (``sddmm``, transposed ``spmm``) with no
+alias names.
 
 References
 ----------

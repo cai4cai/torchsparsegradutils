@@ -6,11 +6,13 @@ We welcome contributions to torchsparsegradutils! This guide will help you get s
 Development Setup
 -----------------
 
-#### Option 1: Development Containers (Recommended)
+Option 1: Development Containers
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 For a consistent development environment with GPU support and all dependencies pre-installed, use VS Code Dev Containers:
 
 **Prerequisites:**
+
 - `Docker <https://docs.docker.com/get-docker/>`_ with NVIDIA Container Toolkit (for GPU support)
 - `VS Code <https://code.visualstudio.com/>`_ with the `Dev Containers extension <https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers>`_
 
@@ -30,50 +32,27 @@ For a consistent development environment with GPU support and all dependencies p
 
 **Available Configurations:**
 
-- ``.devcontainer/Dockerfile.stable`` (default): Uses stable PyTorch with CUDA 12.8 support
-- ``.devcontainer/Dockerfile.nightly``: Uses nightly PyTorch builds for latest features
+- ``.devcontainer/Dockerfile.stable`` (default): stable PyTorch with CUDA support
+- ``.devcontainer/Dockerfile.nightly``: nightly PyTorch builds for latest features
 
-To switch configurations, modify the ``dockerfile`` field in ``.devcontainer/devcontainer.json``:
+To switch configurations, modify the ``dockerfile`` field in ``.devcontainer/devcontainer.json``.
 
-.. code-block:: json
+Option 2: Local Development
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-   "build": {
-       "dockerfile": "./Dockerfile.nightly",  // or "./Dockerfile.stable"
-       "context": "."
-   }
-
-**What's Included:**
-
-- **CUDA 12.8**: Full GPU development support with NVIDIA drivers
-- **Pre-installed Dependencies**: PyTorch, SciPy, and all development tools
-- **VS Code Extensions**: Python, Pylance, Jupyter, GitHub Copilot, and code formatting tools
-- **Development Tools**: pytest, black, flake8, pre-commit hooks
-- **Python Environment**: Python 3.10+ with all optional dependencies
-
-**Benefits:**
-
-- ✅ **Consistent Environment**: Same setup across different machines
-- ✅ **GPU Support**: Pre-configured CUDA environment
-- ✅ **Zero Setup**: All dependencies and tools pre-installed
-- ✅ **Isolated**: No conflicts with host system packages
-- ✅ **VS Code Integration**: Seamless debugging, IntelliSense, and testing
-
-#### Option 2: Local Development
-
-If you prefer local development:
+The repository is managed with `uv <https://docs.astral.sh/uv/>`_:
 
 .. code-block:: bash
 
    git clone https://github.com/cai4cai/torchsparsegradutils
    cd torchsparsegradutils
 
-   # Create a virtual environment
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\\Scripts\\activate
+   uv sync --group dev      # environment + dev dependencies from uv.lock
+   pre-commit install       # install pre-commit hooks
 
-   # Install in development mode
-   pip install -e ".[dev]"  # Install in development mode
-   pre-commit install       # Install pre-commit hooks
+Working on the CUDA kernels additionally requires an NVIDIA GPU and, for
+building the backend package under ``cuda/``, `Hugging Face kernel-builder
+<https://huggingface.co/docs/kernels>`_ (Nix-based).
 
 Development Workflow
 --------------------
@@ -93,13 +72,18 @@ Development Workflow
 Code Style
 ----------
 
-We use several tools to maintain code quality:
+Tooling (enforced by pre-commit and CI):
 
-**Black** for code formatting:
+- **ruff** — linting, formatting, and import sorting for Python (line length 120):
 
 .. code-block:: bash
 
-   black torchsparsegradutils/ tests/
+   uv run ruff check .
+   uv run ruff format .
+
+- **clang-format / clang-tidy** — formatting and linting for the CUDA/C++
+  kernel code under ``cuda/csrc/``.
+- **pyrefly** — type checking (baseline-and-burn-down; do not add new errors).
 
 **Type hints** are encouraged:
 
@@ -131,116 +115,72 @@ We use several tools to maintain code quality:
 Testing
 -------
 
-We use pytest for testing. Tests are organized by module:
+We use pytest, orchestrated through tox (via tox-uv). Tests live in
+``tests/`` at the repository root:
 
 .. code-block:: bash
 
-   # Run all tests
-   pytest
+   # Run the test suite directly (CUDA-only tests skip cleanly without a GPU)
+   uv run pytest tests/
 
    # Run specific test file
-   pytest tests/test_sparse_matmul.py
+   uv run pytest tests/test_sparse_matmul.py
 
-   # Run with coverage
-   pytest --cov=torchsparsegradutils
+   # CPU test matrix (python x torch versions)
+   uv run tox -e py312-torch-stable
+
+   # Full six-stage GPU gate: opcheck, parity vs the frozen oracle,
+   # gradcheck, hypothesis property tests, statistical suites
+   uv run tox -e gpu
 
 **Writing Tests**
 
 Follow these guidelines:
 
-1. Test both CPU and GPU (when available)
-2. Test different sparse formats (COO, CSR)
-3. Test edge cases (empty matrices, single elements)
-4. Test gradients and backpropagation
-5. Include numerical accuracy tests
-
-Example test structure:
-
-.. code-block:: python
-
-   import torch
-   import pytest
-   from torchsparsegradutils import sparse_mm
-
-   class TestSparseMatmul:
-
-       @pytest.mark.parametrize("device", ["cpu", "cuda"])
-       def test_basic_multiplication(self, device):
-           if device == "cuda" and not torch.cuda.is_available():
-               pytest.skip("CUDA not available")
-
-           # Test setup
-           A = create_test_sparse_matrix().to(device)
-           B = torch.randn(3, 4).to(device)
-
-           # Test
-           result = sparse_mm(A, B)
-           expected = torch.sparse.mm(A, B)
-
-           # Assertions
-           assert torch.allclose(result, expected)
-
-       def test_gradient_sparsity(self):
-           """Test that gradients preserve sparsity."""
-           A = create_test_sparse_matrix(requires_grad=True)
-           B = torch.randn(3, 4, requires_grad=True)
-
-           result = sparse_mm(A, B)
-           loss = result.sum()
-           loss.backward()
-
-           assert A.grad.is_sparse
-           assert A.grad._nnz() == A._nnz()
+1. The kernel-backed ops are CUDA-only: write op tests on CUDA tensors and
+   guard them so they skip cleanly when no GPU/backend is available (see the
+   existing ``requires_cuda_backend`` markers in ``tests/``)
+2. Test both sparse layouts an op accepts (COO, CSR) and both index dtypes
+   (int32, int64)
+3. Test unbatched and batched inputs, including ragged batches for COO
+4. Test edge cases (empty matrices, single elements) — invalid input must
+   raise, never be silently accepted
+5. Test gradients: pattern and layout of sparse gradients, plus numerical
+   accuracy against the frozen parity oracle in ``tests/oracle/``
+6. New ``tsgu::`` ops must pass ``torch.library.opcheck``
 
 Documentation
 -------------
 
 See :doc:`naming` for the repository's conventions for sparse layouts, shapes,
-batching, dimensions, and specified-entry counts. Follow these conventions in
-new code, tests, docstrings, and pull requests.
+batching, dimensions, specified-entry counts, and the rewrite vocabulary
+(descriptors, folded rows, kernel short names). These conventions are binding
+for new code, tests, docstrings, error messages, and pull requests.
 
 Documentation is built with Sphinx. To build locally:
 
 .. code-block:: bash
 
+   uv sync --group docs
    cd docs/
-   make html
+   uv run make html
    # Open docs/_build/html/index.html
 
 **Documentation Guidelines**
 
 1. All public functions must have docstrings
 2. Include mathematical notation where appropriate
-3. Provide usage examples
+3. Provide usage examples — on CUDA tensors, since the ops are CUDA-only
 4. Document parameters, return values, and exceptions
 
-**Adding Examples**
+Design record
+-------------
 
-Add examples to the docstrings:
-
-.. code-block:: python
-
-   def sparse_triangular_solve(A, B, upper=False):
-       """Solve triangular sparse linear system.
-
-       Args:
-           A: Sparse triangular matrix
-           B: Dense right-hand side
-           upper: Whether A is upper triangular
-
-       Returns:
-           Solution tensor X such that AX = B
-
-       Example:
-           >>> import torch
-           >>> from torchsparsegradutils import sparse_triangular_solve
-           >>> # Create lower triangular matrix
-           >>> indices = torch.tensor([[0, 1, 1, 2], [0, 0, 1, 2]])
-           >>> values = torch.tensor([1., 2., 3., 4.])
-           >>> A = torch.sparse_coo_tensor(indices, values, (3, 3))
-           >>> B = torch.randn(3, 2)
-           >>> X = sparse_triangular_solve(A, B, upper=False)
-       """
+The CUDA rewrite is specified in ``spec/`` at the repository root (goal,
+public-surface map, architecture, kernel designs, testing gates, benchmark
+protocol). It is the frozen design record for the migration: consult it to
+understand why things are the way they are; changes to current behaviour go
+through issues and PRs, not spec edits.
 
 Adding New Features
 -------------------
@@ -248,86 +188,34 @@ Adding New Features
 When adding new functionality:
 
 1. **Start with an issue** describing the feature
-2. **Design the API** - consider consistency with existing functions
-3. **Implement core functionality** with appropriate error handling
+2. **Design the API** — consider consistency with existing functions and the
+   naming conventions
+3. **Implement core functionality** with appropriate error handling (error
+   messages state the accepted logical shapes and the received shape)
 4. **Add comprehensive tests** covering edge cases
 5. **Document thoroughly** with examples and mathematical background
-6. **Benchmark performance** against alternatives when relevant
-
-Example feature addition:
-
-.. code-block:: python
-
-   # 1. Core implementation
-   def new_sparse_operation(A, B, option="default"):
-       """New sparse operation description."""
-       # Input validation
-       if not A.is_sparse:
-           raise ValueError("A must be sparse")
-
-       # Implementation
-       result = _compute_operation(A, B, option)
-       return result
-
-   # 2. Tests
-   def test_new_sparse_operation():
-       # Basic functionality test
-       # Edge case tests
-       # Gradient tests
-       # Performance test
-       pass
-
-   # 3. Documentation
-   # Add to API docs, tutorials, examples
-
-Benchmarking New Features
--------------------------
-
-Include benchmarks for new operations:
-
-.. code-block:: python
-
-   # benchmarks/benchmark_new_feature.py
-   import time
-   import torch
-   from torchsparsegradutils import new_sparse_operation
-
-   def benchmark_new_operation():
-       sizes = [100, 500, 1000, 5000]
-       results = []
-
-       for n in sizes:
-           A = create_sparse_matrix(n, n)
-           B = torch.randn(n, n)
-
-           # Timing
-           start = time.time()
-           result = new_sparse_operation(A, B)
-           end = time.time()
-
-           results.append((n, end - start))
-
-       return results
+6. **Benchmark performance** against alternatives when relevant — the
+   benchmark protocol in ``spec/benchmarks.md`` applies (provenance labels,
+   memory measured alongside time)
 
 Continuous Integration
 ----------------------
 
 Our CI pipeline runs:
 
-1. **Code formatting** checks (Black)
-2. **Type checking** (mypy, when available)
-3. **Unit tests** on multiple Python versions
-4. **Integration tests** with different PyTorch versions
-5. **Documentation** building
-6. **Benchmark** regression tests
+1. **Lint and format** checks (ruff; clang-format for CUDA/C++)
+2. **Type checking** (pyrefly)
+3. **Unit tests** across the tox matrix (Python and PyTorch versions)
+4. **Documentation** building
 
-All checks must pass before merging.
+The GPU gate (``tox -e gpu``) runs on GPU-equipped machines; hosted GPU CI is
+planned. All checks must pass before merging.
 
 Submitting Pull Requests
 ------------------------
 
 1. **Ensure all tests pass** locally
-2. **Write clear commit messages**
+2. **Write clear commit messages** (conventional commits)
 3. **Reference related issues**
 
 PR template checklist:
@@ -335,7 +223,7 @@ PR template checklist:
 - [ ] Tests added/updated
 - [ ] Documentation updated
 - [ ] All CI checks pass
-- [ ] Backwards compatibility maintained
+- [ ] Naming conventions followed (:doc:`naming`)
 
 Code Review Process
 -------------------
@@ -348,7 +236,8 @@ Code Review Process
 Common review feedback:
 
 - **Performance considerations** for sparse operations
-- **Memory efficiency** improvements
+- **Memory efficiency** improvements (sparse gradients must stay at the
+  input's pattern — never densify)
 - **Numerical stability** concerns
 - **API consistency** with existing functions
 
@@ -359,27 +248,9 @@ When reporting bugs:
 
 1. **Check existing issues** first
 2. **Provide minimal reproducible example**
-3. **Include system information** (Python version, PyTorch version, OS)
+3. **Include system information** (Python version, PyTorch version, CUDA
+   version, GPU model, OS)
 4. **Describe expected vs. actual behavior**
-
-Example bug report:
-
-.. code-block:: python
-
-   # System info
-   Python 3.10.0
-   PyTorch 2.5.0
-   CUDA 12.1 (if relevant)
-
-   # Minimal example
-   import torch
-   from torchsparsegradutils import sparse_mm
-
-   A = torch.sparse_coo_tensor(...)
-   B = torch.randn(...)
-
-   # This fails with error message:
-   result = sparse_mm(A, B)
 
 Feature Requests
 ----------------
@@ -403,10 +274,11 @@ Releases follow semantic versioning:
 Release checklist:
 
 1. Update version numbers
-2. Run full test suite
+2. Run full test suite (CPU matrix and GPU gate)
 3. Build documentation
 4. Create GitHub release
-5. Publish to PyPI
+5. Publish to PyPI (front package); publish the CUDA backend via
+   kernel-builder to the Hugging Face Hub
 
 Getting Help
 ------------

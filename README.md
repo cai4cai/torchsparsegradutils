@@ -1,274 +1,273 @@
-# torchsparsegradutils: Sparsity-preserving gradient utility tools for PyTorch
+# torchsparsegradutils: Sparsity-preserving gradient utilities for PyTorch, backed by native CUDA kernels
 
-[![PyPI](https://img.shields.io/pypi/v/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) [![Python Versions](https://img.shields.io/pypi/pyversions/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) [![Downloads](https://img.shields.io/pypi/dm/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) ![PyTorch 2.5+](https://img.shields.io/badge/PyTorch-2.5%2B-ee4c2c?logo=pytorch) ![Tested 2.5 / 2.11 / nightly](https://img.shields.io/badge/Tested-2.5%20|%202.11%20|%20nightly-ee4c2c?logo=pytorch) [![Build](https://github.com/cai4cai/torchsparsegradutils/actions/workflows/python-package.yml/badge.svg)](https://github.com/cai4cai/torchsparsegradutils/actions/workflows/python-package.yml) [![Docs](https://readthedocs.org/projects/torchsparsegradutils/badge/?version=latest)](https://readthedocs.org/projects/torchsparsegradutils) [![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black) [![License](https://img.shields.io/github/license/cai4cai/torchsparsegradutils)](LICENSE) [![status](https://joss.theoj.org/papers/6da0e92488d06f70c0a03d0a7cbfba7d/status.svg)](https://joss.theoj.org/papers/6da0e92488d06f70c0a03d0a7cbfba7d)
+[![PyPI](https://img.shields.io/pypi/v/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) [![Python Versions](https://img.shields.io/pypi/pyversions/torchsparsegradutils.svg)](https://pypi.org/project/torchsparsegradutils/) ![PyTorch 2.5+](https://img.shields.io/badge/PyTorch-2.5%2B-ee4c2c?logo=pytorch) [![Build](https://github.com/cai4cai/torchsparsegradutils/actions/workflows/python-package.yml/badge.svg)](https://github.com/cai4cai/torchsparsegradutils/actions/workflows/python-package.yml) [![Docs](https://readthedocs.org/projects/torchsparsegradutils/badge/?version=latest)](https://readthedocs.org/projects/torchsparsegradutils) [![License](https://img.shields.io/github/license/cai4cai/torchsparsegradutils)](LICENSE) [![status](https://joss.theoj.org/papers/6da0e92488d06f70c0a03d0a7cbfba7d/status.svg)](https://joss.theoj.org/papers/6da0e92488d06f70c0a03d0a7cbfba7d)
 
-A comprehensive collection of utility functions to work with PyTorch sparse tensors, ensuring memory efficiency and supporting various sparsity-preserving tensor operations with automatic differentiation. This package addresses fundamental gaps in PyTorch's sparse tensor ecosystem, providing essential operations that preserve sparsity in gradients during backpropagation.
+Sparse autograd utilities for PyTorch, implemented on our own CUDA kernels (the
+`tsgu::` op set). Every operation computes gradients with respect to a sparse
+input **at that input's sparsity pattern, in that input's layout** — never by
+materialising a dense gradient. The package fills long-standing gaps in
+PyTorch's sparse ecosystem (sparse gradients for matmul and solves, a native
+sparse `logsumexp`) and is batched-first throughout.
 
-## 🚀 Key Features
+## Architecture
 
-### Core Sparse Operations with Sparse Gradient Support
+Two packages, one repo:
 
-**Memory-Efficient Sparse Matrix Multiplication**
-- `sparse_mm`: Memory-efficient sparse matrix multiplication with batch support
-- Preserves sparsity in gradients during backpropagation
-- Workaround for [PyTorch issue #41128](https://github.com/pytorch/pytorch/issues/41128)
-- Supports both COO and CSR formats with optional batching
+| Package | Contents | Ships as |
+|---------|----------|----------|
+| **`torchsparsegradutils`** | Pure Python: public API wrappers, `torch.library` op definitions, dispatch, host-side composites (Krylov loops, distributions, encoder, utils) | pure-Python wheel — no compiler, ever |
+| **`torchsparsegradutils_cuda`** | The CUDA kernels (`cuda/csrc/`), registered into the same `tsgu::` ops at import | prebuilt binaries via [HF kernel-builder](https://huggingface.co/docs/kernels) (see Installation) |
 
-**Numerically-Stable Sparse Reductions**
-- `sparse_logsumexp`: Sparse-aware `log-sum-exp` reduction mirroring `torch.logsumexp`
-- Operates directly on the nonzero values (no dense materialisation), with a numerically stable max-shift
-- Supports COO/CSR/CSC layouts (unbatched 2-D and batched 3-D) and an `include_zeros` flag for structural-zero semantics
-- Fills the gap of [PyTorch issue #31394](https://github.com/pytorch/pytorch/issues/31394) (no native `scatter_logsumexp`)
-- `sparse_bidir_logsumexp`: Row- and column-wise `log-sum-exp` simultaneously in a single traversal
-- Fuses the two `sparse_logsumexp(dim=0)` / `sparse_logsumexp(dim=1)` passes into one batched scatter, sharing the index extraction and autograd graph
-- Returns `tuple`, `padded`, or `nested` output layouts
+Key design points:
 
-**Sparse Linear System Solvers**
-- `sparse_triangular_solve`: Sparse triangular solver with batch support
-  -  Discussion reference: [PyTorch issue #87358](https://github.com/pytorch/pytorch/issues/87358)
-- `sparse_generic_solve`: Generic sparse linear solver with pluggable backends
-  - Tested and benchmarked with CG, BICGSTAB, LSMR and MINRES solvers
-- `sparse_generic_lstsq`: Generic sparse linear least-squares solver
+- **Native CUDA kernels.** All core ops route to custom kernels in the
+  `tsgu::` namespace (`spmm`, `sddmm`, `spsm`, `seglse`, `seglse_bidir`,
+  `coo2csr`, `grouped_gemm`), benchmarked head-to-head against their
+  cuSPARSE/cuBLAS counterparts. Two kernel families have **no vendor primitive
+  at all**: the SDDMM-shaped sparse-gradient kernel (batched/COO) shared by
+  every solve/matmul backward, and the segmented logsumexp family.
+- **Memory-sparse gradients.** The gradient of a loss w.r.t. a sparse matrix
+  `A` is a sparse tensor with `A`'s pattern and layout. For a `524k × 524k`
+  system the dense-gradient counterfactual is measured in terabytes; ours is
+  O(nse).
+- **Batched-first.** One leading batch axis, ragged nse per batch item
+  supported (COO batching's flexibility with CSR's kernel-friendliness) via an
+  internal `BatchedCSR` descriptor; an unbatched matrix is simply a batch of
+  one. The old block-diagonal batching workaround is gone.
+- **`torch.library` custom ops.** Each kernel-backed op is registered with
+  `torch.library.custom_op` + fake kernels + `register_autograd`, so the ops
+  are `torch.compile`-compatible and every op is `torch.library.opcheck`-tested.
+- **CUDA-required at runtime.** There is no CPU implementation in the shipped
+  package (by design — see Installation).
 
-### Built-in Iterative Solvers (No External Dependencies)
+## Public API
 
-**Pure PyTorch Implementations**
-- **BICGSTAB**: Biconjugate Gradient Stabilized method (ported from [pykrylov](https://github.com/PythonOptimizers/pykrylov))
-- **CG**: Conjugate Gradient method (ported from [cornellius-gp/linear_operator](https://github.com/cornellius-gp/linear_operator))
-- **LSMR**: Least Squares Minimal Residual method (ported from [pytorch-minimize](https://github.com/rfeinman/pytorch-minimize))
-- **MINRES**: Minimal Residual method (ported from [cornellius-gp/linear_operator](https://github.com/cornellius-gp/linear_operator))
+Core ops (all with sparsity-preserving autograd; COO and CSR accepted,
+unbatched or batched):
 
-### Sparse Multivariate Normal Distributions
+| Function | What it does | Kernels (fwd / bwd) |
+|----------|--------------|---------------------|
+| `sparse_mm(A, B)` | sparse × dense matmul | `tsgu::spmm` / `tsgu::sddmm` + `tsgu::spmm` |
+| `sparse_triangular_solve(A, B, upper, unitriangular, transpose)` | triangular solve | `tsgu::spsm` / `tsgu::spsm` + `tsgu::sddmm` |
+| `sparse_generic_solve(A, B, solve, transpose_solve)` | iterative solve with pluggable solver callables | host loop over `tsgu::spmm` / `tsgu::sddmm` |
+| `sparse_generic_lstsq(A, B, lstsq, transpose_lstsq)` | iterative least squares | host loop over `tsgu::spmm` / `tsgu::sddmm` |
+| `sparse_logsumexp(input, dim, keepdim, include_zeros)` | sparse log-sum-exp mirroring `torch.logsumexp` | `tsgu::seglse` / `tsgu::seglse_bwd` |
+| `sparse_bidir_logsumexp(input, ...)` | row + column log-sum-exp in one fused traversal | `tsgu::seglse_bidir` / `tsgu::seglse_bidir_bwd` |
+| `segment_mm(a, b, seglen_a)` | segmented dense matmul (DGL-exact semantics) | `tsgu::grouped_gemm` |
+| `gather_mm(a, b, idx_b)` | gathered dense matmul (DGL-exact semantics) | `tsgu::grouped_gemm` (gather fused) |
 
-- **SparseMultivariateNormal**: Structured Gaussian Distribution
-  - Implements reparameterised sampling (rsample)
-  - Supports leading batch dimension
-  - Supports COO and CSR sparse tensors
-  - Covariance or precision matrices with LL^T or LDL^T parameterisations.
-  - LDL^T parameterization offers numerical stability without SPD constraints
-- **SparseMultivariateNormalNative**:
-  - Implements reparameterised sampling (rsample)
-  - Uses native `torch.sparse.mm` only
-  - Only supports ubatched CSR tensors
-  - Covariance LL^T parameterization
+Plus:
 
-### Spatial Encoding Tools
+- **Iterative solvers** (`torchsparsegradutils.utils`): `linear_cg`,
+  `bicgstab`, `lsmr`, `minres` (with `LinearCGSettings`, `BICGSTABSettings`,
+  `MINRESSettings`) — host-side loops whose matvecs run on `tsgu::spmm`.
+- **Convert utils** (`torchsparsegradutils.utils`): `convert_coo_to_csr`,
+  `convert_coo_to_csr_indices_values` (backed by `tsgu::coo2csr`),
+  `stack_csr`, `sparse_eye`, plus random sparse generators and statistical
+  test helpers.
+- **Distributions** (`torchsparsegradutils.distributions`):
+  `SparseMultivariateNormal` (LL^T / LDL^T, covariance or precision) and
+  `SparseMultivariateNormalNative`, with reparameterised sampling.
+- **Encoder** (`torchsparsegradutils.encoders`): `PairwiseEncoder` for sparse
+  neighbourhood encoding of nD spatial volumes, and
+  `calc_pairwise_coo_indices_nd`.
 
-**Pairwise Encoder**
-- Encode local neighborhood relationships in nD spatial volumes
-- Multi-channel/class support
-- Configurable neighborhood radius and sparsity patterns
-- Outputs sparse unbatched/batched COO or CSR matrices for downstream processing
-- Optimised for medical imaging and volumetric data applications
+### Removed in this release (breaking, no deprecation cycle)
 
-### Graph Neural Network Operations
+The CUDA rewrite is a breaking release. The following are **removed outright**,
+with no migration path:
 
-**Indexed Matrix Multiplication**
-- `segment_mm`: Segmented matrix multiplication compatible with DGL/PyG
-- `gather_mm`: Gather-based matrix multiplication for graph operations
-- Pure PyTorch implementations as alternatives to [`dgl.ops.segment_mm`](https://docs.dgl.ai/generated/dgl.ops.segment_mm.html), [`pyg_lib.ops.segment_matmul`](https://pyg-lib.readthedocs.io/en/latest/modules/ops.html#pyg_lib.ops.segment_matmul), and [`dgl.ops.gather_mm`](https://docs.dgl.ai/generated/dgl.ops.gather_mm.html)
-- Supports PyTorch >= 2.4 with nested tensor operations
+- The **CuPy bridge** (`torchsparsegradutils.cupy`: `sparse_solve_c4t`,
+  `t2c_*`/`c2t_*`) and the **JAX bridge** (`torchsparsegradutils.jax`:
+  `sparse_solve_j4t`, `j2t*`/`t2j*`). They existed to borrow CUDA solvers the
+  package now has natively.
+- The **block-diagonal helpers** `sparse_block_diag` and
+  `sparse_block_diag_split`. They faked batched sparse ops; the kernels are
+  natively batched.
+- The **`autograd.Function` classes** `SparseMatMul`, `SparseTriangularSolve`,
+  `SparseGenericSolve`, `SparseGenericLstsq`. The public functions remain;
+  the classes are replaced by `torch.library` op registration.
+- The deprecated `PairwiseVoxelEncoder` alias and
+  `calc_pairwise_coo_indices`.
 
+All *surviving* signatures are frozen at their v0.2.3 forms — names,
+parameters, defaults, and return types are unchanged.
 
+## Installation
 
-## 🛠️ Installation
-
-### Basic Installation
-
-The package can be installed using pip:
+The front package is pure Python:
 
 ```bash
 pip install torchsparsegradutils
 ```
 
-### Development Installation
+**A CUDA backend is required at runtime.** The core ops are CUDA-only: there
+is no CPU fallback in the shipped package, and calling an op without the
+backend (or on CPU tensors) raises a clear error — that error is intentional,
+not a bug. The backend package `torchsparsegradutils_cuda` is built with
+[Hugging Face kernel-builder](https://huggingface.co/docs/kernels) from the
+`cuda/` directory of this repo and distributed through the Hugging Face Hub
+(kernel-builder's Nix build produces the binaries; `build-and-upload`
+publishes them). Prebuilt wheels for the backend are a post-migration item and
+do not exist yet — until then, build from `cuda/` with kernel-builder or pull
+the published kernel from the Hub.
 
-For the latest features and development work:
+The two packages perform a version handshake at import
+(`__backend_api_version__`); a mismatch refuses to wire them together rather
+than failing later in a kernel.
+
+For **import-only workflows** (docs builds, CPU-only CI collecting tests,
+introspection) set:
 
 ```bash
-pip install git+https://github.com/cai4cai/torchsparsegradutils
+export TSGU_DISABLE_CUDA_BACKEND=1
 ```
 
-### Optional Dependencies
-
-For full functionality, install optional dependencies:
-
-```bash
-# For benchmarking and testing
-pip install scipy matplotlib pandas tqdm pytest
-```
+which skips the backend probe; `import torchsparsegradutils` then works
+without a GPU, but calling any kernel-backed op raises.
 
 ### Requirements
 
-- **Python**: ≥ 3.10
-- **PyTorch**: ≥ 2.5 (≥ 2.4 for indexed operations)
-- **Operating Systems**: Linux, macOS, Windows
-- **Hardware**: CPU and CUDA GPU support
+- **Python** ≥ 3.10
+- **PyTorch** ≥ 2.5
+- **NVIDIA GPU + CUDA** for anything beyond importing the package
 
+## Benchmarks
 
-## 📊 Performance Benchmarks
+Full protocol, tables, memory companion data, and charts live in
+[`spec/benchmarks.md`](spec/benchmarks.md) — that file is the record; the
+numbers below are its headline geo-means. Measured 2026-07-15 → 2026-07-17 on
+the migration dev box: **NVIDIA RTX A1000 Laptop GPU, torch 2.13.0+cu130,
+CUDA 13.0, clocks not locked** (recorded per-run instead) — a modest laptop
+GPU, so treat absolute times accordingly; speedups are like-for-like on the
+same machine. Corpus: synthetic tier (batched/ragged sweeps), per the
+migration-period rule.
 
-The pre-rewrite benchmark suite and its charts have been retired (see the CUDA-rewrite spec); a new benchmark harness and numbers land later in that migration.
+| Claim | Result |
+|-------|--------|
+| vs. like-for-like vendor calls (cuSPARSE SDDMM, SpSM cold/warm) | geo-mean **1.52×** faster |
+| batched / fused / legacy-composite paths (batched SpMM/SDDMM/SpSM, fused bidir logsumexp, grouped GEMM vs per-segment cuBLAS loop, coo2csr, vs `pytorch_scatter` and the old pure-PyTorch paths) | geo-mean **8.11×** faster |
+| e2e `SparseMultivariateNormal.rsample`, encoder-CSR vs encoder-COO | **4.1×** faster, **0.56×** the backward peak memory |
+| e2e CG solve vs dense `torch.linalg.solve` (n = 4096) | **~16×** faster |
+| memory: encoder-CSR rsample backward peak vs dense-gradient counterfactual | 402 MB vs ~1.1 TB (**~2700×** saved) at 2×64³ |
 
-## 🚀 Quick Start
+One acceptance bar is honestly still open: `grouped_gemm` on segment shapes
+reaches **0.5–0.8×** of cuBLAS `cublasGemmGroupedBatched` (the fused
+gather path and both backwards beat their baselines; the follow-up —
+vectorised 128-bit loads + double buffering — is tracked). Every other bar in
+the spec is met, with all rows `backend=custom` (no vendor-scaffold rows in
+any claim).
 
-### Basic Sparse Matrix Multiplication
+## Quick Start
+
+All ops run on CUDA tensors.
+
+### Sparse matrix multiplication
 
 ```python
 import torch
 from torchsparsegradutils import sparse_mm
 
-# Create sparse matrix in COO format
+# Sparse matrix in COO layout, on GPU
 indices = torch.tensor([[0, 1, 1], [2, 0, 2]], dtype=torch.int64)
-values = torch.tensor([3., 4., 5.], requires_grad=True)
-A = torch.sparse_coo_tensor(indices, values, (2, 3))
+values = torch.tensor([3., 4., 5.])
+A = torch.sparse_coo_tensor(indices, values, (2, 3)).cuda()
+A.requires_grad_(True)
 
-# Dense matrix
-B = torch.randn(3, 4, requires_grad=True)
+B = torch.randn(3, 4, requires_grad=True, device="cuda")
 
-# Memory-efficient sparse matrix multiplication with gradient support
 C = sparse_mm(A, B)
-loss = C.sum()
-loss.backward()  # Gradients preserved in sparse format
+C.sum().backward()
 
-print(f"A.grad: {A.grad}")  # Sparse gradient
-print(f"B.grad: {B.grad}")  # Dense gradient
+print(A.grad.is_sparse)   # True — gradient at A's pattern, in A's layout
+print(A.grad._nnz())      # 3
 ```
 
-### Sparse Linear System Solving
+Batched (with ragged nse per item for COO):
+
+```python
+A1 = torch.sparse_coo_tensor([[0, 1], [0, 1]], [1., 2.], (2, 2)).cuda()
+A2 = torch.sparse_coo_tensor([[0, 1], [1, 0]], [3., 4.], (2, 2)).cuda()
+A_batch = torch.stack([A1, A2])          # (2, 2, 2)
+B_batch = torch.randn(2, 2, 3, device="cuda")
+
+C = sparse_mm(A_batch, B_batch)          # (2, 2, 3)
+```
+
+### Sparse log-sum-exp
+
+```python
+import torch
+from torchsparsegradutils import sparse_logsumexp, sparse_bidir_logsumexp
+from torchsparsegradutils.utils import rand_sparse
+
+A = rand_sparse((512, 256), nnz=4096, layout=torch.sparse_csr, device="cuda")
+
+lse_over_rows = sparse_logsumexp(A, dim=0)      # one value per column
+lse_over_cols = sparse_logsumexp(A, dim=1)      # one value per row
+
+# Both reductions in a single fused traversal
+lse0, lse1 = sparse_bidir_logsumexp(A)
+```
+
+### Sparse linear systems
 
 ```python
 import torch
 from torchsparsegradutils import sparse_triangular_solve, sparse_generic_solve
 from torchsparsegradutils.utils import linear_cg
+from torchsparsegradutils.utils.random_sparse import rand_sparse_tri, make_spd_sparse
 
-# Create sparse triangular matrix
-A = create_sparse_triangular_matrix()  # Your sparse CSR matrix
-b = torch.randn(A.shape[0], requires_grad=True)
+# Triangular solve
+L = rand_sparse_tri((1000, 1000), nnz=5000, upper=False,
+                    layout=torch.sparse_csr, device="cuda")
+b = torch.randn(1000, 2, device="cuda")
+x = sparse_triangular_solve(L, b, upper=False)
 
-# Triangular solve (fast for triangular systems)
-x1 = sparse_triangular_solve(A, b, upper=False)
-
-# Generic solve with different backends
-x2 = sparse_generic_solve(A, b, solve=linear_cg, tol=1e-6)
+# Generic solve with a pluggable iterative solver (user callables also work)
+A, _ = make_spd_sparse(1000, torch.sparse_csr, torch.float32, torch.int64, "cuda")
+y = sparse_generic_solve(A, b[:, 0], solve=linear_cg)
 ```
 
-### Sparse Multivariate Normal Distribution
+### Sparse multivariate normal
 
 ```python
 import torch
 from torchsparsegradutils.distributions import SparseMultivariateNormal
 from torchsparsegradutils.utils.random_sparse import rand_sparse_tri
 
-# Create parameters
-batch_size, event_size = 2, 1000
-loc = torch.zeros(batch_size, event_size)
+dim = 1000
+loc = torch.zeros(dim, device="cuda")
+diagonal = torch.ones(dim, device="cuda") * 0.5    # LDL^T parameterisation
+scale_tril = rand_sparse_tri((dim, dim), nnz=5000, upper=False,
+                             layout=torch.sparse_csr, strict=True, device="cuda")
+scale_tril.requires_grad_(True)
 
-# Example 1: LDL^T parameterization (numerically stable for precision matrices)
-# Create sparse lower triangular matrix (unit triangular, no diagonal)
-scale_tril = rand_sparse_tri(
-    (batch_size, event_size, event_size),
-    nnz=5000,  # 5000 non-zeros for 1M parameters (0.5% sparsity)
-    layout=torch.sparse_csr,
-    upper=False,
-    unit_triangular=True  # Unit triangular for LDL^T
-)
-
-# Diagonal component for LDL^T parameterization
-diagonal = torch.ones(batch_size, event_size) * 0.5
-
-# Create distribution with LDL^T parameterization
-dist_ldlt = SparseMultivariateNormal(
-    loc=loc,
-    diagonal=diagonal,
-    scale_tril=scale_tril  # Unit lower triangular
-)
-
-# Example 2: LL^T parameterization (standard Cholesky)
-scale_tril_chol = rand_sparse_tri(
-    (batch_size, event_size, event_size),
-    nnz=5000,
-    layout=torch.sparse_csr,
-    upper=False,
-    unit_triangular=False  # Include diagonal for LL^T
-)
-
-# Create distribution with LL^T parameterization
-dist_chol = SparseMultivariateNormal(
-    loc=loc,
-    scale_tril=scale_tril_chol  # Lower triangular with diagonal
-)
-
-# Example 3: Precision matrix parameterization (more stable with LDL^T)
-precision_tril = rand_sparse_tri(
-    (batch_size, event_size, event_size),
-    nnz=5000,
-    layout=torch.sparse_csr,
-    upper=False,
-    unit_triangular=True
-)
-
-precision_diagonal = torch.ones(batch_size, event_size) * 2.0
-
-dist_precision = SparseMultivariateNormal(
-    loc=loc,
-    diagonal=precision_diagonal,
-    precision_tril=precision_tril  # Unit triangular precision factor
-)
-
-# Sample with gradient support
-samples = dist_ldlt.rsample((100,))  # 100 samples
-
-# Gradient computation preserves sparsity
-loss = samples.sum()
-loss.backward()
-print(f"Sparse gradient shape: {scale_tril.grad.shape}")
-print(f"Sparse gradient nnz: {scale_tril.grad._nnz()}")
-print(f"Using LDL^T parameterization: {dist_ldlt.is_ldlt_parameterization}")
+dist = SparseMultivariateNormal(loc=loc, diagonal=diagonal, scale_tril=scale_tril)
+samples = dist.rsample((100,))
+samples.sum().backward()
+print(scale_tril.grad._nnz())  # 5000 — sparse gradient at the input pattern
 ```
 
-### Pairwise Voxel Encoding
+### Pairwise spatial encoding
 
 ```python
 import torch
 from torchsparsegradutils.encoders import PairwiseEncoder
 
-# Create 3D volume encoder (channels, height, depth, width)
-volume_shape = (4, 64, 64, 64)  # 4 channels, 64x64x64 spatial
-encoder = PairwiseEncoder(
-    radius=2.0,
-    volume_shape=volume_shape,
-    layout=torch.sparse_csr
-)
+volume_shape = (4, 64, 64, 64)  # channels, height, depth, width
+encoder = PairwiseEncoder(radius=2.0, volume_shape=volume_shape,
+                          layout=torch.sparse_csr, device="cuda")
 
-# Generate values for each spatial relationship offset
-num_offsets = len(encoder.offsets)
-values = torch.randn(num_offsets, *volume_shape)
-
-# Generate sparse encoding matrix
-sparse_matrix = encoder(values)
-
-print(f"Encoded volume shape: {sparse_matrix.shape}")
-print(f"Sparsity: {sparse_matrix._nnz() / sparse_matrix.numel():.3%}")
-print(f"Number of spatial offsets: {num_offsets}")
-
-# Use in sparse multivariate normal
-flat_size = 4 * 64 * 64 * 64  # Total flattened size
-dist = SparseMultivariateNormal(
-    loc=torch.zeros(flat_size),
-    scale_tril=sparse_matrix
-)
+values = torch.randn(len(encoder.offsets), *volume_shape, device="cuda")
+sparse_matrix = encoder(values)  # sparse CSR encoding of the neighbourhood
 ```
 
-#### Spatial Relationship Visualization
+The encoder outputs COO or CSR; with the rewrite the CSR path is now *more*
+memory-efficient in the backward pass than COO (≈ 0.56× the peak), reversing
+the CSR blow-up documented in older releases.
 
-The encoder creates sparse matrices that encode pairwise spatial relationships within a specified radius. Different channel relationship types affect how channels interact:
-
-- **`indep`**: Independent channels (only spatial neighbors within same channel)
-- **`intra`**: Intra-channel relationships (spatial neighbors within same channel)
-- **`inter`**: Inter-channel relationships (spatial neighbors across all channels)
-
-**3D Spatial Grid (3×3×3×3) with Different Channel Relations:**
+**3D spatial grid (3×3×3×3) with different channel relations:**
 
 <div align="center">
 
@@ -277,251 +276,82 @@ The encoder creates sparse matrices that encode pairwise spatial relationships w
 
 **Radius = 2.0**
 ![Spatial Encodings Radius 2](tests/test_outputs/sparse_encodings_radius_2.png)
-<!--
-**Legend for Spatial Offsets:**
-<table>
-<tr>
-<td><img src="tests/test_outputs/legend_radius_1.png" width="150"/></td>
-<td><img src="tests/test_outputs/legend_radius_2.png" width="150"/></td>
-</tr>
-<tr>
-<td align="center">Radius 1.0 Offsets</td>
-<td align="center">Radius 2.0 Offsets</td>
-</tr>
-</table> -->
 
 </div>
 
-Each color represents a different spatial offset (relative position) in the 3D neighborhood. The sparse matrix encodes these relationships efficiently, enabling:
-
-- **Local spatial modeling** for volumetric data (medical imaging, 3D computer vision)
-- **Multi-channel feature interaction** in convolutional architectures
-- **Sparse graph construction** from regular grids
-- **Memory-efficient neighborhood encoding** for large volumes
-
-**Key Parameters:**
-- `radius`: Spatial neighborhood radius (1.0 = immediate neighbors, 2.0 = extended neighborhood)
-- `volume_shape`: `(channels, height, depth, width)` for 4D volumes
-- `channel_voxel_relation`: Controls cross-channel connectivity patterns
-- `layout`: Output sparse format (`torch.sparse_coo` or `torch.sparse_csr`)
-
-### Indexed Matrix Operations (Graph Neural Networks)
+### Indexed matrix operations (GNN workloads)
 
 ```python
 import torch
 from torchsparsegradutils import segment_mm, gather_mm
 
-# Segment matrix multiplication (compatible with DGL/PyG)
-a = torch.randn(15, 10, requires_grad=True)  # Node features
-b = torch.randn(3, 10, 5, requires_grad=True)  # Edge type embeddings
-seglen_a = torch.tensor([5, 6, 4])  # Segment lengths
+a = torch.randn(15, 10, requires_grad=True, device="cuda")   # node features
+b = torch.randn(3, 10, 5, requires_grad=True, device="cuda") # per-type weights
+seglen_a = torch.tensor([5, 6, 4], device="cuda")
 
-# Performs: a[0:5] @ b[0], a[5:11] @ b[1], a[11:15] @ b[2]
-result = segment_mm(a, b, seglen_a)
+# a[0:5] @ b[0], a[5:11] @ b[1], a[11:15] @ b[2] — DGL segment_mm semantics
+out = segment_mm(a, b, seglen_a)
 
-# Gather matrix multiplication
-indices = torch.tensor([0, 0, 1, 1, 2])
-a_gathered = torch.randn(5, 10, requires_grad=True)
-result = gather_mm(a_gathered, b, indices)
+idx_b = torch.tensor([0, 0, 1, 1, 2], device="cuda")
+out = gather_mm(torch.randn(5, 10, device="cuda"), b, idx_b)
 ```
 
-### Statistical Distribution Validation
-
-```python
-import torch
-from torch.distributions import MultivariateNormal
-from torchsparsegradutils.utils import mean_hotelling_t2_test, cov_nagao_test
-
-# Generate sample data from known distribution
-torch.manual_seed(42)
-true_mean = torch.tensor([[0.0, 0.0]])
-true_cov = torch.eye(2).unsqueeze(0)
-n = 1000
-
-# Generate samples and compute statistics
-dist = MultivariateNormal(true_mean.squeeze(0), true_cov.squeeze(0))
-samples = dist.sample((n,)).unsqueeze(1)
-sample_mean = samples.mean(0)
-sample_cov = torch.cov(samples.squeeze(1).T).unsqueeze(0)
-
-# Test if sample mean is consistent with hypothesized mean (should pass)
-result, t2_stat, threshold = mean_hotelling_t2_test(
-    sample_mean, true_mean, sample_cov, n, confidence_level=0.95
-)
-print(f"Mean test passed: {result.item()}")  # True
-
-# Test if sample covariance is consistent with hypothesized covariance (should pass)
-result, t_n_stat, threshold = cov_nagao_test(
-    sample_cov, true_cov, n, confidence_level=0.95
-)
-print(f"Covariance test passed: {result.item()}")  # True
-
-# Test against wrong parameters (should fail)
-wrong_mean = true_mean + 1.0  # Significantly different mean
-result, _, _ = mean_hotelling_t2_test(
-    sample_mean, wrong_mean, sample_cov, n, confidence_level=0.95
-)
-print(f"Wrong mean test passed: {result.item()}")  # False
-```
-
-## 🧪 Testing and Benchmarks
-
-### Running Tests
+## Testing and Benchmarks
 
 ```bash
-# Run all tests
-python -m pytest
+# CPU-safe subset (schemas, fake kernels, host utils; CUDA tests skip cleanly)
+uv run pytest tests/
 
-# Run specific test modules
-python -m pytest torchsparsegradutils/tests/test_sparse_matmul.py
-python -m pytest torchsparsegradutils/tests/test_distributions.py
+# The full six-stage GPU gate (opcheck, parity vs the frozen oracle,
+# gradcheck, hypothesis, statistical suites) — needs a GPU + backend
+uv run tox -e gpu
 
-# Run with coverage
-python -m pytest --cov=torchsparsegradutils
+# CPU test matrix
+uv run tox -e py312-torch-stable
 ```
 
-### Running Benchmarks
+The old pure-PyTorch implementations survive **only** as a frozen differential
+oracle in `tests/oracle/` — they are never packaged.
 
-The package includes comprehensive benchmarks for performance evaluation:
+Benchmarks live in `benchmarks/` (op-level harness writing provenance-stamped
+JSON to `benchmarks/results/`) and `cuda/bench/` (per-kernel NVBench
+microbenchmarks). The protocol — locked-clock policy, L2 flush between
+iterations, median-of-windowed CUDA-event timing, mandatory memory
+measurement, `custom` vs `vendor-scaffold` provenance — is specified in
+[`spec/benchmarks.md`](spec/benchmarks.md).
 
-```bash
-# Sparse matrix multiplication benchmarks
-python -m torchsparsegradutils.benchmarks.sparse_mm_rand
-python -m torchsparsegradutils.benchmarks.batched_sparse_mm_rand
+## Contributing
 
-# Triangular solver benchmarks
-python -m torchsparsegradutils.benchmarks.sparse_triangular_solve_rand
-
-# Generic solver benchmarks
-python -m torchsparsegradutils.benchmarks.sparse_generic_solve_suite
-
-# SuiteSparse matrix benchmarks
-python -m torchsparsegradutils.benchmarks.sparse_mm_suite
-```
-
-Results are automatically saved to `torchsparsegradutils/benchmarks/results/` as CSV files.
-
-### Utility Functions
-
-#### `torchsparsegradutils.utils.random_sparse`
-
-**Sparse Random Matrix Generators**
-- **`rand_sparse(size, nnz, layout=torch.sparse_coo, **kwargs)`**: Generate random sparse matrices with specified layout and properties
-  - Supports COO and CSR
-  - Supports batch dimension
-- **`rand_sparse_tri(size, nnz, layout=torch.sparse_coo, upper=True, strict=False, **kwargs)`**: Generate random sparse triangular matrices
-  - Supports COO and CSR
-  - Supports batch dimension
-  - Strict triangular (no diagonal) or non-strict (with diagonal values)
-  - Option to produce well conditioned matrices and regulate diagonal values
-
-- **`make_spd_sparse(n, layout, value_dtype, index_dtype, device, sparsity_ratio=0.5, nz=None)`**: Generate sparse symmetric positive definite (SPD) matrices
-
-#### `torchsparsegradutils.utils.utils`
-
-**Sparse Matrix Operations**
-- **`sparse_eye(size, layout=torch.sparse_coo, **kwargs)`**: Create batched or unbatched sparse identity matrices
-- **`stack_csr(tensors, dim=0)`**: Stack CSR tensors along batch dimension (like torch.stack for CSR)
-
-**Sparse Format Conversion**
-- **`convert_coo_to_csr_indices_values(coo_indices, num_rows, values=None)`**: Convert COO indices and values to CSR format, with support for batch dimension
-- **`convert_coo_to_csr(sparse_coo_tensor)`**: Convert COO sparse tensor to CSR format with batch support
-
-#### `torchsparsegradutils.utils.dist_stats_helpers`
-
-**Statistical Distribution Validation**
-- **`mean_hotelling_t2_test(sample_mean, true_mean, sample_cov, n, confidence_level=0.95)`**: One-sample Hotelling T² test for multivariate mean equality using confidence regions
-  - Tests whether hypothesized mean vector lies within confidence region around sample mean
-  - Uses F-distribution for threshold calculation with proper degrees of freedom
-  - Higher confidence levels create larger (more permissive) acceptance regions
-- **`cov_nagao_test(emp_cov, ref_cov, n, confidence_level=0.95)`**: Nagao's test for covariance matrix equality using confidence regions
-  - Tests whether hypothesized covariance matrix is consistent with empirical covariance
-  - Uses χ² distribution with appropriate degrees of freedom
-  - Standardizes covariance matrices for improved numerical stability
-
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our contributing guidelines:
-
-1. **Issues**: Report bugs and request features via [GitHub Issues](https://github.com/cai4cai/torchsparsegradutils/issues)
-2. **Pull Requests**: Submit improvements via GitHub PRs
-3. **Testing**: Ensure all tests pass and add tests for new functionality
-4. **Documentation**: Update docstrings and examples for new features
-5. **Benchmarks**: Include performance benchmarks for new operations
-
-### Development Setup
-
-#### Option 1: Local Development
+Contributions are welcome — see [GitHub Issues](https://github.com/cai4cai/torchsparsegradutils/issues)
+and the docs' contributing guide. In short:
 
 ```bash
 git clone https://github.com/cai4cai/torchsparsegradutils
 cd torchsparsegradutils
-pip install -e ".[dev]"  # Install in development mode
-pre-commit install       # Install pre-commit hooks
+uv sync --group dev
+pre-commit install
 ```
 
-#### Option 2: Development Containers (Recommended)
+Tooling: **uv** (packaging + lockfile), **ruff** (lint + format),
+**clang-format/clang-tidy** (CUDA/C++), **pyrefly** (types), **tox** via
+tox-uv (test matrix). Naming and shape conventions are binding for new code
+and docs — see `docs/source/naming.rst`. The design record for the CUDA
+rewrite lives in [`spec/`](spec/index.md).
 
-For a consistent development environment with GPU support and all dependencies pre-installed, use VS Code Dev Containers:
+## License
 
-**Prerequisites:**
-- [Docker](https://docs.docker.com/get-docker/) with NVIDIA Container Toolkit (for GPU support)
-- [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+This project is licensed under the Apache License 2.0 — see the
+[LICENSE](LICENSE) file for details.
 
-**Quick Start:**
-1. Clone the repository and open in VS Code:
-   ```bash
-   git clone https://github.com/cai4cai/torchsparsegradutils
-   cd torchsparsegradutils
-   code .
-   ```
+## Acknowledgments
 
-2. When prompted, click **"Reopen in Container"** or use the Command Palette:
-   - Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS)
-   - Type "Dev Containers: Reopen in Container"
-
-**Available Configurations:**
-
-- **`.devcontainer/Dockerfile.stable`** (default): Uses stable PyTorch with CUDA 13.0 support
-- **`.devcontainer/Dockerfile.nightly`**: Uses nightly PyTorch builds for latest features
-
-To switch configurations, modify the `dockerfile` field in `.devcontainer/devcontainer.json`:
-```json
-"build": {
-    "dockerfile": "./Dockerfile.nightly",  // or "./Dockerfile.stable"
-    "context": "."
-}
-```
-
-**What's Included:**
-- **CUDA 13.0**: Full GPU development support with NVIDIA drivers
-- **Pre-installed Dependencies**: PyTorch, SciPy, and all development tools
-- **VS Code Extensions**: Python, Pylance, Jupyter, GitHub Copilot, and code formatting tools
-- **Development Tools**: pytest, black, flake8, pre-commit hooks
-- **Python Environment**: Python 3.10+ with all optional dependencies
-
-**Benefits:**
-- ✅ **Consistent Environment**: Same setup across different machines
-- ✅ **GPU Support**: Pre-configured CUDA environment
-- ✅ **Zero Setup**: All dependencies and tools pre-installed
-- ✅ **Isolated**: No conflicts with host system packages
-- ✅ **VS Code Integration**: Seamless debugging, IntelliSense, and testing
-
-## 📄 License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **PyTorch Team**: For the foundational sparse tensor implementations
-- **SciPy Team**: For high-performance sparse linear algebra routines
-- **Open Source Libraries**: We port and adapt algorithms from:
+- **PyTorch Team**: for the foundational sparse tensor implementations
+- **Open source libraries** whose algorithms our host-side solvers port and adapt:
   - [pykrylov](https://github.com/PythonOptimizers/pykrylov) (BICGSTAB)
   - [cornellius-gp/linear_operator](https://github.com/cornellius-gp/linear_operator) (CG, MINRES)
   - [pytorch-minimize](https://github.com/rfeinman/pytorch-minimize) (LSMR)
 
-## 📚 Citation
+## Citation
 
 If you use this package in your research, please cite:
 
@@ -534,111 +364,19 @@ If you use this package in your research, please cite:
 }
 ```
 
-## ⚠️ Known Issues
+## Known Issues
 
-### PyTorch Sparse COO Index Dtype Conversion
+### PyTorch sparse COO index dtype coercion
 
-**Issue**: PyTorch automatically converts `int32` indices to `int64` when creating sparse COO tensors, but preserves `int32` for sparse CSR tensors. This affects memory usage and performance for algorithms that benefit from `int32` indices (such as `sparse_mm`).
+PyTorch converts `int32` indices to `int64` when constructing sparse COO
+tensors, but preserves `int32` for CSR. The kernels support both index dtypes
+and preserve the input's dtype through outputs and gradients — except where
+PyTorch itself has already coerced a COO input to `int64` upstream. Prefer CSR
+when `int32` indices matter for memory.
 
-**Impact**:
-- **Memory**: `int64` indices use 2× more memory than `int32`
-- **Performance**: Some sparse operations may run faster with `int32` indices
-- **Cross-format consistency**: Different behavior between COO and CSR formats
+### SparseMultivariateNormal LL^T precision parameterisation
 
-**Example**:
-```python
-import torch
-
-# Demonstrate the issue
-indices_int32 = torch.tensor([[0, 1], [1, 0]], dtype=torch.int32)
-values = torch.tensor([1.0, 2.0])
-
-print(f"Original indices dtype: {indices_int32.dtype}")  # torch.int32
-
-# COO: int32 -> int64 conversion happens
-coo_tensor = torch.sparse_coo_tensor(indices_int32, values, (2, 2)).coalesce()
-print(f"COO indices dtype: {coo_tensor.indices().dtype}")  # torch.int64 (converted!)
-
-# CSR: int32 is preserved
-crow_indices = torch.tensor([0, 1, 2], dtype=torch.int32)
-col_indices = torch.tensor([1, 0], dtype=torch.int32)
-csr_tensor = torch.sparse_csr_tensor(crow_indices, col_indices, values, (2, 2))
-print(f"CSR crow_indices dtype: {csr_tensor.crow_indices().dtype}")  # torch.int32 (preserved!)
-print(f"CSR col_indices dtype: {csr_tensor.col_indices().dtype}")    # torch.int32 (preserved!)
-```
-
-**Workarounds**:
-1. **Use CSR format** when `int32` indices are important for performance
-2. **Account for extra memory** when using COO format with large sparse matrices
-3. **Test performance** with both dtypes to determine if the conversion impacts your use case
-
-**Status**: This is a known PyTorch behavior. Our test suite documents and validates this behavior to catch any future changes in PyTorch's handling of sparse tensor index dtypes.
-
-### PairwiseEncoder CSR Memory Usage Issue
-
-**Issue**: CSR sparse tensors generated by `PairwiseEncoder` consume significantly more memory during backward passes compared to COO format, particularly in integration tests with `SparseMultivariateNormal`.
-
-**Impact**:
-- **Memory Consumption**: CSR integration tests can use 2-3x more memory than equivalent COO tests during `.backward()`
-- **Training Stability**: May cause out-of-memory errors during training with large spatial volumes
-- **Development**: Affects integration testing with large tensor configurations
-
-**Suspected Cause**: The issue may be related to CSR permutation operations within `PairwiseEncoder` that create additional intermediate tensors during gradient computation.
-
-**Current Status**: Under investigation. The memory spike occurs specifically during backpropagation through the sparse matrix operations.
-
-**Workarounds**:
-1. **Use COO format** for `PairwiseEncoder` when memory is constrained during training
-2. **Reduce batch sizes** or spatial dimensions when using CSR format
-3. **Monitor memory usage** carefully when integrating `PairwiseEncoder` with gradient-based optimization
-
-**Example**:
-```python
-# More memory-efficient approach for large tensors
-encoder = PairwiseEncoder(
-    radius=2.0,
-    volume_shape=(4, 64, 64, 64),
-    layout=torch.sparse_coo  # Use COO instead of CSR for memory efficiency
-)
-```
-
-### SparseMultivariateNormal LL^T Precision Parameterization Gradient Issues
-
-**Issue**: Large gradient magnitudes can occur when using LL^T parameterization with precision matrices in `SparseMultivariateNormal`, leading to training instability.
-
-**Impact**:
-- **Gradient Explosion**: Gradients can become extremely large (>1e6) during backpropagation
-- **Training Instability**: May cause NaN values or divergent optimization
-- **Numerical Issues**: Poor conditioning of the precision matrix can amplify gradient problems
-
-**Affected Configurations**:
-- LL^T parameterization (`scale_tril` parameter) combined with precision matrix formulation
-- Both 2D and 3D spatial configurations show this behavior
-- More pronounced with larger spatial dimensions and higher sparsity
-
-**Root Cause**: The LL^T precision parameterization can lead to poor numerical conditioning, especially when the triangular matrix has small diagonal values or high condition number.
-
-**Recommended Solution**: Use LDL^T parameterization instead, which provides better numerical stability:
-
-```python
-# Problematic: LL^T precision parameterization
-dist_unstable = SparseMultivariateNormal(
-    loc=loc,
-    precision_tril=scale_tril  # LL^T with precision - can cause large gradients
-)
-
-# Better: LDL^T parameterization with separate diagonal
-dist_stable = SparseMultivariateNormal(
-    loc=loc,
-    diagonal=diagonal,  # Separate diagonal component for stability
-    precision_tril=unit_triangular_matrix  # Unit triangular (LDL^T)
-)
-```
-
-**Benefits of LDL^T Parameterization**:
-- **Numerical Stability**: Separates diagonal scaling from triangular structure
-- **Gradient Stability**: More stable gradients during backpropagation
-- **No SPD Constraints**: Doesn't require strict positive definiteness
-- **Better Conditioning**: Diagonal component can be controlled independently
-
-**Status**: This is a known limitation of the LL^T precision formulation. LDL^T parameterization is the recommended approach for precision matrices.
+The LL^T parameterisation combined with a precision matrix can produce large
+gradients under poor conditioning. Use the LDL^T parameterisation (separate
+`diagonal` plus unit-triangular factor) for precision matrices — it is the
+numerically stable formulation and the recommended default.

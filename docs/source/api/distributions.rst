@@ -19,13 +19,3 @@ Sparse Multivariate Normal
    :undoc-members:
    :show-inheritance:
    :exclude-members: scale_tril, loc
-
-Constraints
------------
-
-.. currentmodule:: torchsparsegradutils.distributions.constraints
-
-.. automodule:: torchsparsegradutils.distributions.constraints
-   :members:
-   :undoc-members:
-   :show-inheritance:

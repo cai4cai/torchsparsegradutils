@@ -125,7 +125,7 @@ def _spsm_backward(ctx, grad_output):
         # transpose=False this is directly gradA[i, j] = -dot(gradB[i,:],
         # x[j,:]) -- sddmm(rowptr, col, g=gradB, mat=x, negate=True).
         #
-        # For transpose=True the legacy SparseTriangularSolve.backward
+        # For transpose=True the pre-rewrite adjoint derivation
         # swaps which array A_row_idx/A_col_idx index into:
         #   mgradbselect = -gradB[A_col_idx, :]   (i.e. -gradB[j, :])
         #   xselect      =  x[A_row_idx, :]       (i.e.  x[i, :])

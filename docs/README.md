@@ -7,13 +7,13 @@
 Install the documentation dependencies:
 
 ```bash
-pip install -e .[docs]
+uv sync --locked --group docs
 ```
 
 Or install from requirements file:
 
 ```bash
-pip install -r docs/requirements.txt
+uv sync --locked --group docs
 ```
 
 ### Building HTML Documentation
@@ -57,7 +57,7 @@ This project is configured for [Read the Docs](https://readthedocs.org) automati
 - Configuration: `.readthedocs.yaml`
 - Builds are triggered on git pushes
 - Multiple formats: HTML, PDF, ePub
-- Documentation dependencies specified in `docs/requirements.txt`
+- Documentation dependencies live in the `docs` dependency-group of `pyproject.toml` (uv-managed)
 
 ## Documentation Structure
 
@@ -88,7 +88,6 @@ docs/
 │       └── custom.css       # Custom styling
 ├── Makefile                 # Build commands (Unix/Mac)
 ├── make.bat                 # Build commands (Windows)
-└── requirements.txt         # Documentation dependencies
 ```
 
 ## Writing Documentation
@@ -154,7 +153,7 @@ make html
 
 **Missing dependencies:**
 ```bash
-pip install -r docs/requirements.txt
+uv sync --locked --group docs
 ```
 
 **Warnings about missing references:**
