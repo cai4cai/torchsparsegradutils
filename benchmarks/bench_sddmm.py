@@ -99,7 +99,9 @@ def _oracle_index_select_sddmm(rowptr, col, g, mat, B, n, m, negate):
     return -out if negate else out
 
 
-def _bench_row(*, baseline_name, baseline_ms, ours_ms, bar, variant, matrix, n, m, nse, p, fp, mem=None):
+def _bench_row(
+    *, filename, baseline_name, baseline_ms, ours_ms, bar, variant, matrix, n, m, nse, p, fp, mem=None, bw=None
+):
     speedup = baseline_ms / ours_ms if (baseline_ms and ours_ms) else None
     bar_met = speedup is not None and speedup >= 1.0
     result = Result.build(
@@ -118,11 +120,20 @@ def _bench_row(*, baseline_name, baseline_ms, ours_ms, bar, variant, matrix, n, 
         ours_ms=ours_ms,
         speedup=speedup,
         peak_fwd_mb=mem.peak_fwd_mb if mem else None,
+        peak_bwd_mb=mem.peak_bwd_mb if mem else None,
         workspace_mb=mem.workspace_mb if mem else None,
+        bw_pct_peak=bw,
         bar=bar,
         bar_met=bar_met,
+        meta={
+            "workspace_fwd_mb": mem.workspace_fwd_mb,
+            "workspace_bwd_mb": mem.workspace_bwd_mb,
+            "workspace_bound_met": mem.workspace_bound_met,
+        }
+        if mem
+        else None,
     )
-    path = write_result(result)
+    path = write_result(result, filename=filename)
     print(
         f"[{baseline_name}] baseline={baseline_ms:.4f}ms ours={ours_ms:.4f}ms speedup={speedup:.2f}x "
         f"bar={bar} met={bar_met} -> {path}"
@@ -147,9 +158,45 @@ def _bench_unbatched_vs_cusparse(device, fp) -> None:
     ours_timing = harness.do_bench(_ours_fwd, device=device)
     print(f"ours (tsgu::sddmm) fwd: median={ours_timing.median_ms:.4f}ms")
 
-    io_bytes = nse * (col.element_size() + 4) + rowptr.numel() * rowptr.element_size() + g.numel() * 4 + mat.numel() * 4
-    mem = memory.measure(_ours_fwd, io_bytes=io_bytes, device=device)
-    print(f"ours memory: peak_fwd={mem.peak_fwd_mb}MB workspace={mem.workspace_mb}MB")
+    # --- memory: forward under grad + backward (benchmarks.md §1). g/mat are
+    # the differentiable operands (tsgu::sddmm's registered autograd — its
+    # role as the solve/spmm backward primitive); loss = out.sum().
+    # io_bytes = resident inputs (pattern + g + mat + their differentiable
+    # copies) + fwd output + upstream grad (ones_like(out)) + gradient
+    # buffers (grad_g, grad_mat — backward's outputs).
+    g_leaf = g.clone().requires_grad_(True)
+    mat_leaf = mat.clone().requires_grad_(True)
+
+    def _grad_fwd():
+        return torch.ops.tsgu.sddmm(rowptr, col, g_leaf, mat_leaf, 1, _N1, _M1, False)
+
+    def _grad_bwd(out):
+        # Sum-style loss, with the upstream gradient materialized explicitly:
+        # autograd's own sum() backward delivers an expanded stride-0 grad,
+        # which the raw kernels' backward primitives read as a contiguous
+        # buffer (the landmine _seglse_backward documents) -- ones_like is
+        # the same mathematical gradient, contiguous by construction.
+        out.backward(torch.ones_like(out))
+
+    pattern_bytes = nse * col.element_size() + rowptr.numel() * rowptr.element_size()
+    io_bytes = pattern_bytes + 3 * (g.numel() * 4 + mat.numel() * 4) + 2 * nse * 4
+    mem = None
+    if memory.budget_guard(4 * io_bytes, label="sddmm unbatched grad memory pass"):
+        mem = memory.measure(
+            _grad_fwd, _grad_bwd, io_bytes=io_bytes, bound_bytes=pattern_bytes + nse * 4, device=device
+        )
+        print(
+            f"ours memory: peak_fwd={mem.peak_fwd_mb}MB peak_bwd={mem.peak_bwd_mb}MB "
+            f"workspace={mem.workspace_mb}MB bound_met={mem.workspace_bound_met}"
+        )
+
+    # Bytes-moved model (benchmarks.md §1, compulsory traffic — see
+    # benchmarks/memory.py): pattern read + one full read of each dense
+    # operand + output write. Gather reuse of g/mat rows is not modelled, so
+    # this is a lower bound on true achieved bandwidth for SDDMM.
+    bytes_moved = pattern_bytes + g.numel() * 4 + mat.numel() * 4 + nse * 4
+    bw = memory.bw_pct_peak(bytes_moved, ours_timing.median_ms)
+    print(f"achieved bandwidth (compulsory-traffic model): {bw:.1f}% of {memory.PEAK_DRAM_BANDWIDTH_GB_S:.0f} GB/s")
 
     # --- baseline: cuSPARSE cusparseSDDMM, reached via torch.sparse.sampled_addmm ---
     input_csr = torch.sparse_csr_tensor(
@@ -164,6 +211,7 @@ def _bench_unbatched_vs_cusparse(device, fp) -> None:
     print(f"cuSPARSE (torch.sparse.sampled_addmm) fwd: median={cusparse_timing.median_ms:.4f}ms")
 
     _bench_row(
+        filename="sddmm_unbatched_vs_cusparse.json",
         baseline_name="cuSPARSE cusparseSDDMM (via torch.sparse.sampled_addmm)",
         baseline_ms=cusparse_timing.median_ms,
         ours_ms=ours_timing.median_ms,
@@ -176,6 +224,7 @@ def _bench_unbatched_vs_cusparse(device, fp) -> None:
         p=_P1,
         fp=fp,
         mem=mem,
+        bw=bw,
     )
 
 
@@ -202,11 +251,40 @@ def _bench_batched_vs_oracle_chain(device, fp) -> None:
     oracle_timing = harness.do_bench(_oracle_fwd, device=device)
     print(f"pure-PyTorch chain (block-diag equivalent) fwd: median={oracle_timing.median_ms:.4f}ms")
 
-    io_bytes = nse * (col.element_size() + 8) + rowptr.numel() * rowptr.element_size() + g.numel() * 8 + mat.numel() * 8
-    mem = memory.measure(_ours_fwd, io_bytes=io_bytes, device=device)
-    print(f"ours memory: peak_fwd={mem.peak_fwd_mb}MB workspace={mem.workspace_mb}MB")
+    # --- memory: forward under grad + backward (see the unbatched row's
+    # comment for the io_bytes / bound / bytes-moved accounting; f64 here).
+    g_leaf = g.clone().requires_grad_(True)
+    mat_leaf = mat.clone().requires_grad_(True)
+
+    def _grad_fwd():
+        return torch.ops.tsgu.sddmm(rowptr, col, g_leaf, mat_leaf, _B2, _N2, _M2, False)
+
+    def _grad_bwd(out):
+        # Sum-style loss, with the upstream gradient materialized explicitly:
+        # autograd's own sum() backward delivers an expanded stride-0 grad,
+        # which the raw kernels' backward primitives read as a contiguous
+        # buffer (the landmine _seglse_backward documents) -- ones_like is
+        # the same mathematical gradient, contiguous by construction.
+        out.backward(torch.ones_like(out))
+
+    pattern_bytes = nse * col.element_size() + rowptr.numel() * rowptr.element_size()
+    io_bytes = pattern_bytes + 3 * (g.numel() * 8 + mat.numel() * 8) + 2 * nse * 8
+    mem = None
+    if memory.budget_guard(4 * io_bytes, label="sddmm batched grad memory pass"):
+        mem = memory.measure(
+            _grad_fwd, _grad_bwd, io_bytes=io_bytes, bound_bytes=pattern_bytes + nse * 8, device=device
+        )
+        print(
+            f"ours memory: peak_fwd={mem.peak_fwd_mb}MB peak_bwd={mem.peak_bwd_mb}MB "
+            f"workspace={mem.workspace_mb}MB bound_met={mem.workspace_bound_met}"
+        )
+
+    bytes_moved = pattern_bytes + g.numel() * 8 + mat.numel() * 8 + nse * 8
+    bw = memory.bw_pct_peak(bytes_moved, ours_timing.median_ms)
+    print(f"achieved bandwidth (compulsory-traffic model): {bw:.1f}% of {memory.PEAK_DRAM_BANDWIDTH_GB_S:.0f} GB/s")
 
     _bench_row(
+        filename="sddmm_batched_vs_oracle_chain.json",
         baseline_name="pure-PyTorch index_select chain (tests/oracle/sparse_matmul.py pattern, block-diag equivalent)",
         baseline_ms=oracle_timing.median_ms,
         ours_ms=ours_timing.median_ms,
@@ -219,6 +297,7 @@ def _bench_batched_vs_oracle_chain(device, fp) -> None:
         p=_P2,
         fp=fp,
         mem=mem,
+        bw=bw,
     )
 
 

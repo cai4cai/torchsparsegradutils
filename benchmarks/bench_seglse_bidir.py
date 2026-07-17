@@ -52,7 +52,7 @@ def _make_csr(device, value_dtype, index_dtype, seed=0):
     return dense, crow, col, vals
 
 
-def _bench_row(*, filename, baseline_name, baseline_ms, ours_ms, bar, matrix, nse, fp, mem=None):
+def _bench_row(*, filename, baseline_name, baseline_ms, ours_ms, bar, matrix, nse, fp, mem=None, bw=None):
     speedup = baseline_ms / ours_ms if (baseline_ms and ours_ms) else None
     bar_met = speedup is not None and speedup >= bar
     variant = "csr·B=1·f32/i32"
@@ -72,9 +72,18 @@ def _bench_row(*, filename, baseline_name, baseline_ms, ours_ms, bar, matrix, ns
         ours_ms=ours_ms,
         speedup=speedup,
         peak_fwd_mb=mem.peak_fwd_mb if mem else None,
+        peak_bwd_mb=mem.peak_bwd_mb if mem else None,
         workspace_mb=mem.workspace_mb if mem else None,
+        bw_pct_peak=bw,
         bar=f">= {bar}x" if bar != 1.0 else "win",
         bar_met=bar_met,
+        meta={
+            "workspace_fwd_mb": mem.workspace_fwd_mb,
+            "workspace_bwd_mb": mem.workspace_bwd_mb,
+            "workspace_bound_met": mem.workspace_bound_met,
+        }
+        if mem
+        else None,
     )
     path = write_result(result, filename=filename)
     print(
@@ -92,6 +101,10 @@ def main() -> None:
     dense, crow, col, vals = _make_csr(device, value_dtype, index_dtype)
     nse = vals.numel()
     print(f"matrix: dense {_N}x{_M}, nse={nse} ({nse / (_N * _M):.1%} density)")
+    # Free the dense source matrix (n*m*4 bytes of generator scaffolding):
+    # anything left resident is counted by the allocator peak and would
+    # pollute the §1 memory measurement below.
+    del dense
 
     import torchsparsegradutils as tsgu
 
@@ -108,9 +121,44 @@ def main() -> None:
         f"p10={ours_timing.p10_ms:.4f} p90={ours_timing.p90_ms:.4f} degraded={ours_timing.degraded}"
     )
 
-    io_bytes = nse * (vals.element_size() + col.element_size()) + crow.numel() * crow.element_size()
-    mem = memory.measure(_ours_fwd, io_bytes=io_bytes, device=device)
-    print(f"ours memory: peak_fwd={mem.peak_fwd_mb}MB workspace={mem.workspace_mb}MB")
+    # --- memory: forward under grad + backward (benchmarks.md §1), on the
+    # raw op (torch.ops.tsgu.seglse_bidir — the same kernel the wrapper
+    # timing above hits, minus the sparse-ctor plumbing) so the registered
+    # autograd (values grad via tsgu::seglse_bidir_bwd) is what gets
+    # measured; loss = out.sum(). Output is the padded (2, B, G) buffer,
+    # G = max(n, m). io_bytes = inputs (vals + rowptr + col) + the
+    # differentiable vals copy + fwd output/saved padded + upstream grad +
+    # grad_vals (backward's output).
+    vals_leaf = vals.detach().clone().requires_grad_(True)
+
+    def _grad_fwd():
+        return torch.ops.tsgu.seglse_bidir(vals_leaf, crow, col, 1, _N, _M, True)
+
+    def _grad_bwd(out):
+        # Sum-style loss, with the upstream gradient materialized explicitly:
+        # autograd's own sum() backward delivers an expanded stride-0 grad,
+        # which the raw kernels' backward primitives read as a contiguous
+        # buffer (the landmine _seglse_backward documents) -- ones_like is
+        # the same mathematical gradient, contiguous by construction.
+        out.backward(torch.ones_like(out))
+
+    v = vals.element_size()
+    op_bytes = nse * (v + col.element_size()) + crow.numel() * crow.element_size()
+    out_bytes = 2 * max(_N, _M) * v
+    io_bytes = op_bytes + 2 * nse * v + 2 * out_bytes  # + vals_leaf + grad_vals
+    mem = None
+    if memory.budget_guard(4 * io_bytes, label="seglse_bidir grad memory pass"):
+        mem = memory.measure(_grad_fwd, _grad_bwd, io_bytes=io_bytes, bound_bytes=op_bytes, device=device)
+        print(
+            f"ours memory: peak_fwd={mem.peak_fwd_mb}MB peak_bwd={mem.peak_bwd_mb}MB "
+            f"workspace={mem.workspace_mb}MB bound_met={mem.workspace_bound_met}"
+        )
+
+    # Bytes-moved model (benchmarks.md §1, compulsory traffic — see
+    # benchmarks/memory.py): vals + col + rowptr read + padded output write.
+    bytes_moved = op_bytes + out_bytes
+    bw = memory.bw_pct_peak(bytes_moved, ours_timing.median_ms)
+    print(f"achieved bandwidth (compulsory-traffic model): {bw:.1f}% of {memory.PEAK_DRAM_BANDWIDTH_GB_S:.0f} GB/s")
 
     # --- baseline (a): pytorch_scatter.scatter_logsumexp, two separate calls ---
     if _HAS_TORCH_SCATTER:
@@ -136,6 +184,7 @@ def main() -> None:
             nse=nse,
             fp=fp,
             mem=mem,
+            bw=bw,
         )
     else:
         print("pytorch_scatter not installed -- SKIPPING that acceptance-bar row (not fabricated).")
@@ -156,6 +205,7 @@ def main() -> None:
         nse=nse,
         fp=fp,
         mem=mem,
+        bw=bw,
     )
 
     # --- baseline (c): two separate tsgu::seglse calls -- the fusion-win bar ---
@@ -178,6 +228,7 @@ def main() -> None:
         nse=nse,
         fp=fp,
         mem=mem,
+        bw=bw,
     )
 
 

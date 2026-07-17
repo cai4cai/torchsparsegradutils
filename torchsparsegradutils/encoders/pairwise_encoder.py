@@ -788,8 +788,64 @@ class PairwiseEncoder(torch.nn.Module):
             else:
                 crow_indices = self.crow_indices
                 col_indices = self.col_indices
-            return torch.sparse_csr_tensor(
-                crow_indices, col_indices, values, size=size_any, dtype=values.dtype, device=values.device
-            )
+            return _CsrTensorCtor.apply(values, crow_indices, col_indices, size_any)
 
         raise RuntimeError("Unsupported sparse layout")
+
+
+class _CsrTensorCtor(torch.autograd.Function):
+    """Memory-safe adjoint for in-graph CSR construction (spec/commit.md
+    commit 20's pinned regression, benchmarks.md §3: "the encoder-CSR
+    backward blow-up documented in the old README ... peak_bwd <= 1.2x the
+    COO path's, or the suite fails").
+
+    torch's own ``sparse_csr_tensor`` constructor autograd materialises the
+    incoming gradient densely (``aten::to_dense`` at full ``(n_rows,
+    n_cols)`` matrix scale — measured: an O(nse) round trip through the
+    stock ctor peaks above n^2 x 4 bytes). That only bites when the CSR
+    tensor is *constructed inside* the differentiable graph — precisely this
+    encoder's forward; user-supplied leaf CSR tensors take torch's O(nse)
+    ``values()``-extraction adjoint and were never affected.
+
+    The tsgu:: op chain guarantees the gradient w.r.t. a sparse operand
+    arrives sparse, at the operand's own pattern, in the operand's own
+    layout (map.md invariant 3), so the adjoint of construction is exactly
+    ``grad.values()`` — O(nse), no densification. A strided gradient (from a
+    consumer outside the tsgu:: chain) is gathered at the pattern instead,
+    allocating only the (nse,) result on top of the dense gradient that
+    already exists.
+    """
+
+    @staticmethod
+    def forward(ctx, values, crow_indices, col_indices, size):
+        ctx.save_for_backward(crow_indices, col_indices)
+        return torch.sparse_csr_tensor(
+            crow_indices, col_indices, values.detach(), size=size, dtype=values.dtype, device=values.device
+        )
+
+    @staticmethod
+    def backward(ctx, grad):  # type: ignore[override]
+        crow_indices, col_indices = ctx.saved_tensors
+
+        if grad.layout == torch.sparse_csr:
+            return grad.values(), None, None, None
+
+        if grad.layout == torch.strided:
+            # Gather the pattern's specified entries out of the dense
+            # gradient. The batched encoder repeats one pattern per item, so
+            # item 0's expanded row indices serve every item.
+            if crow_indices.dim() == 1:
+                crow_item, col_item = crow_indices, col_indices
+            else:
+                crow_item, col_item = crow_indices[0], col_indices[0]
+            n_rows = crow_item.shape[0] - 1
+            row_indices = torch.repeat_interleave(
+                torch.arange(n_rows, device=crow_item.device), crow_item[1:] - crow_item[:-1]
+            )
+            if crow_indices.dim() == 1:
+                return grad[row_indices, col_item], None, None, None
+            return grad[:, row_indices, col_item], None, None, None
+
+        raise RuntimeError(
+            f"_CsrTensorCtor.backward expects a sparse CSR or strided gradient; got layout {grad.layout}."
+        )

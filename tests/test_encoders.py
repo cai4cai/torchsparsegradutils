@@ -847,3 +847,77 @@ def test_imports_from_init():
 
     # Test PairwiseEncoder is a subclass of PairwiseEncoder
     assert issubclass(PairwiseEncoder, PairwiseEncoder)
+
+
+# --- _CsrTensorCtor adjoint (spec/commit.md commit 20) -----------------------
+# The encoder's CSR branch constructs its sparse tensor through a custom
+# autograd boundary because torch's own sparse_csr_tensor ctor autograd
+# densifies the incoming gradient at (n_rows, n_cols) scale (the old README's
+# encoder-CSR backward blow-up, pinned end-to-end by
+# tests/test_e2e_memory_regression.py). These tests pin the adjoint's
+# correctness on both gradient layouts it accepts.
+
+
+def _tiny_encoder(layout, device):
+    encoder = PairwiseEncoder(
+        radius=1.5,
+        volume_shape=(2, 4, 4, 4),
+        diag=True,
+        upper=False,
+        channel_voxel_relation="indep",
+        layout=layout,
+        indices_dtype=torch.int64,
+        device=device,
+    )
+    torch.manual_seed(7)
+    params = torch.randn(len(encoder.offsets), 2, 4, 4, 4, dtype=torch.float64, device=device)
+    return encoder, params
+
+
+def test_csr_ctor_adjoint_dense_grad_matches_coo_path():
+    # Consumer outside the tsgu:: chain (to_dense) delivers a STRIDED
+    # gradient — the adjoint's gather fallback must match the COO path's
+    # gradients exactly.
+    device = torch.device("cpu")
+    grads = {}
+    for layout in (torch.sparse_coo, torch.sparse_csr):
+        encoder, params = _tiny_encoder(layout, device)
+        p = params.clone().requires_grad_()
+        dense = encoder(p).to_dense()
+        dense.square().sum().backward()
+        grads[layout] = p.grad
+    assert torch.allclose(grads[torch.sparse_coo], grads[torch.sparse_csr], atol=1e-12, rtol=1e-12)
+
+
+def test_csr_ctor_adjoint_strided_branch_direct():
+    # The strided-gradient fallback branch cannot be reached through a real
+    # graph: torch's to_dense backward hands the ctor a sparse CSR gradient
+    # for 2D inputs (sparse_mask), and for batched (3D) CSR it fails outright
+    # upstream ("conversion from Sparse to SparseCsr for input tensors with
+    # sparse_dim()!=2 is not supported") — with or without this adjoint. The
+    # branch exists for robustness against non-torch consumers, so unit-test
+    # it directly against a gather reference, unbatched and batched.
+    from torchsparsegradutils.encoders.pairwise_encoder import _CsrTensorCtor
+
+    device = torch.device("cpu")
+    encoder, _ = _tiny_encoder(torch.sparse_csr, device)
+    crow = encoder.crow_indices
+    col = encoder.col_indices
+    n = encoder.volume_numel
+    row = torch.repeat_interleave(torch.arange(n), crow[1:] - crow[:-1])
+
+    class _Ctx:
+        saved_tensors = (crow, col)
+
+    dense_grad = torch.randn(n, n, dtype=torch.float64)
+    got = _CsrTensorCtor.backward(_Ctx(), dense_grad)[0]
+    assert torch.equal(got, dense_grad[row, col])
+
+    batch_size = 3
+
+    class _CtxBatched:
+        saved_tensors = (crow.repeat(batch_size, 1), col.repeat(batch_size, 1))
+
+    dense_grad_b = torch.randn(batch_size, n, n, dtype=torch.float64)
+    got_b = _CsrTensorCtor.backward(_CtxBatched(), dense_grad_b)[0]
+    assert torch.equal(got_b, dense_grad_b[:, row, col])

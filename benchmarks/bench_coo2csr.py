@@ -105,7 +105,18 @@ def _bench_config(nse: int, B: int, index_dtype: torch.dtype, device: torch.devi
 
     idx_bytes = batch.element_size()
     io_bytes = 3 * nse * idx_bytes + (B * _N + 1) * idx_bytes + 2 * nse * idx_bytes  # inputs + 3 outputs
-    mem = memory.measure(_ours, io_bytes=io_bytes, device=device)
+    # Index-only op: no backward pass exists (the op produces integer index
+    # structures, nothing differentiable), so backward_fn stays None and
+    # peak_bwd is legitimately absent (None) in the JSON — benchmarks.md
+    # §5's "— means not applicable". The O(nse) workspace bound (sort
+    # scratch is O(nse) too) is still asserted, against the three input
+    # coordinate arrays + rowptr.
+    bound_bytes = 3 * nse * idx_bytes + (B * _N + 1) * idx_bytes
+    mem = memory.measure(_ours, io_bytes=io_bytes, bound_bytes=bound_bytes, device=device)
+    print(
+        f"ours memory: peak_fwd={mem.peak_fwd_mb}MB peak_bwd={mem.peak_bwd_mb} (no backward: index-only op) "
+        f"workspace={mem.workspace_mb}MB bound_met={mem.workspace_bound_met}"
+    )
 
     speedup = baseline_timing.median_ms / ours_timing.median_ms if ours_timing.median_ms else None
     bar = "win"  # replace the pure-torch composition it routes around (benchmarks.md §3 batched/composed rule)
@@ -126,11 +137,17 @@ def _bench_config(nse: int, B: int, index_dtype: torch.dtype, device: torch.devi
         ours_ms=ours_timing.median_ms,
         speedup=speedup,
         peak_fwd_mb=mem.peak_fwd_mb,
+        peak_bwd_mb=mem.peak_bwd_mb,  # None: index-only op, no backward (see comment above)
         workspace_mb=mem.workspace_mb,
         bar=bar,
         bar_met=bar_met,
+        meta={
+            "workspace_fwd_mb": mem.workspace_fwd_mb,
+            "workspace_bwd_mb": mem.workspace_bwd_mb,
+            "workspace_bound_met": mem.workspace_bound_met,
+        },
     )
-    path = write_result(result)
+    path = write_result(result, filename=f"coo2csr_B{B}_{dtype_short(index_dtype)}_nse{nse}.json")
     print(
         f"[coo2csr nse={nse} B={B} {dtype_short(index_dtype)}] baseline={baseline_timing.median_ms:.4f}ms "
         f"ours={ours_timing.median_ms:.4f}ms speedup={speedup:.2f}x bar={bar} met={bar_met} -> {path}"

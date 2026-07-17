@@ -8,7 +8,7 @@ rules: log2 x-axes, y = speedup vs named baseline with a parity line at
 1.0x, one hue per kernel family (fixed assignment, never recycled), no dual
 axes, endpoint direct-labelled, dark/light both rendered.
 
-Styling is lifted from ``spec/images/make_dummy_charts.py`` (palette,
+Styling matches ``spec/images/make_real_charts.py`` (palette,
 spine/grid treatment, parity line, endpoint labels) so real charts drop in
 without a restyle once kernel data exists.
 
@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt  # noqa: E402  (backend must be set before this 
 RESULTS_DIR = Path(__file__).parent / "results"
 OUT_DIR = Path(__file__).parent / "charts"
 
-# Palette -- lifted verbatim from spec/images/make_dummy_charts.py so real
+# Palette -- shared with spec/images/make_real_charts.py so real
 # charts match the spec's sketches exactly. One fixed hue per kernel family,
 # never recycled (benchmarks.md §6).
 SURFACE = "#fcfcfb"

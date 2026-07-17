@@ -47,6 +47,11 @@ _DENSITY2 = 0.005  # benchmarks.md §2 REFERENCE_DENSITY
 
 
 def _make_unbatched_csr(device, value_dtype, index_dtype, seed=0):
+    """Returns only the folded pattern + values — the dense source matrix
+    and the intermediate torch CSR tensor are dropped on return so no
+    generator scaffolding stays resident to pollute the §1 allocator-peak
+    measurement (the baseline's CSR tensor is rebuilt from these arrays
+    after the memory pass)."""
     torch.manual_seed(seed)
     dense = torch.randn(_N1, _M1, dtype=value_dtype, device=device)
     mask = torch.rand(_N1, _M1, device=device) < _DENSITY1
@@ -54,7 +59,7 @@ def _make_unbatched_csr(device, value_dtype, index_dtype, seed=0):
     rowptr = csr.crow_indices().to(index_dtype)
     col = csr.col_indices().to(index_dtype)
     vals = csr.values()
-    return rowptr, col, vals, csr
+    return rowptr, col, vals
 
 
 def _make_batched_csr_tensor(device, value_dtype, index_dtype, seed=1):
@@ -76,7 +81,9 @@ def _make_batched_csr_tensor(device, value_dtype, index_dtype, seed=1):
     )
 
 
-def _bench_row(*, baseline_name, baseline_ms, ours_ms, bar, variant, matrix, n, m, nse, p, fp, mem=None):
+def _bench_row(
+    *, filename, baseline_name, baseline_ms, ours_ms, bar, variant, matrix, n, m, nse, p, fp, mem=None, bw=None
+):
     speedup = baseline_ms / ours_ms if (baseline_ms and ours_ms) else None
     bar_met = speedup is not None and speedup >= 1.0
     result = Result.build(
@@ -95,11 +102,20 @@ def _bench_row(*, baseline_name, baseline_ms, ours_ms, bar, variant, matrix, n, 
         ours_ms=ours_ms,
         speedup=speedup,
         peak_fwd_mb=mem.peak_fwd_mb if mem else None,
+        peak_bwd_mb=mem.peak_bwd_mb if mem else None,
         workspace_mb=mem.workspace_mb if mem else None,
+        bw_pct_peak=bw,
         bar=bar,
         bar_met=bar_met,
+        meta={
+            "workspace_fwd_mb": mem.workspace_fwd_mb,
+            "workspace_bwd_mb": mem.workspace_bwd_mb,
+            "workspace_bound_met": mem.workspace_bound_met,
+        }
+        if mem
+        else None,
     )
-    path = write_result(result)
+    path = write_result(result, filename=filename)
     print(
         f"[{baseline_name}] baseline={baseline_ms:.4f}ms ours={ours_ms:.4f}ms speedup={speedup:.2f}x "
         f"bar={bar} met={bar_met} -> {path}"
@@ -109,7 +125,7 @@ def _bench_row(*, baseline_name, baseline_ms, ours_ms, bar, variant, matrix, n, 
 
 def _bench_unbatched_vs_cusparse(device, fp, *, p) -> None:
     value_dtype, index_dtype = torch.float32, torch.int32
-    rowptr, col, vals, csr = _make_unbatched_csr(device, value_dtype, index_dtype)
+    rowptr, col, vals = _make_unbatched_csr(device, value_dtype, index_dtype)
     nse = col.numel()
     print(f"unbatched matrix: dense {_N1}x{_M1}, nse={nse} ({nse / (_N1 * _M1):.1%} density), p={p}")
 
@@ -123,14 +139,46 @@ def _bench_unbatched_vs_cusparse(device, fp, *, p) -> None:
     ours_timing = harness.do_bench(_ours_fwd, device=device)
     print(f"ours (tsgu::spmm) fwd p={p}: median={ours_timing.median_ms:.4f}ms")
 
-    io_bytes = (
-        nse * (col.element_size() + vals.element_size())
-        + rowptr.numel() * rowptr.element_size()
-        + dense.numel() * dense.element_size()
-    )
-    mem = memory.measure(_ours_fwd, io_bytes=io_bytes, device=device)
-    print(f"ours memory: peak_fwd={mem.peak_fwd_mb}MB workspace={mem.workspace_mb}MB")
+    # --- memory: forward under grad + backward (benchmarks.md §1). vals and
+    # dense are the differentiable operands (tsgu::spmm's registered
+    # autograd); loss = out.sum(). io_bytes = resident inputs (pattern +
+    # vals + dense + their differentiable copies) + fwd output + upstream
+    # grad + gradient buffers (grad_vals, grad_dense — backward's outputs).
+    v = vals.element_size()
+    vals_leaf = vals.detach().clone().requires_grad_(True)
+    dense_leaf = dense.clone().requires_grad_(True)
 
+    def _grad_fwd():
+        return torch.ops.tsgu.spmm(vals_leaf, rowptr, col, dense_leaf, 1, _N1, _M1)
+
+    def _grad_bwd(out):
+        # Sum-style loss, with the upstream gradient materialized explicitly:
+        # autograd's own sum() backward delivers an expanded stride-0 grad,
+        # which the raw kernels' backward primitives read as a contiguous
+        # buffer (the landmine _seglse_backward documents) -- ones_like is
+        # the same mathematical gradient, contiguous by construction.
+        out.backward(torch.ones_like(out))
+
+    sparse_bytes = nse * (col.element_size() + v) + rowptr.numel() * rowptr.element_size()
+    out_bytes = _N1 * p * v
+    io_bytes = sparse_bytes + 2 * nse * v + 3 * dense.numel() * v + 2 * out_bytes
+    mem = None
+    if memory.budget_guard(4 * io_bytes, label=f"spmm unbatched p={p} grad memory pass"):
+        mem = memory.measure(_grad_fwd, _grad_bwd, io_bytes=io_bytes, bound_bytes=sparse_bytes, device=device)
+        print(
+            f"ours memory: peak_fwd={mem.peak_fwd_mb}MB peak_bwd={mem.peak_bwd_mb}MB "
+            f"workspace={mem.workspace_mb}MB bound_met={mem.workspace_bound_met}"
+        )
+    # Bytes-moved model (benchmarks.md §1, compulsory traffic — see
+    # benchmarks/memory.py): sparse operand read + dense operand read once +
+    # output write.
+    bytes_moved = sparse_bytes + dense.numel() * v + out_bytes
+    bw = memory.bw_pct_peak(bytes_moved, ours_timing.median_ms)
+    print(f"achieved bandwidth (compulsory-traffic model): {bw:.1f}% of {memory.PEAK_DRAM_BANDWIDTH_GB_S:.0f} GB/s")
+
+    # Baseline CSR tensor rebuilt only now, after the memory pass (see
+    # _make_unbatched_csr's docstring).
+    csr = torch.sparse_csr_tensor(rowptr.to(torch.int64), col.to(torch.int64), vals, (_N1, _M1))
     dense2 = dense[0]  # (m, p), for torch.sparse.mm(csr, dense2)
 
     def _cusparse_fwd():
@@ -141,6 +189,7 @@ def _bench_unbatched_vs_cusparse(device, fp, *, p) -> None:
 
     label = "SpMV" if p == 1 else "SpMM"
     _bench_row(
+        filename=f"spmm_unbatched_p{p}_vs_cusparse.json",
         baseline_name=f"cuSPARSE cusparse{label} (via torch.sparse.mm)",
         baseline_ms=cusparse_timing.median_ms,
         ours_ms=ours_timing.median_ms,
@@ -153,6 +202,7 @@ def _bench_unbatched_vs_cusparse(device, fp, *, p) -> None:
         p=p,
         fp=fp,
         mem=mem,
+        bw=bw,
     )
 
 
@@ -178,21 +228,50 @@ def _bench_batched_vs_blockdiag(device, fp) -> None:
     ours_timing = harness.do_bench(_ours_fwd, device=device)
     print(f"ours (tsgu::spmm) fwd: median={ours_timing.median_ms:.4f}ms")
 
-    io_bytes = (
-        nse * (csr_desc.col.element_size() + csr_desc.values.element_size())
-        + csr_desc.rowptr.numel() * csr_desc.rowptr.element_size()
-        + dense.numel() * dense.element_size()
-    )
-    mem = memory.measure(_ours_fwd, io_bytes=io_bytes, device=device)
-    print(f"ours memory: peak_fwd={mem.peak_fwd_mb}MB workspace={mem.workspace_mb}MB")
-
-    def _blockdiag_fwd():
+    # Baseline timed before the memory pass so the batched COO scaffolding
+    # tensor A (the oracle's input) can be freed and not pollute the §1
+    # allocator-peak measurement below.
+    def _blockdiag_fwd(A=A, dense=dense):  # bound as defaults so `del A` below fully releases it
         return oracle_sparse_mm(A, dense)
 
     blockdiag_timing = harness.do_bench(_blockdiag_fwd, device=device)
     print(f"block-diag + cuSPARSE (tests/oracle) fwd: median={blockdiag_timing.median_ms:.4f}ms")
+    del A, _blockdiag_fwd
+
+    # --- memory: forward under grad + backward (see the unbatched row's
+    # comment for the io_bytes / bound / bytes-moved accounting; f64 here).
+    v = csr_desc.values.element_size()
+    vals_leaf = csr_desc.values.detach().clone().requires_grad_(True)
+    dense_leaf = dense.clone().requires_grad_(True)
+
+    def _grad_fwd():
+        return torch.ops.tsgu.spmm(vals_leaf, csr_desc.rowptr, csr_desc.col, dense_leaf, _B2, _N2, _M2)
+
+    def _grad_bwd(out):
+        # Sum-style loss, with the upstream gradient materialized explicitly:
+        # autograd's own sum() backward delivers an expanded stride-0 grad,
+        # which the raw kernels' backward primitives read as a contiguous
+        # buffer (the landmine _seglse_backward documents) -- ones_like is
+        # the same mathematical gradient, contiguous by construction.
+        out.backward(torch.ones_like(out))
+
+    sparse_bytes = nse * (csr_desc.col.element_size() + v) + csr_desc.rowptr.numel() * csr_desc.rowptr.element_size()
+    out_bytes = _B2 * _N2 * _P2 * v
+    io_bytes = sparse_bytes + 2 * nse * v + 3 * dense.numel() * v + 2 * out_bytes
+    mem = None
+    if memory.budget_guard(4 * io_bytes, label="spmm batched grad memory pass"):
+        mem = memory.measure(_grad_fwd, _grad_bwd, io_bytes=io_bytes, bound_bytes=sparse_bytes, device=device)
+        print(
+            f"ours memory: peak_fwd={mem.peak_fwd_mb}MB peak_bwd={mem.peak_bwd_mb}MB "
+            f"workspace={mem.workspace_mb}MB bound_met={mem.workspace_bound_met}"
+        )
+
+    bytes_moved = sparse_bytes + dense.numel() * v + out_bytes
+    bw = memory.bw_pct_peak(bytes_moved, ours_timing.median_ms)
+    print(f"achieved bandwidth (compulsory-traffic model): {bw:.1f}% of {memory.PEAK_DRAM_BANDWIDTH_GB_S:.0f} GB/s")
 
     _bench_row(
+        filename="spmm_batched_vs_blockdiag.json",
         baseline_name="block-diag + cuSPARSE (tests/oracle/sparse_matmul.py pattern)",
         baseline_ms=blockdiag_timing.median_ms,
         ours_ms=ours_timing.median_ms,
@@ -205,6 +284,7 @@ def _bench_batched_vs_blockdiag(device, fp) -> None:
         p=_P2,
         fp=fp,
         mem=mem,
+        bw=bw,
     )
 
 

@@ -90,9 +90,17 @@ def _bench_row(*, op_suffix, baseline_name, baseline_ms, ours_ms, bar, variant, 
         ours_ms=ours_ms,
         speedup=speedup,
         peak_fwd_mb=mem.peak_fwd_mb if mem else None,
+        peak_bwd_mb=mem.peak_bwd_mb if mem else None,
         workspace_mb=mem.workspace_mb if mem else None,
         bar=bar,
         bar_met=bar_met,
+        meta={
+            "workspace_fwd_mb": mem.workspace_fwd_mb,
+            "workspace_bwd_mb": mem.workspace_bwd_mb,
+            "workspace_bound_met": mem.workspace_bound_met,
+        }
+        if mem
+        else None,
     )
     path = write_result(result)
     print(
@@ -140,13 +148,40 @@ def _bench_cold_vs_warm(device, fp) -> None:
     warm_timing = harness.do_bench(_ours_warm, device=device)
     print(f"ours (tsgu::spsm) WARM: median={warm_timing.median_ms:.4f}ms")
 
-    io_bytes = (
-        nse * (col0.element_size() + vals0.element_size())
-        + rowptr0.numel() * rowptr0.element_size()
-        + rhs.numel() * rhs.element_size()
-    )
-    mem = memory.measure(_ours_warm, io_bytes=io_bytes, device=device)
-    print(f"ours memory (warm): peak_fwd={mem.peak_fwd_mb}MB workspace={mem.workspace_mb}MB")
+    # --- memory (warm): forward under grad + backward (benchmarks.md §1).
+    # vals and rhs are the differentiable operands (tsgu::spsm's registered
+    # autograd: grad_rhs = transposed re-solve, grad_vals = negated sddmm at
+    # A's pattern); loss = out.sum(). The plan cache is primed with the same
+    # tensors under no_grad first, so this measures the WARM path like the
+    # timing above. io_bytes = inputs + fwd output + upstream grad +
+    # gradient buffers (grad_vals, grad_rhs — backward's outputs).
+    v = vals0.element_size()
+    vals_leaf = vals0.clone().requires_grad_(True)
+    rhs_leaf = rhs.clone().requires_grad_(True)
+    with torch.no_grad():
+        torch.ops.tsgu.spsm(vals_leaf, rowptr0, col0, rhs_leaf, 1, _N1, False, False, False)
+
+    def _grad_fwd():
+        return torch.ops.tsgu.spsm(vals_leaf, rowptr0, col0, rhs_leaf, 1, _N1, False, False, False)
+
+    def _grad_bwd(out):
+        # Sum-style loss, with the upstream gradient materialized explicitly:
+        # autograd's own sum() backward delivers an expanded stride-0 grad,
+        # which the raw kernels' backward primitives read as a contiguous
+        # buffer (the landmine _seglse_backward documents) -- ones_like is
+        # the same mathematical gradient, contiguous by construction.
+        out.backward(torch.ones_like(out))
+
+    sparse_bytes = nse * (col0.element_size() + v) + rowptr0.numel() * rowptr0.element_size()
+    rhs_bytes = rhs.numel() * v
+    io_bytes = sparse_bytes + 2 * nse * v + 5 * rhs_bytes  # +vals_leaf+grad_vals; rhs+rhs_leaf+out+grad_out+grad_rhs
+    mem = None
+    if memory.budget_guard(4 * io_bytes, label="spsm warm grad memory pass"):
+        mem = memory.measure(_grad_fwd, _grad_bwd, io_bytes=io_bytes, bound_bytes=sparse_bytes, device=device)
+        print(
+            f"ours memory (warm): peak_fwd={mem.peak_fwd_mb}MB peak_bwd={mem.peak_bwd_mb}MB "
+            f"workspace={mem.workspace_mb}MB bound_met={mem.workspace_bound_met}"
+        )
 
     A_csr = torch.sparse_csr_tensor(rowptr0, col0, vals0, (_N1, _N1))
     rhs2 = rhs[0]
@@ -213,19 +248,45 @@ def _bench_batched_vs_looped_cusparse(device, fp) -> None:
     ours_timing = harness.do_bench(_ours_fwd, device=device)
     print(f"ours (tsgu::spsm) batched fwd: median={ours_timing.median_ms:.4f}ms")
 
-    io_bytes = (
-        nse * (csr_desc.col.element_size() + csr_desc.values.element_size())
-        + csr_desc.rowptr.numel() * csr_desc.rowptr.element_size()
-        + rhs.numel() * rhs.element_size()
-    )
-    mem = memory.measure(_ours_fwd, io_bytes=io_bytes, device=device)
-    print(f"ours memory: peak_fwd={mem.peak_fwd_mb}MB workspace={mem.workspace_mb}MB")
-
-    def _looped_cusparse_fwd():
+    # Baseline timed before the memory pass so the per-item CSR / batched
+    # COO scaffolding can be freed and not pollute the §1 allocator-peak
+    # measurement below.
+    def _looped_cusparse_fwd(csrs=csrs, rhs=rhs):  # bound as defaults so `del csrs` below fully releases them
         return torch.stack([torch.triangular_solve(rhs[b], csrs[b], upper=False).solution for b in range(_B2)])
 
     looped_timing = harness.do_bench(_looped_cusparse_fwd, device=device)
     print(f"looped cuSPARSE (per-item torch.triangular_solve) fwd: median={looped_timing.median_ms:.4f}ms")
+    del per_item, csrs, A_batched, _looped_cusparse_fwd
+
+    # --- memory: forward under grad + backward (see the warm row's comment
+    # for the io_bytes / bound accounting; f64 here, plan primed above).
+    v = csr_desc.values.element_size()
+    vals_leaf = csr_desc.values.detach().clone().requires_grad_(True)
+    rhs_leaf = rhs.clone().requires_grad_(True)
+    with torch.no_grad():
+        torch.ops.tsgu.spsm(vals_leaf, csr_desc.rowptr, csr_desc.col, rhs_leaf, _B2, _N2, False, False, False)
+
+    def _grad_fwd():
+        return torch.ops.tsgu.spsm(vals_leaf, csr_desc.rowptr, csr_desc.col, rhs_leaf, _B2, _N2, False, False, False)
+
+    def _grad_bwd(out):
+        # Sum-style loss, with the upstream gradient materialized explicitly:
+        # autograd's own sum() backward delivers an expanded stride-0 grad,
+        # which the raw kernels' backward primitives read as a contiguous
+        # buffer (the landmine _seglse_backward documents) -- ones_like is
+        # the same mathematical gradient, contiguous by construction.
+        out.backward(torch.ones_like(out))
+
+    sparse_bytes = nse * (csr_desc.col.element_size() + v) + csr_desc.rowptr.numel() * csr_desc.rowptr.element_size()
+    rhs_bytes = rhs.numel() * v
+    io_bytes = sparse_bytes + 2 * nse * v + 5 * rhs_bytes  # +vals_leaf+grad_vals; rhs+rhs_leaf+out+grad_out+grad_rhs
+    mem = None
+    if memory.budget_guard(4 * io_bytes, label="spsm batched grad memory pass"):
+        mem = memory.measure(_grad_fwd, _grad_bwd, io_bytes=io_bytes, bound_bytes=sparse_bytes, device=device)
+        print(
+            f"ours memory: peak_fwd={mem.peak_fwd_mb}MB peak_bwd={mem.peak_bwd_mb}MB "
+            f"workspace={mem.workspace_mb}MB bound_met={mem.workspace_bound_met}"
+        )
 
     _bench_row(
         op_suffix="_batched",
