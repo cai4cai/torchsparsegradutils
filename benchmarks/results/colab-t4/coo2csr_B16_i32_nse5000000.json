@@ -1,0 +1,42 @@
+{
+  "op": "coo2csr",
+  "family": "convert",
+  "backend": "custom",
+  "variant": "coo\u00b7B=16\u00b7i32\u00b7nse=5000000",
+  "matrix": "synth-uniform",
+  "n": 4096,
+  "m": 4096,
+  "nse": 5000000,
+  "p": null,
+  "baseline_name": "pure-torch two-pass stable argsort + compress (the fallback path)",
+  "baseline_ms": 22.92070198059082,
+  "ours_ms": 8.544777870178223,
+  "speedup": 2.6824222149279526,
+  "peak_fwd_mb": 258.82080078125,
+  "peak_bwd_mb": null,
+  "workspace_mb": 163.20336532592773,
+  "bw_pct_peak": null,
+  "mem_bar_met": null,
+  "bar": "win",
+  "bar_met": true,
+  "gpu": "Tesla T4",
+  "clocks": {
+    "sm_clock_mhz": 1590.0,
+    "mem_clock_mhz": 5000.0,
+    "max_sm_clock_mhz": 1590.0,
+    "locked": true,
+    "note": "queried via nvidia-smi (no root; -lgc pinning itself not enforced by this harness)"
+  },
+  "torch": "2.11.0+cu128",
+  "cuda": "12.8",
+  "commit": "f3356cbee63e69c5f085d5d16d913fc6f1b2aa0f",
+  "date": "2026-07-17T21:26:59.641249+00:00",
+  "meta": {
+    "hostname": "d65733dee056",
+    "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
+    "degraded_no_gpu": false,
+    "workspace_fwd_mb": 163.20336532592773,
+    "workspace_bwd_mb": null,
+    "workspace_bound_met": true
+  }
+}

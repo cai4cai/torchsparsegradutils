@@ -1,0 +1,42 @@
+{
+  "op": "spmm",
+  "family": "spmm",
+  "backend": "custom",
+  "variant": "csr\u00b7B=8\u00b7f64/i64",
+  "matrix": "synth-ragged",
+  "n": 1024,
+  "m": 1024,
+  "nse": 41936,
+  "p": 32,
+  "baseline_name": "block-diag + cuSPARSE (tests/oracle/sparse_matmul.py pattern)",
+  "baseline_ms": 1.007491946220398,
+  "ours_ms": 0.03747599944472313,
+  "speedup": 26.88365783830375,
+  "peak_fwd_mb": 7.0869140625,
+  "peak_bwd_mb": 13.056640625,
+  "workspace_mb": 1.7143478393554688,
+  "bw_pct_peak": 74.75730032462229,
+  "mem_bar_met": null,
+  "bar": "win",
+  "bar_met": true,
+  "gpu": "Tesla T4",
+  "clocks": {
+    "sm_clock_mhz": 1590.0,
+    "mem_clock_mhz": 5000.0,
+    "max_sm_clock_mhz": 1590.0,
+    "locked": true,
+    "note": "queried via nvidia-smi (no root; -lgc pinning itself not enforced by this harness)"
+  },
+  "torch": "2.11.0+cu128",
+  "cuda": "12.8",
+  "commit": "f3356cbee63e69c5f085d5d16d913fc6f1b2aa0f",
+  "date": "2026-07-17T21:24:50.847854+00:00",
+  "meta": {
+    "hostname": "d65733dee056",
+    "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
+    "degraded_no_gpu": false,
+    "workspace_fwd_mb": 0.0,
+    "workspace_bwd_mb": 1.7143478393554688,
+    "workspace_bound_met": true
+  }
+}

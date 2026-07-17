@@ -1,0 +1,42 @@
+{
+  "op": "seglse_bidir",
+  "family": "segmented-logsumexp",
+  "backend": "custom",
+  "variant": "csr\u00b7B=1\u00b7f32/i32",
+  "matrix": "synth-dlmc90",
+  "n": 4096,
+  "m": 4096,
+  "nse": 1680659,
+  "p": null,
+  "baseline_name": "2x tsgu::seglse (dim=0 + dim=1)",
+  "baseline_ms": 3.2964839935302734,
+  "ours_ms": 0.33529600501060486,
+  "speedup": 9.83156358640781,
+  "peak_fwd_mb": 19.3291015625,
+  "peak_bwd_mb": 25.72509765625,
+  "workspace_mb": 0.002147674560546875,
+  "bw_pct_peak": 22.86722335424525,
+  "mem_bar_met": null,
+  "bar": ">= 1.5x",
+  "bar_met": true,
+  "gpu": "Tesla T4",
+  "clocks": {
+    "sm_clock_mhz": 1590.0,
+    "mem_clock_mhz": 5000.0,
+    "max_sm_clock_mhz": 1590.0,
+    "locked": true,
+    "note": "queried via nvidia-smi (no root; -lgc pinning itself not enforced by this harness)"
+  },
+  "torch": "2.11.0+cu128",
+  "cuda": "12.8",
+  "commit": "f3356cbee63e69c5f085d5d16d913fc6f1b2aa0f",
+  "date": "2026-07-17T21:25:32.591605+00:00",
+  "meta": {
+    "hostname": "d65733dee056",
+    "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
+    "degraded_no_gpu": false,
+    "workspace_fwd_mb": 0.0,
+    "workspace_bwd_mb": 0.002147674560546875,
+    "workspace_bound_met": true
+  }
+}

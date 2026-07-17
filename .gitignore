@@ -144,7 +144,7 @@ torchsparsegradutils/benchmarks/.benchmark_data/
 # during migration) -- one JSON per run, machine-specific, never committed
 # (spec/commit.md #11: "results/*.json from your test run are NOT
 # committed"). Rendered charts are reproducible from those JSONs too.
-benchmarks/results/
+benchmarks/results/*
 benchmarks/charts/
 
 # cuda/ package build artifacts (spec/commit.md commit 10 / build.md:
@@ -167,3 +167,10 @@ cuda/torch-ext/*/*.so
 cuda/.compile-commands/
 cuda/bench/compile_commands.json
 /result
+
+# benchmarks/results/ stays uncommitted (spec/benchmarks.md §4: JSON-only,
+# machine-local record) — EXCEPT the Colab cross-GPU validation sets, which
+# back the PR's portability/perf claims on non-dev hardware and are committed
+# deliberately (user-directed exception, 2026-07-17). Each JSON's header
+# carries the full machine fingerprint incl. clocks.locked=true.
+!benchmarks/results/colab-t4/

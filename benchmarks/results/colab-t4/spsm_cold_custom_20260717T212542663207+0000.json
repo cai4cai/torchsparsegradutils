@@ -1,0 +1,39 @@
+{
+  "op": "spsm_cold",
+  "family": "spsm",
+  "backend": "custom",
+  "variant": "csr\u00b7B=1\u00b7f32/i32\u00b7p=8\u00b7cold",
+  "matrix": "synth-banded",
+  "n": 4096,
+  "m": 4096,
+  "nse": 36828,
+  "p": 8,
+  "baseline_name": "cuSPARSE cusparseSpSM (via torch.triangular_solve)",
+  "baseline_ms": 17.483776092529297,
+  "ours_ms": 12.973316192626953,
+  "speedup": 1.3476720857590556,
+  "peak_fwd_mb": null,
+  "peak_bwd_mb": null,
+  "workspace_mb": null,
+  "bw_pct_peak": null,
+  "mem_bar_met": null,
+  "bar": "\u22651.0\u00d7",
+  "bar_met": true,
+  "gpu": "Tesla T4",
+  "clocks": {
+    "sm_clock_mhz": 1590.0,
+    "mem_clock_mhz": 5000.0,
+    "max_sm_clock_mhz": 1590.0,
+    "locked": true,
+    "note": "queried via nvidia-smi (no root; -lgc pinning itself not enforced by this harness)"
+  },
+  "torch": "2.11.0+cu128",
+  "cuda": "12.8",
+  "commit": "f3356cbee63e69c5f085d5d16d913fc6f1b2aa0f",
+  "date": "2026-07-17T21:25:42.663207+00:00",
+  "meta": {
+    "hostname": "d65733dee056",
+    "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
+    "degraded_no_gpu": false
+  }
+}
