@@ -47,9 +47,14 @@ def test_memory_measure_degrades_cleanly_without_cuda():
 
 
 def test_corpus_vram_fallback_and_scaling():
-    # With no CUDA, available_vram_gb() must fall back to the documented
-    # constant rather than raising.
-    assert corpus.available_vram_gb() == corpus.THIS_MACHINE_VRAM_GB_FALLBACK
+    if torch.cuda.is_available():
+        # With CUDA, available_vram_gb() reports the real GPU 0 VRAM (e.g.
+        # ~3.7 GiB on the dev laptop's 4 GB RTX A1000), never the fallback.
+        assert 0 < corpus.available_vram_gb() <= 128
+    else:
+        # With no CUDA, available_vram_gb() must fall back to the documented
+        # constant rather than raising.
+        assert corpus.available_vram_gb() == corpus.THIS_MACHINE_VRAM_GB_FALLBACK
     budget = corpus.peak_budget_gb(4.0)
     assert budget <= corpus.ABSOLUTE_PEAK_BUDGET_GB
     assert budget <= 4.0 * corpus.PEAK_BUDGET_FRACTION
