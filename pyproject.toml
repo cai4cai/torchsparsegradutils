@@ -98,6 +98,12 @@ ignore = [
     "E402",  # module level import not at top of file — a couple of conditional-import spots
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Pytest fixture re-export pattern: the module imports the shared `device`
+# fixture (F401-noqa'd) and its test functions then take a parameter of the
+# same name — that shadowing is how pytest fixtures work, not a redefinition.
+"tests/test_sparse_bidir_logsumexp.py" = ["F811"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["torchsparsegradutils"]
 

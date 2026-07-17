@@ -23,9 +23,7 @@ _SKIP_REASON = (
     "tsgu::seglse has no CPU implementation (CUDA-only, architecture.md §4) -- "
     "needs both a CUDA device and a loaded, version-matched backend."
 )
-requires_cuda_backend = pytest.mark.skipif(
-    not (torch.cuda.is_available() and backend_available()), reason=_SKIP_REASON
-)
+requires_cuda_backend = pytest.mark.skipif(not (torch.cuda.is_available() and backend_available()), reason=_SKIP_REASON)
 
 
 def _make_inputs(index_dtype, value_dtype, include_zeros):

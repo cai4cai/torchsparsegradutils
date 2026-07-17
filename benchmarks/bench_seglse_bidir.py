@@ -77,8 +77,10 @@ def _bench_row(*, filename, baseline_name, baseline_ms, ours_ms, bar, matrix, ns
         bar_met=bar_met,
     )
     path = write_result(result, filename=filename)
-    print(f"[{baseline_name}] baseline={baseline_ms:.4f}ms ours={ours_ms:.4f}ms speedup={speedup:.2f}x "
-          f"bar={bar} met={bar_met} -> {path}")
+    print(
+        f"[{baseline_name}] baseline={baseline_ms:.4f}ms ours={ours_ms:.4f}ms speedup={speedup:.2f}x "
+        f"bar={bar} met={bar_met} -> {path}"
+    )
     return result
 
 
@@ -101,8 +103,10 @@ def main() -> None:
         return tsgu.sparse_bidir_logsumexp(_sp(), include_zeros=True)
 
     ours_timing = harness.do_bench(_ours_fwd, device=device)
-    print(f"ours (tsgu::seglse_bidir) fwd: median={ours_timing.median_ms:.4f}ms "
-          f"p10={ours_timing.p10_ms:.4f} p90={ours_timing.p90_ms:.4f} degraded={ours_timing.degraded}")
+    print(
+        f"ours (tsgu::seglse_bidir) fwd: median={ours_timing.median_ms:.4f}ms "
+        f"p10={ours_timing.p10_ms:.4f} p90={ours_timing.p90_ms:.4f} degraded={ours_timing.degraded}"
+    )
 
     io_bytes = nse * (vals.element_size() + col.element_size()) + crow.numel() * crow.element_size()
     mem = memory.measure(_ours_fwd, io_bytes=io_bytes, device=device)

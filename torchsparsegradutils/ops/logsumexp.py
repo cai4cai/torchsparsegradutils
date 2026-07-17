@@ -312,8 +312,14 @@ def _seglse_dispatch(vals: Tensor, rowptr: Tensor, num_segments: int, full_size:
     return lse.reshape(num_segments)
 
 
-def _seglse_sorted(seg_idx: Tensor, vals: Tensor, num_segments: int, full_size: int, include_zeros: bool,
-                    counts: Union[Tensor, None] = None) -> Tensor:
+def _seglse_sorted(
+    seg_idx: Tensor,
+    vals: Tensor,
+    num_segments: int,
+    full_size: int,
+    include_zeros: bool,
+    counts: Union[Tensor, None] = None,
+) -> Tensor:
     """``_seglse_dispatch`` for a segment axis that is *not* already
     contiguous in ``vals`` (e.g. dim=0 on a CSR input, dim=1 on a CSC input,
     or any axis of a COO input) -- sorts ``vals`` into contiguous per-segment
@@ -339,9 +345,11 @@ def _logsumexp_2d(input: Tensor, dims, keepdim: bool, include_zeros: bool) -> Te
 
     if dims == [0, 1]:
         # Reduce everything -> scalar; one segment holding every stored value.
-        vals = input.values() if input.layout != torch.sparse_coo else (
-            input if input.is_coalesced() else input.coalesce()
-        ).values()
+        vals = (
+            input.values()
+            if input.layout != torch.sparse_coo
+            else (input if input.is_coalesced() else input.coalesce()).values()
+        )
         n_specified = vals.numel()
         rowptr = torch.tensor([0, n_specified], dtype=torch.int64, device=vals.device)
         result = _seglse_dispatch(vals, rowptr, 1, nrows * ncols, include_zeros)[0]
@@ -476,7 +484,9 @@ def _bidir_batched(input: Tensor, include_zeros: bool):
     rowptr = torch.zeros(num_segments + 1, dtype=index_dtype, device=vals.device)
     rowptr[1:] = torch.cumsum(counts, dim=0).to(index_dtype)
 
-    padded = torch.ops.tsgu.seglse_bidir(vals, rowptr, cols.to(index_dtype), b, nrows, ncols, include_zeros)  # (2, b, G)
+    padded = torch.ops.tsgu.seglse_bidir(
+        vals, rowptr, cols.to(index_dtype), b, nrows, ncols, include_zeros
+    )  # (2, b, G)
     return padded[0, :, :ncols], padded[1, :, :nrows], padded
 
 

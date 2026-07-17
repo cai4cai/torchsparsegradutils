@@ -18,9 +18,7 @@ _SKIP_REASON = (
     "tsgu::seglse_bidir has no CPU implementation (CUDA-only, architecture.md §4) -- "
     "needs both a CUDA device and a loaded, version-matched backend."
 )
-requires_cuda_backend = pytest.mark.skipif(
-    not (torch.cuda.is_available() and backend_available()), reason=_SKIP_REASON
-)
+requires_cuda_backend = pytest.mark.skipif(not (torch.cuda.is_available() and backend_available()), reason=_SKIP_REASON)
 
 
 def _make_inputs(index_dtype, value_dtype):
@@ -48,9 +46,7 @@ def test_opcheck_seglse_bidir_bwd(index_dtype, value_dtype):
     vals, rowptr, col = _make_inputs(index_dtype, value_dtype)
     padded = torch.ops.tsgu.seglse_bidir(vals, rowptr, col, 1, 2, 2, True).detach()
     gout = torch.randn_like(padded)
-    torch.library.opcheck(
-        torch.ops.tsgu.seglse_bidir_bwd.default, (vals.detach(), rowptr, col, padded, gout, 1, 2, 2)
-    )
+    torch.library.opcheck(torch.ops.tsgu.seglse_bidir_bwd.default, (vals.detach(), rowptr, col, padded, gout, 1, 2, 2))
 
 
 @requires_cuda_backend
