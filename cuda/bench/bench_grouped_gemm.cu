@@ -38,10 +38,12 @@
 
 namespace {
 
-constexpr int kTile = 32;
-constexpr int kBlockRows = 8;
-constexpr int kThreadsPerBlock = kTile * kBlockRows;
-constexpr int kRowsPerThread = kTile / kBlockRows;
+constexpr int kBM = 64;                // block-tile rows (gather: output rows; scatter: D1 extent)
+constexpr int kBN = 64;                // block-tile cols (D2 extent)
+constexpr int kBK = 16;                // inner-dimension chunk (gather: D1; scatter: row chunk)
+constexpr int kThreadsPerBlock = 256;  // logical (16, 16)
+constexpr int kTM = 4;                 // register-tile rows per thread (kBM / 16)
+constexpr int kTN = 4;                 // register-tile cols per thread (kBN / 16)
 
 // --- Mirrors of csrc/kernels/grouped_gemm/grouped_gemm.cu (f32/i32) --------
 
@@ -73,82 +75,127 @@ __device__ __forceinline__ int64_t upper_bound_idx(int32_t const* __restrict__ i
   return lo;
 }
 
-// Mirrors grouped_gemm_gather_kernel: 32x32 output tile per block, (32, 8)
-// threads x 4 rows each, adaptive uniform/mixed b-operand path via block vote.
+// Mirror of grouped_gemm_gather_kernel (f32/i32) — keep in sync with
+// csrc/kernels/grouped_gemm/grouped_gemm.cu.
+template <int BM, int BN, int BK, int TM, int TN>
 __global__ void grouped_gemm_gather_kernel(float* __restrict__ out, float const* __restrict__ a,
                                            float const* __restrict__ b, int32_t const* __restrict__ idx, int64_t N,
                                            int64_t D1, int64_t D2) {
-  __shared__ float a_s[kTile][kTile + 1];
-  __shared__ float b_s[kTile][kTile + 1];
-  __shared__ int64_t idx_s[kTile];
+  // a staged transposed (a_s[kk][row]) so the inner loop's per-thread row
+  // reads are broadcast/conflict-free; +1 pads away bank conflicts on the
+  // transposed store.
+  __shared__ float a_s[BK][BM + 1];
+  __shared__ float b_s[BK][BN + 1];
+  __shared__ int64_t idx_s[BM];
   __shared__ int uniform_s;
 
-  int64_t const row_base = static_cast<int64_t>(blockIdx.x) * kTile;
-  int64_t const col_base = static_cast<int64_t>(blockIdx.y) * kTile;
-  int const tid = static_cast<int>(threadIdx.y) * kTile + static_cast<int>(threadIdx.x);
+  int64_t const row_base = static_cast<int64_t>(blockIdx.x) * BM;
+  int64_t const col_base = static_cast<int64_t>(blockIdx.y) * BN;
+  int const tid = static_cast<int>(threadIdx.x);
+  constexpr int LX = BN / TN;  // column-lane count (thread grid is (LY, LX) = 256)
+  constexpr int LY = BM / TM;  // row-lane count
+  int const tx = tid % LX;     // register-tile column lane
+  int const ty = tid / LX;     // register-tile row lane
 
+  // Stage the tile's idx values once, then block-vote uniformity: rows past
+  // N carry the sentinel -1 and never break the vote (a tail tile of one
+  // long segment still takes the uniform path). row_base < N always holds
+  // (grid is sized from N), so idx_s[0] is a real group.
   if (tid == 0) {
     uniform_s = 1;
   }
-  if (tid < kTile) {
+  if (tid < BM) {
     int64_t row = row_base + tid;
     idx_s[tid] = row < N ? static_cast<int64_t>(idx[row]) : int64_t(-1);
   }
   __syncthreads();
   int64_t const g0 = idx_s[0];
-  if (tid < kTile && idx_s[tid] != g0 && idx_s[tid] != int64_t(-1)) {
-    uniform_s = 0;
+  if (tid < BM && idx_s[tid] != g0 && idx_s[tid] != int64_t(-1)) {
+    uniform_s = 0;  // benign write race: every writer stores the same 0
   }
   __syncthreads();
   bool const uniform = uniform_s != 0;
 
-  float acc[kRowsPerThread];
+  float acc[TM][TN];
 #pragma unroll
-  for (int rr = 0; rr < kRowsPerThread; ++rr) {
-    acc[rr] = 0.0f;
+  for (int i = 0; i < TM; ++i) {
+#pragma unroll
+    for (int j = 0; j < TN; ++j) {
+      acc[i][j] = float(0);
+    }
   }
 
   float const* b_g0 = b + g0 * D1 * D2;
-  int64_t const col = col_base + static_cast<int64_t>(threadIdx.x);
 
-  for (int64_t kb = 0; kb < D1; kb += kTile) {
-    for (int e = tid; e < kTile * kTile; e += kThreadsPerBlock) {
-      int r = e / kTile;
-      int kk = e % kTile;
+  for (int64_t kb = 0; kb < D1; kb += BK) {
+    // Stage the a tile (BM rows x BK k, stored transposed), zero-filling
+    // past N/D1 so the inner loop needs no bounds arithmetic; the
+    // linear->(r, kk) split keeps kk fastest so consecutive threads read
+    // consecutive a addresses.
+#pragma unroll
+    for (int e = tid; e < BM * BK; e += kThreadsPerBlock) {
+      int r = e / BK;
+      int kk = e % BK;
       int64_t row = row_base + r;
       int64_t k = kb + kk;
-      a_s[r][kk] = (row < N && k < D1) ? a[row * D1 + k] : 0.0f;
+      a_s[kk][r] = (row < N && k < D1) ? a[row * D1 + k] : float(0);
     }
     if (uniform) {
-      for (int e = tid; e < kTile * kTile; e += kThreadsPerBlock) {
-        int kk = e / kTile;
-        int c = e % kTile;
+      // Uniform tile: stage the single group's b k-tile too (module comment
+      // §1) — the fully-tiled GEMM inner loop, c fastest for coalescing.
+#pragma unroll
+      for (int e = tid; e < BK * BN; e += kThreadsPerBlock) {
+        int kk = e / BN;
+        int c = e % BN;
         int64_t k = kb + kk;
         int64_t cc = col_base + c;
-        b_s[kk][c] = (k < D1 && cc < D2) ? b_g0[k * D2 + cc] : 0.0f;
+        b_s[kk][c] = (k < D1 && cc < D2) ? b_g0[k * D2 + cc] : float(0);
       }
     }
     __syncthreads();
 
     if (uniform) {
 #pragma unroll
-      for (int kk = 0; kk < kTile; ++kk) {
-        float bv = b_s[kk][threadIdx.x];
+      for (int kk = 0; kk < BK; ++kk) {
+        float a_frag[TM];
+        float b_frag[TN];
 #pragma unroll
-        for (int rr = 0; rr < kRowsPerThread; ++rr) {
-          acc[rr] += a_s[threadIdx.y + rr * kBlockRows][kk] * bv;
+        for (int i = 0; i < TM; ++i) {
+          a_frag[i] = a_s[kk][ty + i * LY];
+        }
+#pragma unroll
+        for (int j = 0; j < TN; ++j) {
+          b_frag[j] = b_s[kk][tx + j * LX];
+        }
+#pragma unroll
+        for (int i = 0; i < TM; ++i) {
+#pragma unroll
+          for (int j = 0; j < TN; ++j) {
+            acc[i][j] += a_frag[i] * b_frag[j];
+          }
         }
       }
-    } else if (col < D2) {
-      int64_t const kmax = min(static_cast<int64_t>(kTile), D1 - kb);
+    } else {
+      // Mixed tile: b straight from global, per row group (module comment
+      // §1) — for each (row, kk) the four column reads are coalesced across
+      // the 16 adjacent tx lanes; a gathered b copy is never materialised.
+      int const kmax = static_cast<int>(min(static_cast<int64_t>(BK), D1 - kb));
 #pragma unroll
-      for (int rr = 0; rr < kRowsPerThread; ++rr) {
-        int r = static_cast<int>(threadIdx.y) + rr * kBlockRows;
+      for (int i = 0; i < TM; ++i) {
+        int r = ty + i * LY;
         int64_t g = idx_s[r];
         if (g >= 0) {
-          float const* b_col = b + g * D1 * D2 + kb * D2 + col;
-          for (int64_t kk = 0; kk < kmax; ++kk) {
-            acc[rr] += a_s[r][kk] * b_col[kk * D2];
+          float const* b_gk = b + g * D1 * D2 + kb * D2;
+          for (int kk = 0; kk < kmax; ++kk) {
+            float const a_v = a_s[kk][r];
+            float const* b_row = b_gk + static_cast<int64_t>(kk) * D2;
+#pragma unroll
+            for (int j = 0; j < TN; ++j) {
+              int64_t cc = col_base + tx + j * LX;
+              if (cc < D2) {
+                acc[i][j] += a_v * b_row[cc];
+              }
+            }
           }
         }
       }
@@ -156,72 +203,115 @@ __global__ void grouped_gemm_gather_kernel(float* __restrict__ out, float const*
     __syncthreads();
   }
 
-  if (col < D2) {
 #pragma unroll
-    for (int rr = 0; rr < kRowsPerThread; ++rr) {
-      int64_t row = row_base + threadIdx.y + rr * kBlockRows;
-      if (row < N) {
-        out[row * D2 + col] = acc[rr];
+  for (int i = 0; i < TM; ++i) {
+    int64_t row = row_base + ty + i * LY;
+    if (row < N) {
+#pragma unroll
+      for (int j = 0; j < TN; ++j) {
+        int64_t cc = col_base + tx + j * LX;
+        if (cc < D2) {
+          out[row * D2 + cc] = acc[i][j];
+        }
       }
     }
   }
 }
 
-// Mirrors grouped_gemm_scatter_kernel: grid (R, ceil(D1/32), ceil(D2/32)),
-// per-block binary search for the group's sorted row range, ordered
-// accumulation of staged 32-row outer-product chunks.
+// Mirror of grouped_gemm_scatter_kernel (f32/i32) — keep in sync with
+// csrc/kernels/grouped_gemm/grouped_gemm.cu.
+template <int BM, int BN, int BK, int TM, int TN>
 __global__ void grouped_gemm_scatter_kernel(float* __restrict__ out, float const* __restrict__ a,
                                             float const* __restrict__ b, int32_t const* __restrict__ idx, int64_t N,
                                             int64_t D1, int64_t D2) {
-  __shared__ float a_s[kTile][kTile + 1];
-  __shared__ float b_s[kTile][kTile + 1];
+  __shared__ float a_s[BK][BM];  // unpadded: row-contiguous staging is conflict-free, and 16B-aligned rows enable LDS.128 frags
+  __shared__ float b_s[BK][BN];
 
   int64_t const g = static_cast<int64_t>(blockIdx.x);
-  int64_t const i_base = static_cast<int64_t>(blockIdx.y) * kTile;
-  int64_t const j_base = static_cast<int64_t>(blockIdx.z) * kTile;
-  int const tid = static_cast<int>(threadIdx.y) * kTile + static_cast<int>(threadIdx.x);
+  int64_t const i_base = static_cast<int64_t>(blockIdx.y) * BM;
+  int64_t const j_base = static_cast<int64_t>(blockIdx.z) * BN;
+  int const tid = static_cast<int>(threadIdx.x);
+  constexpr int LX = BN / TN;  // column-lane count (thread grid is (LY, LX) = 256)
+  constexpr int LY = BM / TM;  // row-lane count
+  int const tx = tid % LX;
+  int const ty = tid / LX;
 
+  // Per-thread binary search (all threads land on the same [lo, hi); two
+  // O(log N) probes are noise next to the row walk, so no lane-0+broadcast
+  // dance is needed).
   int64_t const lo = lower_bound_idx(idx, N, g);
   int64_t const hi = upper_bound_idx(idx, N, g);
 
-  float acc[kRowsPerThread];
+  float acc[TM][TN];
 #pragma unroll
-  for (int rr = 0; rr < kRowsPerThread; ++rr) {
-    acc[rr] = 0.0f;
+  for (int i = 0; i < TM; ++i) {
+#pragma unroll
+    for (int j = 0; j < TN; ++j) {
+      acc[i][j] = float(0);
+    }
   }
 
-  int64_t const j = j_base + static_cast<int64_t>(threadIdx.x);
-
-  for (int64_t r0 = lo; r0 < hi; r0 += kTile) {
-    for (int e = tid; e < kTile * kTile; e += kThreadsPerBlock) {
-      int r = e / kTile;
-      int c = e % kTile;
+  for (int64_t r0 = lo; r0 < hi; r0 += BK) {
+    // Stage 16-row chunks of a (columns i_base..i_base+63) and b (columns
+    // j_base..j_base+63), zero-filled past hi/D1/D2 — zero rows contribute
+    // nothing. c-fastest split keeps the global reads coalesced.
+#pragma unroll
+    for (int e = tid; e < BK * BM; e += kThreadsPerBlock) {
+      int r = e / BM;
+      int c = e % BM;
       int64_t row = r0 + r;
       int64_t i = i_base + c;
-      a_s[r][c] = (row < hi && i < D1) ? a[row * D1 + i] : 0.0f;
+      a_s[r][c] = (row < hi && i < D1) ? a[row * D1 + i] : float(0);
       int64_t jj = j_base + c;
-      b_s[r][c] = (row < hi && jj < D2) ? b[row * D2 + jj] : 0.0f;
+      b_s[r][c] = (row < hi && jj < D2) ? b[row * D2 + jj] : float(0);
     }
     __syncthreads();
 
-#pragma unroll 4
-    for (int r = 0; r < kTile; ++r) {
-      float bv = b_s[r][threadIdx.x];
+    // Ascending, order-fixed accumulation over the chunk's rows (module
+    // comment §2's determinism story); zero-filled tail rows add 0.
 #pragma unroll
-      for (int rr = 0; rr < kRowsPerThread; ++rr) {
-        acc[rr] += a_s[r][threadIdx.y + rr * kBlockRows] * bv;
+    for (int r = 0; r < BK; ++r) {
+      float a_frag[TM];
+      float b_frag[TN];
+      // Contiguous per-thread fragments read as float4 (LDS.128) — cuts the
+      // shared-load instruction count 4x vs the strided scalar mapping
+      // (perf follow-up; see kernel_best_practices.md "Grouped GEMM" §7 and
+      // siboehm's SGEMM worklog). Row bases are 16B-aligned (unpadded BM/BN
+      // multiples of 4) and ty*TM / tx*TN offsets keep alignment.
+      float4 const* a_vec = reinterpret_cast<float4 const*>(&a_s[r][ty * TM]);
+      float4 const* b_vec = reinterpret_cast<float4 const*>(&b_s[r][tx * TN]);
+#pragma unroll
+      for (int v = 0; v < TM / 4; ++v) {
+        reinterpret_cast<float4*>(a_frag)[v] = a_vec[v];
+      }
+#pragma unroll
+      for (int v = 0; v < TN / 4; ++v) {
+        reinterpret_cast<float4*>(b_frag)[v] = b_vec[v];
+      }
+#pragma unroll
+      for (int i = 0; i < TM; ++i) {
+#pragma unroll
+        for (int j = 0; j < TN; ++j) {
+          acc[i][j] += a_frag[i] * b_frag[j];
+        }
       }
     }
     __syncthreads();
   }
 
-  if (j < D2) {
-    float* out_g = out + g * D1 * D2;
+  // Unconditional write of the block's in-range tile — empty groups
+  // (lo == hi) write zeros, which is what makes new_empty output safe.
+  float* out_g = out + g * D1 * D2;
 #pragma unroll
-    for (int rr = 0; rr < kRowsPerThread; ++rr) {
-      int64_t i = i_base + threadIdx.y + rr * kBlockRows;
-      if (i < D1) {
-        out_g[i * D2 + j] = acc[rr];
+  for (int i = 0; i < TM; ++i) {
+    int64_t ii = i_base + ty * TM + i;
+    if (ii < D1) {
+#pragma unroll
+      for (int j = 0; j < TN; ++j) {
+        int64_t jj = j_base + tx * TN + j;
+        if (jj < D2) {
+          out_g[ii * D2 + jj] = acc[i][j];
+        }
       }
     }
   }
@@ -299,9 +389,16 @@ void bench_gather(nvbench::state& state, std::vector<int32_t> const& idx_h) {
   state.add_global_memory_writes<float>(N * D);
 
   state.exec([&](nvbench::launch& launch) {
-    dim3 const block(kTile, kBlockRows);
-    dim3 const grid(static_cast<unsigned>((N + kTile - 1) / kTile), static_cast<unsigned>((D + kTile - 1) / kTile));
-    grouped_gemm_gather_kernel<<<grid, block, 0, launch.get_stream()>>>(
+    dim3 const block(kThreadsPerBlock);
+    if (D >= 128 && N >= 128) {
+      dim3 const grid(static_cast<unsigned>((N + 127) / 128), static_cast<unsigned>((D + 127) / 128));
+      grouped_gemm_gather_kernel<128, 128, 16, 8, 8><<<grid, block, 0, launch.get_stream()>>>(
+          thrust::raw_pointer_cast(out.data()), thrust::raw_pointer_cast(a.data()), thrust::raw_pointer_cast(b.data()),
+          thrust::raw_pointer_cast(idx.data()), N, D, D);
+      return;
+    }
+    dim3 const grid(static_cast<unsigned>((N + kBM - 1) / kBM), static_cast<unsigned>((D + kBN - 1) / kBN));
+    grouped_gemm_gather_kernel<kBM, kBN, kBK, kTM, kTN><<<grid, block, 0, launch.get_stream()>>>(
         thrust::raw_pointer_cast(out.data()), thrust::raw_pointer_cast(a.data()), thrust::raw_pointer_cast(b.data()),
         thrust::raw_pointer_cast(idx.data()), N, D, D);
   });
@@ -340,10 +437,18 @@ void bench_grouped_gemm_scatter_sorted(nvbench::state& state) {
   state.add_global_memory_writes<float>(R * D * D);
 
   state.exec([&](nvbench::launch& launch) {
-    dim3 const block(kTile, kBlockRows);
-    dim3 const grid(static_cast<unsigned>(R), static_cast<unsigned>((D + kTile - 1) / kTile),
-                    static_cast<unsigned>((D + kTile - 1) / kTile));
-    grouped_gemm_scatter_kernel<<<grid, block, 0, launch.get_stream()>>>(
+    dim3 const block(kThreadsPerBlock);
+    if (D >= 128) {
+      dim3 const grid(static_cast<unsigned>(R), static_cast<unsigned>((D + 127) / 128),
+                      static_cast<unsigned>((D + 127) / 128));
+      grouped_gemm_scatter_kernel<128, 128, 16, 8, 8><<<grid, block, 0, launch.get_stream()>>>(
+          thrust::raw_pointer_cast(out.data()), thrust::raw_pointer_cast(a.data()), thrust::raw_pointer_cast(b.data()),
+          thrust::raw_pointer_cast(idx.data()), N, D, D);
+      return;
+    }
+    dim3 const grid(static_cast<unsigned>(R), static_cast<unsigned>((D + kBM - 1) / kBM),
+                    static_cast<unsigned>((D + kBN - 1) / kBN));
+    grouped_gemm_scatter_kernel<kBM, kBN, kBK, kTM, kTN><<<grid, block, 0, launch.get_stream()>>>(
         thrust::raw_pointer_cast(out.data()), thrust::raw_pointer_cast(a.data()), thrust::raw_pointer_cast(b.data()),
         thrust::raw_pointer_cast(idx.data()), N, D, D);
   });

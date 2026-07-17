@@ -18,15 +18,18 @@
 //    per-row group index with shape `(N,)`; `out[i, :] = a[i, :] @
 //    b[idx[i], :, :]`, shape `(N, D2)`.
 //
-//    Classic tiled GEMM: each block owns a 32(rows)x32(cols) output tile
-//    (256 threads as a (32, 8) layout, 4 output rows per thread), walking
-//    the shared inner dimension D1 in 32-wide chunks with the `a` tile
-//    staged through shared memory every chunk. The gather is fused into the
-//    GEMM prologue via an ADAPTIVE per-block `b`-operand path, decided by a
-//    runtime block vote after the tile's 32 `idx` values are staged:
+//    Classic register-blocked tiled GEMM: each block owns a 64(rows)x64(cols)
+//    output tile (256 threads as a logical (16, 16) layout, each owning a
+//    4x4 register tile strided 16 apart), walking the shared inner dimension
+//    D1 in 16-wide chunks with the `a` tile staged (transposed) through
+//    shared memory every chunk — 16 FMAs per 8 shared loads, the geometry
+//    the first cut's 32x32/4-per-thread shape lacked (see the constants
+//    block). The gather is fused into the GEMM prologue via an ADAPTIVE
+//    per-block `b`-operand path, decided by a runtime block vote after the
+//    tile's 64 `idx` values are staged:
 //
 //    - UNIFORM tile (all valid rows share one group — always true inside a
-//      `segment_mm` segment longer than the 32-row tile, and for tail rows
+//      `segment_mm` segment longer than the 64-row tile, and for tail rows
 //      past N, which are excluded from the vote): the `b` k-tile is staged
 //      through shared memory too, and the inner loop is the fully-tiled GEMM
 //      loop — cuBLAS-shaped arithmetic intensity, no per-row indirection
@@ -60,19 +63,20 @@
 //    out-of-place rows from their groups. Debug builds may check host-side
 //    in the Python wrapper; the kernel trusts the contract.
 //
-//    Grid `(num_groups, ceil(D1/32), ceil(D2/32))`: each block owns one
-//    group's 32x32 tile of the `(D1, D2)` outer-product accumulator, binary-
+//    Grid `(num_groups, ceil(D1/64), ceil(D2/64))`: each block owns one
+//    group's 64x64 tile of the `(D1, D2)` outer-product accumulator, binary-
 //    searches `idx` for its group's row range once, then accumulates over
-//    rows `lo..hi` IN ASCENDING ORDER, staging 32-row chunks of `a` and `b`
-//    through shared memory and accumulating outer products in registers.
+//    rows `lo..hi` IN ASCENDING ORDER, staging 16-row chunks of `a` and `b`
+//    through shared memory and accumulating outer products in 4x4 register
+//    tiles (same thread geometry as gather mode).
 //    Sequential ordered accumulation, exactly one block owning every output
 //    element, no atomics → bitwise deterministic. Empty groups (and
 //    `N == 0`) fall through to the unconditional zero-write — the register
 //    accumulator starts at zero and every in-range output element is written
 //    exactly once, so `new_empty` output is safe.
 //
-// Shared-memory budget: two 32x33 tiles (the +1 pads bank conflicts away)
-// = 2 * 32 * 33 * 8 B ≈ 16.5 KB at f64 — comfortably inside the 48 KB
+// Shared-memory budget: two 16x65 tiles (the +1 pads bank conflicts away)
+// = 2 * 16 * 65 * 8 B ≈ 16.6 KB at f64 — comfortably inside the 48 KB
 // default window, no dynamic shared memory or opt-in needed.
 //
 // `idx` values are trusted to lie in `[0, num_groups)` — an out-of-range
@@ -98,10 +102,28 @@
 
 namespace {
 
-constexpr int kTile = 32;      // output-tile edge and inner-dimension chunk width
-constexpr int kBlockRows = 8;  // thread-block y extent; each thread owns kTile / kBlockRows = 4 output rows
-constexpr int kThreadsPerBlock = kTile * kBlockRows;  // 256
-constexpr int kRowsPerThread = kTile / kBlockRows;    // 4
+// Register-blocked tile geometry (perf rewrite, spec/commit.md commit 18
+// follow-up): the first cut's 32x32 block tile with 4 outputs per thread ran
+// at ~6% of f32 peak (0.17x of cuBLAS at D=256) because its inner loop did 4
+// FMAs per 5 shared-memory loads — shared-bandwidth-bound, exactly the
+// register-tile deficit the sddmm/spmm perf commits fixed before it. This
+// geometry is the classic CUDA-core SGEMM shape, templated (BM, BN, BK, TM,
+// TN) with two instantiated configs picked by the launcher:
+//   64x64x16 / 4x4  — 16 FMAs per 8 shared loads; the default, and the only
+//                     config for f64 (an 8x8 f64 accumulator block would
+//                     spill registers) and narrow shapes.
+//   128x128x8 / 8x8 — 64 FMAs per 16 shared loads (the cuBLAS-class 1:4
+//                     ratio); f32 wide shapes (D >= 128), where the
+//                     vendor-parity bar lives.
+// Both run 256 threads as a logical (BM/TM, BN/TN) = (16, 16) lane grid,
+// register tiles strided LY/LX apart so shared reads stay
+// conflict-free/broadcast.
+constexpr int kBM = 64;                // block-tile rows (gather: output rows; scatter: D1 extent)
+constexpr int kBN = 64;                // block-tile cols (D2 extent)
+constexpr int kBK = 16;                // inner-dimension chunk (gather: D1; scatter: row chunk)
+constexpr int kThreadsPerBlock = 256;  // logical (16, 16)
+constexpr int kTM = 4;                 // register-tile rows per thread (kBM / 16)
+constexpr int kTN = 4;                 // register-tile cols per thread (kBN / 16)
 
 // First position in the sorted `idx` array whose value is >= g (lower bound)
 // / > g (upper bound): standard binary searches over the non-decreasing
@@ -137,20 +159,28 @@ __device__ __forceinline__ int64_t upper_bound_idx(index_t const* __restrict__ i
 }
 
 // Gather mode (module comment §1): out[i, :] = a[i, :] @ b[idx[i], :, :].
-// Block = one 32x32 output tile; threads (32, 8), 4 output rows each; the
-// per-block uniform/mixed vote picks the b-operand path.
-template <typename scalar_t, typename index_t>
+// Block = one 64x64 output tile; 256 threads as logical (16, 16), each
+// owning a 4x4 register tile strided 16 apart; the per-block uniform/mixed
+// vote picks the b-operand path.
+template <typename scalar_t, typename index_t, int BM, int BN, int BK, int TM, int TN>
 __global__ void grouped_gemm_gather_kernel(scalar_t* __restrict__ out, scalar_t const* __restrict__ a,
                                            scalar_t const* __restrict__ b, index_t const* __restrict__ idx, int64_t N,
                                            int64_t D1, int64_t D2) {
-  __shared__ scalar_t a_s[kTile][kTile + 1];
-  __shared__ scalar_t b_s[kTile][kTile + 1];
-  __shared__ int64_t idx_s[kTile];
+  // a staged transposed (a_s[kk][row]) so the inner loop's per-thread row
+  // reads are broadcast/conflict-free; +1 pads away bank conflicts on the
+  // transposed store.
+  __shared__ scalar_t a_s[BK][BM + 1];
+  __shared__ scalar_t b_s[BK][BN + 1];
+  __shared__ int64_t idx_s[BM];
   __shared__ int uniform_s;
 
-  int64_t const row_base = static_cast<int64_t>(blockIdx.x) * kTile;
-  int64_t const col_base = static_cast<int64_t>(blockIdx.y) * kTile;
-  int const tid = static_cast<int>(threadIdx.y) * kTile + static_cast<int>(threadIdx.x);
+  int64_t const row_base = static_cast<int64_t>(blockIdx.x) * BM;
+  int64_t const col_base = static_cast<int64_t>(blockIdx.y) * BN;
+  int const tid = static_cast<int>(threadIdx.x);
+  constexpr int LX = BN / TN;  // column-lane count (thread grid is (LY, LX) = 256)
+  constexpr int LY = BM / TM;  // row-lane count
+  int const tx = tid % LX;     // register-tile column lane
+  int const ty = tid / LX;     // register-tile row lane
 
   // Stage the tile's idx values once, then block-vote uniformity: rows past
   // N carry the sentinel -1 and never break the vote (a tail tile of one
@@ -159,44 +189,49 @@ __global__ void grouped_gemm_gather_kernel(scalar_t* __restrict__ out, scalar_t 
   if (tid == 0) {
     uniform_s = 1;
   }
-  if (tid < kTile) {
+  if (tid < BM) {
     int64_t row = row_base + tid;
     idx_s[tid] = row < N ? static_cast<int64_t>(idx[row]) : int64_t(-1);
   }
   __syncthreads();
   int64_t const g0 = idx_s[0];
-  if (tid < kTile && idx_s[tid] != g0 && idx_s[tid] != int64_t(-1)) {
+  if (tid < BM && idx_s[tid] != g0 && idx_s[tid] != int64_t(-1)) {
     uniform_s = 0;  // benign write race: every writer stores the same 0
   }
   __syncthreads();
   bool const uniform = uniform_s != 0;
 
-  scalar_t acc[kRowsPerThread];
+  scalar_t acc[TM][TN];
 #pragma unroll
-  for (int rr = 0; rr < kRowsPerThread; ++rr) {
-    acc[rr] = scalar_t(0);
+  for (int i = 0; i < TM; ++i) {
+#pragma unroll
+    for (int j = 0; j < TN; ++j) {
+      acc[i][j] = scalar_t(0);
+    }
   }
 
   scalar_t const* b_g0 = b + g0 * D1 * D2;
-  int64_t const col = col_base + static_cast<int64_t>(threadIdx.x);
 
-  for (int64_t kb = 0; kb < D1; kb += kTile) {
-    // Stage the a tile (32 rows x 32 k), zero-filling past N/D1 so the inner
-    // loop needs no bounds arithmetic; the linear->(r, kk) split keeps kk
-    // fastest so consecutive threads read consecutive a addresses.
-    for (int e = tid; e < kTile * kTile; e += kThreadsPerBlock) {
-      int r = e / kTile;
-      int kk = e % kTile;
+  for (int64_t kb = 0; kb < D1; kb += BK) {
+    // Stage the a tile (BM rows x BK k, stored transposed), zero-filling
+    // past N/D1 so the inner loop needs no bounds arithmetic; the
+    // linear->(r, kk) split keeps kk fastest so consecutive threads read
+    // consecutive a addresses.
+#pragma unroll
+    for (int e = tid; e < BM * BK; e += kThreadsPerBlock) {
+      int r = e / BK;
+      int kk = e % BK;
       int64_t row = row_base + r;
       int64_t k = kb + kk;
-      a_s[r][kk] = (row < N && k < D1) ? a[row * D1 + k] : scalar_t(0);
+      a_s[kk][r] = (row < N && k < D1) ? a[row * D1 + k] : scalar_t(0);
     }
     if (uniform) {
       // Uniform tile: stage the single group's b k-tile too (module comment
       // §1) — the fully-tiled GEMM inner loop, c fastest for coalescing.
-      for (int e = tid; e < kTile * kTile; e += kThreadsPerBlock) {
-        int kk = e / kTile;
-        int c = e % kTile;
+#pragma unroll
+      for (int e = tid; e < BK * BN; e += kThreadsPerBlock) {
+        int kk = e / BN;
+        int c = e % BN;
         int64_t k = kb + kk;
         int64_t cc = col_base + c;
         b_s[kk][c] = (k < D1 && cc < D2) ? b_g0[k * D2 + cc] : scalar_t(0);
@@ -206,26 +241,46 @@ __global__ void grouped_gemm_gather_kernel(scalar_t* __restrict__ out, scalar_t 
 
     if (uniform) {
 #pragma unroll
-      for (int kk = 0; kk < kTile; ++kk) {
-        scalar_t bv = b_s[kk][threadIdx.x];
+      for (int kk = 0; kk < BK; ++kk) {
+        scalar_t a_frag[TM];
+        scalar_t b_frag[TN];
 #pragma unroll
-        for (int rr = 0; rr < kRowsPerThread; ++rr) {
-          acc[rr] += a_s[threadIdx.y + rr * kBlockRows][kk] * bv;
+        for (int i = 0; i < TM; ++i) {
+          a_frag[i] = a_s[kk][ty + i * LY];
+        }
+#pragma unroll
+        for (int j = 0; j < TN; ++j) {
+          b_frag[j] = b_s[kk][tx + j * LX];
+        }
+#pragma unroll
+        for (int i = 0; i < TM; ++i) {
+#pragma unroll
+          for (int j = 0; j < TN; ++j) {
+            acc[i][j] += a_frag[i] * b_frag[j];
+          }
         }
       }
-    } else if (col < D2) {
+    } else {
       // Mixed tile: b straight from global, per row group (module comment
-      // §1) — coalesced across the 32 column lanes for every (rr, kk); a
-      // gathered b copy is never materialised.
-      int64_t const kmax = min(static_cast<int64_t>(kTile), D1 - kb);
+      // §1) — for each (row, kk) the four column reads are coalesced across
+      // the 16 adjacent tx lanes; a gathered b copy is never materialised.
+      int const kmax = static_cast<int>(min(static_cast<int64_t>(BK), D1 - kb));
 #pragma unroll
-      for (int rr = 0; rr < kRowsPerThread; ++rr) {
-        int r = static_cast<int>(threadIdx.y) + rr * kBlockRows;
+      for (int i = 0; i < TM; ++i) {
+        int r = ty + i * LY;
         int64_t g = idx_s[r];
         if (g >= 0) {
-          scalar_t const* b_col = b + g * D1 * D2 + kb * D2 + col;
-          for (int64_t kk = 0; kk < kmax; ++kk) {
-            acc[rr] += a_s[r][kk] * b_col[kk * D2];
+          scalar_t const* b_gk = b + g * D1 * D2 + kb * D2;
+          for (int kk = 0; kk < kmax; ++kk) {
+            scalar_t const a_v = a_s[kk][r];
+            scalar_t const* b_row = b_gk + static_cast<int64_t>(kk) * D2;
+#pragma unroll
+            for (int j = 0; j < TN; ++j) {
+              int64_t cc = col_base + tx + j * LX;
+              if (cc < D2) {
+                acc[i][j] += a_v * b_row[cc];
+              }
+            }
           }
         }
       }
@@ -233,32 +288,58 @@ __global__ void grouped_gemm_gather_kernel(scalar_t* __restrict__ out, scalar_t 
     __syncthreads();
   }
 
-  if (col < D2) {
 #pragma unroll
-    for (int rr = 0; rr < kRowsPerThread; ++rr) {
-      int64_t row = row_base + threadIdx.y + rr * kBlockRows;
-      if (row < N) {
-        out[row * D2 + col] = acc[rr];
+  for (int i = 0; i < TM; ++i) {
+    int64_t row = row_base + ty + i * LY;
+    if (row < N) {
+#pragma unroll
+      for (int j = 0; j < TN; ++j) {
+        int64_t cc = col_base + tx + j * LX;
+        if (cc < D2) {
+          out[row * D2 + cc] = acc[i][j];
+        }
       }
     }
   }
 }
 
+// 16-byte vector type per value dtype for LDS.128 fragment loads
+// (float4 for f32, double2 for f64); count = TM/TN elements per 16B.
+template <typename T>
+struct Vec16;
+template <>
+struct Vec16<float> {
+  using type = float4;
+  static constexpr int kElems = 4;
+};
+template <>
+struct Vec16<double> {
+  using type = double2;
+  static constexpr int kElems = 2;
+};
+
 // Scatter-reduce mode (module comment §2): out[g, :, :] = sum over the
 // sorted-idx row range [lo, hi) of outer(a[i, :], b[i, :]). Block = one
-// group's 32x32 tile of the (D1, D2) accumulator; rows accumulated in
-// ascending order — bitwise deterministic, no atomics.
-template <typename scalar_t, typename index_t>
+// group's 64x64 tile of the (D1, D2) accumulator (256 threads, 4x4 register
+// tiles, same geometry as gather mode); rows accumulated in ascending order
+// in 16-row chunks — bitwise deterministic, no atomics.
+template <typename scalar_t, typename index_t, int BM, int BN, int BK, int TM, int TN>
 __global__ void grouped_gemm_scatter_kernel(scalar_t* __restrict__ out, scalar_t const* __restrict__ a,
                                             scalar_t const* __restrict__ b, index_t const* __restrict__ idx, int64_t N,
                                             int64_t D1, int64_t D2) {
-  __shared__ scalar_t a_s[kTile][kTile + 1];
-  __shared__ scalar_t b_s[kTile][kTile + 1];
+  // Unpadded: both tiles stage row-contiguously (conflict-free writes), and
+  // 16-byte-aligned row bases enable vectorised LDS.128 fragment reads.
+  __shared__ scalar_t a_s[BK][BM];
+  __shared__ scalar_t b_s[BK][BN];
 
   int64_t const g = static_cast<int64_t>(blockIdx.x);
-  int64_t const i_base = static_cast<int64_t>(blockIdx.y) * kTile;
-  int64_t const j_base = static_cast<int64_t>(blockIdx.z) * kTile;
-  int const tid = static_cast<int>(threadIdx.y) * kTile + static_cast<int>(threadIdx.x);
+  int64_t const i_base = static_cast<int64_t>(blockIdx.y) * BM;
+  int64_t const j_base = static_cast<int64_t>(blockIdx.z) * BN;
+  int const tid = static_cast<int>(threadIdx.x);
+  constexpr int LX = BN / TN;  // column-lane count (thread grid is (LY, LX) = 256)
+  constexpr int LY = BM / TM;  // row-lane count
+  int const tx = tid % LX;
+  int const ty = tid / LX;
 
   // Per-thread binary search (all threads land on the same [lo, hi); two
   // O(log N) probes are noise next to the row walk, so no lane-0+broadcast
@@ -266,20 +347,23 @@ __global__ void grouped_gemm_scatter_kernel(scalar_t* __restrict__ out, scalar_t
   int64_t const lo = lower_bound_idx<index_t>(idx, N, g);
   int64_t const hi = upper_bound_idx<index_t>(idx, N, g);
 
-  scalar_t acc[kRowsPerThread];
+  scalar_t acc[TM][TN];
 #pragma unroll
-  for (int rr = 0; rr < kRowsPerThread; ++rr) {
-    acc[rr] = scalar_t(0);
+  for (int i = 0; i < TM; ++i) {
+#pragma unroll
+    for (int j = 0; j < TN; ++j) {
+      acc[i][j] = scalar_t(0);
+    }
   }
 
-  int64_t const j = j_base + static_cast<int64_t>(threadIdx.x);
-
-  for (int64_t r0 = lo; r0 < hi; r0 += kTile) {
-    // Stage 32-row chunks of a (columns i_base..) and b (columns j_base..),
-    // zero-filled past hi/D1/D2 — zero rows contribute nothing.
-    for (int e = tid; e < kTile * kTile; e += kThreadsPerBlock) {
-      int r = e / kTile;
-      int c = e % kTile;
+  for (int64_t r0 = lo; r0 < hi; r0 += BK) {
+    // Stage 16-row chunks of a (columns i_base..i_base+63) and b (columns
+    // j_base..j_base+63), zero-filled past hi/D1/D2 — zero rows contribute
+    // nothing. c-fastest split keeps the global reads coalesced.
+#pragma unroll
+    for (int e = tid; e < BK * BM; e += kThreadsPerBlock) {
+      int r = e / BM;
+      int c = e % BM;
       int64_t row = r0 + r;
       int64_t i = i_base + c;
       a_s[r][c] = (row < hi && i < D1) ? a[row * D1 + i] : scalar_t(0);
@@ -290,12 +374,32 @@ __global__ void grouped_gemm_scatter_kernel(scalar_t* __restrict__ out, scalar_t
 
     // Ascending, order-fixed accumulation over the chunk's rows (module
     // comment §2's determinism story); zero-filled tail rows add 0.
-#pragma unroll 4
-    for (int r = 0; r < kTile; ++r) {
-      scalar_t bv = b_s[r][threadIdx.x];
 #pragma unroll
-      for (int rr = 0; rr < kRowsPerThread; ++rr) {
-        acc[rr] += a_s[r][threadIdx.y + rr * kBlockRows] * bv;
+    for (int r = 0; r < BK; ++r) {
+      scalar_t a_frag[TM];
+      scalar_t b_frag[TN];
+      // Contiguous per-thread fragments read as 16-byte vectors (LDS.128) —
+      // cuts the shared-load instruction count 4x (f32) vs the strided
+      // scalar mapping; measured 1.15 -> 0.99 ms at N=16384/D=256/R=16
+      // (kernel_best_practices.md "Grouped GEMM" §7; siboehm SGEMM worklog).
+      using vec_t = typename Vec16<scalar_t>::type;
+      constexpr int kVE = Vec16<scalar_t>::kElems;
+      vec_t const* a_vec = reinterpret_cast<vec_t const*>(&a_s[r][ty * TM]);
+      vec_t const* b_vec = reinterpret_cast<vec_t const*>(&b_s[r][tx * TN]);
+#pragma unroll
+      for (int v = 0; v < TM / kVE; ++v) {
+        reinterpret_cast<vec_t*>(a_frag)[v] = a_vec[v];
+      }
+#pragma unroll
+      for (int v = 0; v < TN / kVE; ++v) {
+        reinterpret_cast<vec_t*>(b_frag)[v] = b_vec[v];
+      }
+#pragma unroll
+      for (int i = 0; i < TM; ++i) {
+#pragma unroll
+        for (int j = 0; j < TN; ++j) {
+          acc[i][j] += a_frag[i] * b_frag[j];
+        }
       }
     }
     __syncthreads();
@@ -303,13 +407,17 @@ __global__ void grouped_gemm_scatter_kernel(scalar_t* __restrict__ out, scalar_t
 
   // Unconditional write of the block's in-range tile — empty groups
   // (lo == hi) write zeros, which is what makes new_empty output safe.
-  if (j < D2) {
-    scalar_t* out_g = out + g * D1 * D2;
+  scalar_t* out_g = out + g * D1 * D2;
 #pragma unroll
-    for (int rr = 0; rr < kRowsPerThread; ++rr) {
-      int64_t i = i_base + threadIdx.y + rr * kBlockRows;
-      if (i < D1) {
-        out_g[i * D2 + j] = acc[rr];
+  for (int i = 0; i < TM; ++i) {
+    int64_t ii = i_base + ty * TM + i;
+    if (ii < D1) {
+#pragma unroll
+      for (int j = 0; j < TN; ++j) {
+        int64_t jj = j_base + tx * TN + j;
+        if (jj < D2) {
+          out_g[ii * D2 + jj] = acc[i][j];
+        }
       }
     }
   }
@@ -384,19 +492,49 @@ torch::stable::Tensor tsgu_grouped_gemm_launch(torch::stable::Tensor const& a, t
 
   TSGU_DISPATCH_VALUE(a.scalar_type(), "tsgu::grouped_gemm", [&] {
     TSGU_DISPATCH_INDEX(idx.scalar_type(), "tsgu::grouped_gemm", [&] {
-      dim3 const block(kTile, kBlockRows);
+      dim3 const block(kThreadsPerBlock);
+      scalar_t* out_p = static_cast<scalar_t*>(out.mutable_data_ptr());
+      scalar_t const* a_p = static_cast<scalar_t const*>(a_c.data_ptr());
+      scalar_t const* b_p = static_cast<scalar_t const*>(b_c.data_ptr());
+      index_t const* idx_p = static_cast<index_t const*>(idx_c.data_ptr());
+      // Tile-config selection (constants block above): the 128x128x8 config's
+      // 8x8 register tiles reach the cuBLAS-class 1:4 shared-load:FFMA ratio
+      // but roughly double the accumulator registers — used for the wide f32
+      // shapes where the vendor-parity bar lives. f64 (64 f64 accumulators
+      // would spill) and narrow shapes stay on 64x64x16. `if constexpr`
+      // keeps the fat config uninstantiated for f64 entirely.
       if (!reduce) {
-        dim3 const grid(static_cast<unsigned>((N + kTile - 1) / kTile),
-                        static_cast<unsigned>((D2 + kTile - 1) / kTile));
-        grouped_gemm_gather_kernel<scalar_t, index_t><<<grid, block, 0, guard.stream()>>>(
-            static_cast<scalar_t*>(out.mutable_data_ptr()), static_cast<scalar_t const*>(a_c.data_ptr()),
-            static_cast<scalar_t const*>(b_c.data_ptr()), static_cast<index_t const*>(idx_c.data_ptr()), N, D1, D2);
+        bool big = false;
+        if constexpr (sizeof(scalar_t) == 4) {
+          big = D2 >= 128 && N >= 128;
+          if (big) {
+            dim3 const grid(static_cast<unsigned>((N + 127) / 128), static_cast<unsigned>((D2 + 127) / 128));
+            grouped_gemm_gather_kernel<scalar_t, index_t, 128, 128, 16, 8, 8>
+                <<<grid, block, 0, guard.stream()>>>(out_p, a_p, b_p, idx_p, N, D1, D2);
+          }
+        }
+        if (!big) {
+          dim3 const grid(static_cast<unsigned>((N + kBM - 1) / kBM), static_cast<unsigned>((D2 + kBN - 1) / kBN));
+          grouped_gemm_gather_kernel<scalar_t, index_t, kBM, kBN, kBK, kTM, kTN>
+              <<<grid, block, 0, guard.stream()>>>(out_p, a_p, b_p, idx_p, N, D1, D2);
+        }
       } else {
-        dim3 const grid(static_cast<unsigned>(num_groups), static_cast<unsigned>((D1 + kTile - 1) / kTile),
-                        static_cast<unsigned>((D2 + kTile - 1) / kTile));
-        grouped_gemm_scatter_kernel<scalar_t, index_t><<<grid, block, 0, guard.stream()>>>(
-            static_cast<scalar_t*>(out.mutable_data_ptr()), static_cast<scalar_t const*>(a_c.data_ptr()),
-            static_cast<scalar_t const*>(b_c.data_ptr()), static_cast<index_t const*>(idx_c.data_ptr()), N, D1, D2);
+        bool big = false;
+        if constexpr (sizeof(scalar_t) == 4) {
+          big = D1 >= 128 && D2 >= 128;
+          if (big) {
+            dim3 const grid(static_cast<unsigned>(num_groups), static_cast<unsigned>((D1 + 127) / 128),
+                            static_cast<unsigned>((D2 + 127) / 128));
+            grouped_gemm_scatter_kernel<scalar_t, index_t, 128, 128, 16, 8, 8>
+                <<<grid, block, 0, guard.stream()>>>(out_p, a_p, b_p, idx_p, N, D1, D2);
+          }
+        }
+        if (!big) {
+          dim3 const grid(static_cast<unsigned>(num_groups), static_cast<unsigned>((D1 + kBM - 1) / kBM),
+                          static_cast<unsigned>((D2 + kBN - 1) / kBN));
+          grouped_gemm_scatter_kernel<scalar_t, index_t, kBM, kBN, kBK, kTM, kTN>
+              <<<grid, block, 0, guard.stream()>>>(out_p, a_p, b_p, idx_p, N, D1, D2);
+        }
       }
     });
   });
