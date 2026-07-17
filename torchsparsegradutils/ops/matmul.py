@@ -52,7 +52,8 @@ def spmm(vals: Tensor, rowptr: Tensor, col: Tensor, dense: Tensor, B: int, n: in
         Dense product; ``p = dense.shape[-1]``.
     """
     raise NotImplementedError(
-        "tsgu::spmm has no implementation registered yet — lands in spec/commit.md Phase 3 (commit 15)."
+        "tsgu::spmm is CUDA-only (architecture.md §4): install a compatible torchsparsegradutils_cuda "
+        "backend and pass CUDA tensors."
     )
 
 
@@ -105,7 +106,8 @@ def sddmm(rowptr: Tensor, col: Tensor, g: Tensor, mat: Tensor, B: int, n: int, m
         New stored values aligned with ``col`` / the pattern's ``rowptr``.
     """
     raise NotImplementedError(
-        "tsgu::sddmm has no implementation registered yet — lands in spec/commit.md Phase 3 (commit 14)."
+        "tsgu::sddmm is CUDA-only (architecture.md §4): install a compatible torchsparsegradutils_cuda "
+        "backend and pass CUDA tensors."
     )
 
 
@@ -115,11 +117,47 @@ def _sddmm_fake(rowptr: Tensor, col: Tensor, g: Tensor, mat: Tensor, B: int, n: 
     return g.new_empty(col.shape[0])
 
 
-# tsgu::sddmm gets no register_autograd here: in this commit it is only ever
-# used as a backward primitive for other ops (map.md routing), never
-# differentiated through directly; its own higher-order-gradient support
-# (needed for e.g. gradgradcheck of sparse_mm, PR #85 style) is decided at
-# its own kernel commit (commit 14), not invented here.
+# tsgu::sddmm autograd (spec/commit.md Phase 3 commit 17): the solve ops'
+# backwards route gradA through sddmm, and their higher-order-gradient
+# guarantee (testing.md: "gradgradcheck ... solve ops — see PR #85") means
+# the backward itself must be differentiable. Both adjoints of the sampled
+# product are plain SpMMs at the sampled pattern (values = upstream grad):
+# grad_g = spmm(±grad_out @ pattern, mat); grad_mat = the same on the
+# transposed pattern — no new kernel, exactly map.md's routing vocabulary.
+
+
+def _sddmm_setup_context(ctx, inputs, output):
+    rowptr, col, g, mat, B, n, m, negate = inputs
+    ctx.save_for_backward(rowptr, col, g, mat)
+    ctx.B, ctx.n, ctx.m, ctx.negate = B, n, m, negate
+    ctx.g_requires_grad = g.requires_grad
+    ctx.mat_requires_grad = mat.requires_grad
+
+
+def _sddmm_backward(ctx, grad_output):
+    rowptr, col, g, mat = ctx.saved_tensors
+    B, n, m = ctx.B, ctx.n, ctx.m
+    # grad_output can arrive as an expanded stride-0 view (e.g. out.sum()'s
+    # ones-grad). It is passed below as tsgu::spmm's `vals`, which the
+    # launcher reads through a flat pointer without a contiguity guard (only
+    # its dense operand is guarded) — a stride-0 vals silently reads garbage
+    # past the one-element storage. Materialise it first; torch.neg already
+    # produces a contiguous result on the negate path.
+    signed_grad = torch.neg(grad_output) if ctx.negate else grad_output.contiguous()
+
+    grad_g = None
+    if ctx.g_requires_grad:
+        grad_g = torch.ops.tsgu.spmm(signed_grad, rowptr, col, mat, B, n, m)
+
+    grad_mat = None
+    if ctx.mat_requires_grad:
+        csc = BatchedCSR(values=signed_grad, rowptr=rowptr, col=col, shape=(B, n, m)).transposed
+        grad_mat = torch.ops.tsgu.spmm(csc.values, csc.colptr, csc.row, g, B, m, n)
+
+    return None, None, grad_g, grad_mat, None, None, None, None
+
+
+sddmm.register_autograd(_sddmm_backward, setup_context=_sddmm_setup_context)
 
 
 def _spmm_setup_context(ctx, inputs, output):

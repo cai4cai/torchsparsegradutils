@@ -3,6 +3,8 @@ from typing import Callable, Optional, cast
 
 import torch
 
+from torchsparsegradutils._batched import BatchedCSR
+
 
 def sparse_generic_solve(
     A: torch.Tensor,
@@ -90,6 +92,9 @@ def sparse_generic_solve(
 
     Examples
     --------
+    The backward routes gradA through the CUDA-only ``tsgu::sddmm`` op
+    (architecture.md §4) -- these examples run on CUDA tensors.
+
     >>> import torch
     >>> from torchsparsegradutils import sparse_generic_solve
     >>> from torchsparsegradutils.utils import linear_cg, bicgstab, minres
@@ -97,14 +102,14 @@ def sparse_generic_solve(
     >>> indices = torch.tensor([[0, 0, 1, 1, 2],
     ...                         [0, 1, 0, 1, 2]])
     >>> values = torch.tensor([4.0, -1.0, -1.0, 4.0, 2.0])
-    >>> A = torch.sparse_coo_tensor(indices, values, (3, 3))
-    >>> B = torch.tensor([1.0, 2.0, 3.0])
+    >>> A = torch.sparse_coo_tensor(indices, values, (3, 3)).cuda()
+    >>> B = torch.tensor([1.0, 2.0, 3.0]).cuda()
     >>> x = sparse_generic_solve(A, B, solve=linear_cg)
     >>> x.shape
     torch.Size([3])
 
     >>> # Multiple RHS with BiCGSTAB
-    >>> X = sparse_generic_solve(A, torch.randn(3, 5), solve=bicgstab)
+    >>> X = sparse_generic_solve(A, torch.randn(3, 5).cuda(), solve=bicgstab)
     >>> X.shape
     torch.Size([3, 5])
 
@@ -165,63 +170,89 @@ def sparse_generic_solve(
     elif transpose_solve is None:
         transpose_solve = solve
 
-    return _legacy_sparse_generic_solve(A, B, solve, transpose_solve, kwargs)
+    return _tsgu_sparse_generic_solve(A, B, solve, transpose_solve, kwargs)
 
 
-# deleted by its kernel commit (spec/commit.md Phase 3)
-def _legacy_sparse_generic_solve(A, B, solve, transpose_solve, kwargs):
-    X = cast(torch.Tensor, SparseGenericSolve.apply(A, B, solve, transpose_solve, kwargs))
+def _tsgu_sparse_generic_solve(A, B, solve, transpose_solve, kwargs):
+    """Host-loop forward + ``tsgu::sddmm`` backward (spec/commit.md Phase 3
+    commit 17; map.md routing: ``sparse_generic_solve`` forward = host loop →
+    ``tsgu::spmm`` — the default solvers route their matvecs through the
+    kernel via ``solvers/_matvec.py`` — backward = host ``transpose_solve`` →
+    gradA ``tsgu::sddmm``; replaces ``_legacy_sparse_generic_solve`` /
+    ``SparseGenericSolve``, deleted in this commit).
 
-    # Ensure output rank matches B (solver might return (n,1) for 1D B, etc.)
-    if B.dim() == 1 and X.dim() == 2 and X.shape[1] == 1:
-        X = X.squeeze(-1)
-    elif B.dim() == 2 and X.dim() == 1:
-        X = X.unsqueeze(-1)
+    Unwraps ``A`` into its ``BatchedCSR`` descriptor at the boundary
+    (architecture.md §2) and threads the descriptor's stored values through
+    :class:`_GenericSolveIFT`, so the sampled gradient the sddmm kernel
+    produces flows back through ``from_torch``'s differentiable extraction
+    chain and rewraps as a sparse gradient at ``A``'s own pattern in ``A``'s
+    own layout (COO in → COO grad out; map.md invariant 3) — the same
+    mechanism ``_tsgu_sparse_mm`` documents.
 
-    return X
+    The solve itself cannot be a ``tsgu::`` custom op: its defining inputs
+    are the pluggable ``solve``/``transpose_solve`` **callables** (map.md
+    contract: user solvers must keep working), which cannot cross a
+    ``torch.library`` schema. The implicit-function-theorem adjoint is
+    therefore wired with a thin private ``autograd.Function`` whose backward
+    is built from differentiable pieces only (a recursive transposed solve
+    and ``tsgu::sddmm``), preserving the higher-order-gradient guarantee
+    (testing.md: gradgradcheck for solve ops, PR #85).
+    """
+    descriptor = BatchedCSR.from_torch(A)
+    return cast(
+        torch.Tensor,
+        _GenericSolveIFT.apply(
+            descriptor.values, B, descriptor.rowptr, descriptor.col, A, solve, transpose_solve, kwargs
+        ),
+    )
 
 
-class SparseGenericSolve(torch.autograd.Function):
-    r"""
-    Autograd function for sparse linear system solving with iterative methods.
+class _GenericSolveIFT(torch.autograd.Function):
+    """Implicit-function-theorem adjoint for the pluggable host solve.
 
-    See Also
-    --------
-    sparse_generic_solve : User-facing function that calls this autograd function.
+    Forward runs the (non-differentiable) user solve on detached operands.
+    Backward: gradB solves the transposed system with ``transpose_solve``
+    (recursively through ``sparse_generic_solve`` so the node chain supports
+    higher-order gradients), and the sparse gradient w.r.t. ``A``'s stored
+    values is exactly one ``tsgu::sddmm`` at ``A``'s pattern with the fused
+    negate epilogue: gradA[i, j] = -dot(gradB[i, :], x[j, :]).
     """
 
     @staticmethod
-    def forward(ctx, A, B, solve, transpose_solve, kwargs):
-        grad_flag = A.requires_grad or B.requires_grad
-        ctx.solve = solve
-        ctx.transpose_solve = transpose_solve
-        ctx.kwargs = kwargs  # Store kwargs for backward pass
-
+    def forward(ctx, values, B, rowptr, col, A, solve, transpose_solve, kwargs):
         x = solve(A.detach(), B.detach(), **kwargs)
 
         # Ensure output dtype matches input dtype
         if x.dtype != A.dtype:
             x = x.to(dtype=A.dtype)
 
-        x.requires_grad = grad_flag
+        # Ensure output rank matches B (solver might return (n, 1) for 1D B, etc.)
+        if B.dim() == 1 and x.dim() == 2 and x.shape[1] == 1:
+            x = x.squeeze(-1)
+        elif B.dim() == 2 and x.dim() == 1:
+            x = x.unsqueeze(-1)
 
-        ctx.save_for_backward(A, x)
+        ctx.save_for_backward(rowptr, col, A, x)
+        ctx.solve = solve
+        ctx.transpose_solve = transpose_solve
+        ctx.kwargs = kwargs
+        ctx.rhs_was_vector = B.dim() == 1
         return x
 
     @staticmethod
     def backward(ctx, grad):  # type: ignore[override]
-        A, x = ctx.saved_tensors
+        rowptr, col, A, x = ctx.saved_tensors
+        n_rows, n_cols = A.shape[-2], A.shape[-1]
 
-        # Unsqueeze, if necessary
-        is_vector = x.ndim == 1
-        if is_vector:
-            x = x.unsqueeze(-1)
-            grad = grad.unsqueeze(-1)
+        grad_matrix = grad.unsqueeze(-1) if ctx.rhs_was_vector else grad
+        x_matrix = x.unsqueeze(-1) if ctx.rhs_was_vector else x
 
-        # Backprop rule: gradB = A^{-T} grad
+        # Backprop rule: gradB = A^{-T} grad — a recursive sparse_generic_solve
+        # with the two solvers swapped, so the backward is itself the same
+        # differentiable node (higher-order gradients, PR #85).
         gradB = sparse_generic_solve(
             A,
-            grad,
+            grad_matrix,
             solve=ctx.transpose_solve,
             transpose_solve=ctx.solve,
             **ctx.kwargs,
@@ -231,46 +262,17 @@ class SparseGenericSolve(torch.autograd.Function):
         if gradB.dtype != A.dtype:
             gradB = gradB.to(dtype=A.dtype)
 
-        # The gradient with respect to the matrix A seen as a dense matrix would
-        # lead to a backprop rule as follows
-        # gradA = -(A^{-T} grad)(A^{-1} B) = - gradB @ x.T
-        # but we are only interested in the gradient with respect to
-        # the (non-zero) values of A. To save memory, instead of computing the full
-        # dense matrix gradB @ x.T and then subsampling at the nnz locations in a,
-        # we can directly only compute the required values:
-        # gradA[i,j] = - dotprod(gradB[i,:], x[j,:])
-
-        # We start by getting the i and j indices:
-        if A.layout == torch.sparse_coo:
-            A_coalesced = A.coalesce()  # Ensure tensor is coalesced before accessing indices
-            A_row_idx = A_coalesced.indices()[0, :]
-            A_col_idx = A_coalesced.indices()[1, :]
-        else:
-            A_col_idx = A.col_indices()
-            A_crow_idx = A.crow_indices()
-            # Uncompress row indices:
-            A_row_idx = torch.repeat_interleave(
-                torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
+        grad_values = None
+        if ctx.needs_input_grad[0]:
+            # gradA at A's own sparsity pattern, negate epilogue fused in the
+            # kernel (map.md routing) — no dense materialisation:
+            # gradA[i, j] = -dot(gradB[i, :], x[j, :]).
+            grad_values = torch.ops.tsgu.sddmm(
+                rowptr, col, gradB.unsqueeze(0), x_matrix.unsqueeze(0), 1, n_rows, n_cols, True
             )
 
-        mgradbselect = -gradB.index_select(0, A_row_idx)  # -gradB[i, :]
-        xselect = x.index_select(0, A_col_idx)  # x[j, :]
+        grad_rhs = None
+        if ctx.needs_input_grad[1]:
+            grad_rhs = gradB.squeeze(-1) if ctx.rhs_was_vector else gradB
 
-        # Dot product:
-        mgbx = mgradbselect * xselect
-        gradA = torch.sum(mgbx, dim=1)
-
-        # Ensure gradient dtype matches input dtype
-        if gradA.dtype != A.dtype:
-            gradA = gradA.to(dtype=A.dtype)
-
-        if A.layout == torch.sparse_coo:
-            gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
-        else:
-            gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
-
-        # Squeeze gradB back to original shape if it was a vector
-        if is_vector:
-            gradB = gradB.squeeze(-1)
-
-        return gradA, gradB, None, None, None
+        return grad_values, grad_rhs, None, None, None, None, None, None

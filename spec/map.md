@@ -65,8 +65,8 @@ verbatim, never invent. `spmv` = `spmm` with `p = 1` (no separate op).
 |------------|---------|----------|---------------|--------|
 | `sparse_mm` | `tsgu::spmm` | gradA `tsgu::sddmm` · gradB `tsgu::spmm` (on cached CSC) | `spmm/`, `sddmm/` | ✅ live (commit 15) |
 | `sparse_triangular_solve` | `tsgu::spsm` | gradB `tsgu::spsm` (transposed plan) · gradA `tsgu::sddmm` (negate epilogue) | `spsm/`, `sddmm/` | ✅ live (commit 16) |
-| `sparse_generic_solve` | host loop → `tsgu::spmm` | host `transpose_solve` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` | pending |
-| `sparse_generic_lstsq` | host loop → `tsgu::spmm` (A and cached CSC) | host `transpose_lstsq` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` | pending |
+| `sparse_generic_solve` | host loop → `tsgu::spmm` | host `transpose_solve` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` | ✅ live (commit 17) |
+| `sparse_generic_lstsq` | host loop → `tsgu::spmm` (A and cached CSC) | host `transpose_lstsq` → gradA `tsgu::sddmm` | `spmm/`, `sddmm/` | ✅ live (commit 17) |
 | `sparse_logsumexp` | `tsgu::seglse` | `tsgu::seglse_bwd` (uses saved `lse`) | `logsumexp/` | ✅ live (commit 12) |
 | `sparse_bidir_logsumexp` | `tsgu::seglse_bidir` | `tsgu::seglse_bidir_bwd` | `logsumexp/` | ✅ live (commit 13) — correctness bar met, fusion perf bar NOT met (see commit message) |
 | `segment_mm` | `tsgu::grouped_gemm` | both grads `tsgu::grouped_gemm` (transposed operands) | `grouped_gemm/` | pending |

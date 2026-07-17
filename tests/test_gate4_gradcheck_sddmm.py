@@ -133,3 +133,28 @@ def test_gradcheck_sddmm_only_g_requires_grad():
         lambda g_: _SddmmProbe.apply(rowptr, col, g_, mat, B, n_, m_, False),
         (g,),
     )
+
+
+@requires_cuda_backend
+def test_sddmm_backward_with_expanded_stride0_upstream_grad():
+    # Regression (found by the commit-20 memory-benchmark pass): out.sum()'s
+    # backward hands _sddmm_backward an EXPANDED stride-0 ones tensor, which
+    # flows into tsgu::spmm as `vals` — a flat-pointer operand the launcher
+    # does not contiguity-guard. Before the fix this read garbage past the
+    # one-element storage: silently wrong gradients at small nse (in-page
+    # OOB), non-finite values at benchmark scale.
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+    n, m, p, nse = 32, 24, 4, 100
+    row = torch.sort(torch.randint(0, n, (nse,), device=device)).values
+    col = torch.randint(0, m, (nse,), device=device)
+    rowptr = torch._convert_indices_from_coo_to_csr(row, n).to(torch.int64)
+    g = torch.randn(1, n, p, device=device, dtype=torch.float64, requires_grad=True)
+    mat = torch.randn(1, m, p, device=device, dtype=torch.float64)
+
+    out = torch.ops.tsgu.sddmm(rowptr, col, g, mat, 1, n, m, False)
+    out.sum().backward()
+
+    reference = torch.zeros_like(g)
+    reference[0].index_add_(0, row.long(), mat[0, col.long()])
+    assert torch.allclose(g.grad, reference, atol=1e-12, rtol=1e-12)

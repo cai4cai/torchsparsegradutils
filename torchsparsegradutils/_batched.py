@@ -27,7 +27,16 @@ from typing import List, Sequence, Tuple, Union
 
 import torch
 
-from torchsparsegradutils.utils.convert import _compress_row_indices
+
+def _compress_row_indices(row_indices: torch.Tensor, n_rows: int, _validate: bool = True) -> torch.Tensor:
+    # Deferred import (commit 17): importing torchsparsegradutils.utils.convert
+    # initialises the utils package, whose __init__ re-exports solvers/ — and
+    # the solvers import this module through solvers/_matvec. A module-level
+    # import here would therefore be circular.
+    from torchsparsegradutils.utils.convert import _compress_row_indices as _impl
+
+    return _impl(row_indices, n_rows, _validate=_validate)
+
 
 # int32 index arrays can address at most 2**31 - 1 positions; the eligibility
 # bound (architecture.md §3 / naming.md §2) checks nse_total, rowptr length,

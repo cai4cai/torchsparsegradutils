@@ -1,7 +1,17 @@
 import pytest
 import torch
+from test_config import DEVICES
 
 from torchsparsegradutils.solvers.cg import linear_cg
+
+
+def _make_spd(size, batch_size=None, device="cpu"):
+    """SPD dense matrix (size, size), or one batched matrix (batch_size, size, size)."""
+    shape = (batch_size, size, size) if batch_size else (size, size)
+    matrix = torch.randn(*shape, dtype=torch.float64, device=device)
+    matrix = matrix.matmul(matrix.mT)
+    matrix = matrix / matrix.norm()
+    return matrix + torch.eye(size, dtype=torch.float64, device=device) * 1e-1
 
 
 # Test basic CG solve for vectors and matrices
@@ -102,3 +112,48 @@ def test_batch_cg_init():
     chol = torch.linalg.cholesky(matrix)
     actual = torch.cholesky_solve(rhs, chol)
     assert torch.allclose(solves_init, actual, atol=1e-3, rtol=1e-4)
+
+
+# A right-hand side given as one batched matrix with shape (batch_size, n, n_rhs)
+# must solve each batch item exactly as an unbatched (n, n_rhs) solve would.
+@pytest.mark.parametrize("device", DEVICES, ids=str)
+def test_cg_batched_rhs_matches_loop(device):
+    torch.manual_seed(42)
+    batch_size, n, n_rhs = 3, 32, 4
+    matrix = _make_spd(n, batch_size, device)
+    rhs = torch.randn(batch_size, n, n_rhs, dtype=torch.float64, device=device)
+    solves = linear_cg(matrix.matmul, rhs=rhs, max_iter=n, tolerance=0)
+    assert solves.shape == rhs.shape
+    for b in range(batch_size):
+        single = linear_cg(matrix[b].matmul, rhs=rhs[b], max_iter=n, tolerance=0)
+        assert torch.allclose(solves[b], single, atol=1e-8, rtol=1e-8)
+
+
+# A sparse matrix passed as the operator (matvec routed through the BatchedOperator
+# adapter, i.e. tsgu::spmm on CUDA) must match the dense operator's solve.
+@pytest.mark.parametrize("device", DEVICES, ids=str)
+@pytest.mark.parametrize("layout", [torch.sparse_coo, torch.sparse_csr], ids=["coo", "csr"])
+def test_cg_sparse_operator_matches_dense(device, layout):
+    torch.manual_seed(42)
+    n, n_rhs = 32, 4
+    matrix = _make_spd(n, device=device)
+    rhs = torch.randn(n, n_rhs, dtype=torch.float64, device=device)
+    expected = linear_cg(matrix.matmul, rhs=rhs, max_iter=n, tolerance=0)
+    matrix_sparse = matrix.to_sparse_coo() if layout == torch.sparse_coo else matrix.to_sparse_csr()
+    solves = linear_cg(matrix_sparse, rhs=rhs, max_iter=n, tolerance=0)
+    assert solves.shape == rhs.shape
+    assert torch.allclose(solves, expected, atol=1e-8, rtol=1e-8)
+
+
+@pytest.mark.parametrize("device", DEVICES, ids=str)
+@pytest.mark.parametrize("layout", [torch.sparse_coo, torch.sparse_csr], ids=["coo", "csr"])
+def test_cg_batched_sparse_operator_matches_dense(device, layout):
+    torch.manual_seed(42)
+    batch_size, n, n_rhs = 3, 32, 4
+    matrix = _make_spd(n, batch_size, device)
+    rhs = torch.randn(batch_size, n, n_rhs, dtype=torch.float64, device=device)
+    expected = linear_cg(matrix.matmul, rhs=rhs, max_iter=n, tolerance=0)
+    matrix_sparse = matrix.to_sparse_coo() if layout == torch.sparse_coo else matrix.to_sparse_csr()
+    solves = linear_cg(matrix_sparse, rhs=rhs, max_iter=n, tolerance=0)
+    assert solves.shape == rhs.shape
+    assert torch.allclose(solves, expected, atol=1e-8, rtol=1e-8)

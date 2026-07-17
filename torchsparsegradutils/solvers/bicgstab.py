@@ -1,10 +1,19 @@
 # Code imported from https://github.com/PythonOptimizers/pykrylov/blob/master/pykrylov/bicgstab/bicgstab.py
 # Modifications to fit torchsparsegradutils
+#
+# Batched rewrite (spec/commit.md commit 17): every iterate lives in the
+# canonical (batch_size, n, n_rhs) shape (batch_size = 1 encodes unbatched —
+# naming.md §2) with per-(batch item, right-hand-side column) convergence
+# masks; the matvec runs through the shared BatchedOperator adapter, which
+# routes sparse operators through tsgu::spmm when the CUDA backend can take
+# them.
 
 import logging
 from typing import Callable, NamedTuple, Optional, Union
 
 import torch
+
+from ._matvec import BatchedOperator, as_batched_rhs, restore_rhs_shape
 
 # Default (null) logger.
 _null_log = logging.getLogger("bicgstab")
@@ -19,6 +28,24 @@ class BICGSTABSettings(NamedTuple):
     logger: logging.Logger = _null_log
 
 
+def _dot_columns(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """Dot product reduced over the n axis, batch and n_rhs axes retained:
+    two ``(batch_size, n, n_rhs)`` tensors -> ``(batch_size, 1, n_rhs)``."""
+    return (a * b).sum(dim=-2, keepdim=True)
+
+
+def _column_norm(t: torch.Tensor) -> torch.Tensor:
+    """2-norm reduced over the n axis, batch and n_rhs axes retained:
+    ``(batch_size, n, n_rhs) -> (batch_size, 1, n_rhs)``."""
+    return torch.linalg.vector_norm(t, dim=-2, keepdim=True)
+
+
+def _active_max(norms: torch.Tensor, active: torch.Tensor) -> torch.Tensor:
+    """Aggregate a per-column residual norm for logging: max over the still
+    active (batch item, column) pairs, 0 when none are active."""
+    return torch.where(active, norms, torch.zeros_like(norms)).max()
+
+
 def bicgstab(
     matmul_closure: Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]],
     rhs: torch.Tensor,
@@ -29,21 +56,36 @@ def bicgstab(
     Solve linear systems with the BiConjugate Gradient Stabilized (BiCGSTAB) method.
 
     Solves nonsymmetric, nonsingular systems :math:`A x = b`. Accepts either a matrix-like
-    tensor (using ``.matmul``) or a callable for the matrix–vector product, and
-    optionally a (left) preconditioner, also as tensor or callable, approximating :math:`M^{-1}`.
+    tensor (dense or sparse COO/CSR, 2D or batched 3D) or a callable for the matrix–vector
+    product, and optionally a (left) preconditioner, also as tensor or callable,
+    approximating :math:`M^{-1}`.
+
+    Multiple right-hand sides are solved simultaneously: all iterates are batched over
+    the right-hand-side columns (and over a leading batch axis, if present) with
+    per-(batch item, column) convergence masks. A column that meets its stopping
+    threshold (or hits a breakdown) freezes — its solution no longer updates — while
+    the remaining columns iterate on. There is no shared Krylov subspace, so this is
+    mathematically unchanged from the former per-column loop.
 
     Parameters
     ----------
     matmul_closure : {torch.Tensor, callable(x) -> Ax}
-        Matrix–vector multiplication operator. If a tensor is provided, its
-        ``.matmul`` is used.
-    rhs : torch.Tensor, shape (n,) or (n, k)
-        Right-hand side vector(s). For multiple RHS, **each column is solved
-        independently** (no block BiCGSTAB).
+        Matrix–vector multiplication operator. A dense tensor uses ``.matmul``; a
+        sparse (COO/CSR) tensor routes through ``tsgu::spmm`` on an eligible CUDA
+        backend and plain torch sparse matmul semantics otherwise. A callable
+        receives operands shaped like ``rhs``: plain ``(n,)`` vectors when ``rhs``
+        is unbatched (one call per right-hand-side column), or the full
+        ``(batch_size, n, n_rhs)`` operand when ``rhs`` is batched.
+    rhs : torch.Tensor, shape (n,), (n, n_rhs) or (batch_size, n, n_rhs)
+        Right-hand side vector(s). Each column is solved independently
+        (no block BiCGSTAB), all columns simultaneously.
     initial_guess : torch.Tensor, optional, shape like ``rhs``
         Initial guess. If ``None``, zero initialization is used.
     settings : BICGSTABSettings, optional
         Convergence tolerances, maximum matvecs, optional preconditioner and logger.
+        ``matvec_max`` counts batched matvec calls (one call advances every column),
+        defaulting to ``2 * n``; convergence thresholds apply per column as
+        ``max(abstol, reltol * ||r0||)``.
 
     Returns
     -------
@@ -60,9 +102,9 @@ def bicgstab(
     -----
     Per iteration (unpreconditioned) BiCGSTAB [1a]_ uses ~2 matvecs, several dot products,
     and vector updates. The algorithm can experience breakdown when certain inner
-    products or denominators vanish (e.g., :math:`\langle r_0, v \rangle = 0` or :math:`\langle t, t \rangle = 0`).
-    This implementation follows a standard variant [2a]_ and solves multiple RHS by
-    looping over columns (no shared Krylov subspace).
+    products or denominators vanish (e.g., :math:`\langle r_0, v \rangle = 0` or :math:`\langle t, t \rangle = 0`);
+    a column hitting a breakdown freezes at its current iterate. This implementation
+    follows a standard variant [2a]_.
 
     References
     ----------
@@ -109,139 +151,120 @@ def bicgstab(
     ... )
     >>> x = bicgstab(A.matmul, b, settings=settings_precond)
     """
-    # support multiple right‐hand sides by solving each column separately
-    if rhs.dim() > 1:
-        cols = rhs.shape[1]
-        sols = [
-            bicgstab(
-                matmul_closure,
-                rhs[:, i],
-                None if initial_guess is None else initial_guess[:, i],
-                settings,
-            )
-            for i in range(cols)
-        ]
-        return torch.stack(sols, dim=1)
+    rhs_b, was_vector, was_batched = as_batched_rhs(rhs)
+    batch_size, n, n_rhs = rhs_b.shape
+    # Legacy vector closures receive plain (n,) operands; batched right-hand
+    # sides hand the closure the full canonical operand.
+    operand_ndim = 3 if was_batched else 1
 
-    n = rhs.shape[0]
-    nMatvec = 0
-
-    if torch.is_tensor(matmul_closure):
-        op = matmul_closure.matmul
-    elif callable(matmul_closure):
-        op = matmul_closure
-    else:
-        raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
+    op = BatchedOperator(matmul_closure, callable_operand_ndim=operand_ndim, n_rows=n, n_cols=n)
 
     if settings.precon is None:
         precon = None
-    elif torch.is_tensor(settings.precon):
-        precon = settings.precon.matmul
-    elif callable(settings.precon):
-        precon = settings.precon
+    elif torch.is_tensor(settings.precon) or callable(settings.precon):
+        precon = BatchedOperator(settings.precon, callable_operand_ndim=operand_ndim, n_rows=n, n_cols=n).matvec
     else:
         raise RuntimeError("settings.precon must be a tensor, or a callable object!")
 
+    nMatvec = 0
+
     # Initial guess is zero unless one is supplied
-    res_device = rhs.device
-    res_dtype = rhs.dtype
-
     if initial_guess is None:
-        x = torch.zeros(n, dtype=res_dtype, device=res_device)
+        x = torch.zeros_like(rhs_b)
     else:
-        x = initial_guess.clone()
+        guess, _, _ = as_batched_rhs(initial_guess)
+        if guess.shape != rhs_b.shape:
+            guess = guess.expand(batch_size, n, n_rhs)
+        x = guess.clone()
 
-    # matvec_max = kwargs.get('matvec_max', 2*n)
     matvec_max = 2 * n if settings.matvec_max is None else settings.matvec_max
 
     # Initial residual is the fixed vector
-    r0 = rhs.clone()
+    r0 = rhs_b.clone()
     if initial_guess is None:
-        r0 = rhs - op(x)
+        r0 = rhs_b - op.matvec(x)
         nMatvec += 1
 
-    rho = alpha = omega = 1.0
-    rho_next = torch.dot(r0, r0)
-    residNorm = residNorm0 = torch.abs(torch.sqrt(rho_next))
-    threshold = max(settings.abstol, settings.reltol * residNorm0)
+    # Every scalar iterate of the single-column algorithm becomes a
+    # (batch_size, 1, n_rhs) tensor.
+    one = torch.ones((batch_size, 1, n_rhs), dtype=rhs_b.dtype, device=rhs_b.device)
+    rho = one.clone()
+    alpha = one.clone()
+    omega = one.clone()
+    rho_next = _dot_columns(r0, r0)
+    residNorm0 = rho_next.sqrt().abs()
+    residNorm = residNorm0
+    # Per-column threshold: max(abstol, reltol * ||r0||), elementwise.
+    threshold = torch.clamp_min(settings.reltol * residNorm0, settings.abstol)
 
-    finished = residNorm <= threshold or nMatvec >= matvec_max
+    active = residNorm0 > threshold
+    if nMatvec >= matvec_max:
+        active = torch.zeros_like(active)
 
-    settings.logger.info("Initial residual = %8.2e" % residNorm0)
-    settings.logger.info("Threshold = %8.2e" % threshold)
+    settings.logger.info("Initial residual = %8.2e" % residNorm0.max())
+    settings.logger.info("Threshold = %8.2e" % threshold.max())
     hdr = "%6s  %8s" % ("Matvec", "Residual")
     settings.logger.info(hdr)
     settings.logger.info("-" * len(hdr))
 
-    if not finished:
-        r = r0.clone()
-        p = torch.zeros(n, dtype=res_dtype, device=res_device)
-        v = torch.zeros(n, dtype=res_dtype, device=res_device)
+    r = r0.clone()
+    p = torch.zeros_like(rhs_b)
+    v = torch.zeros_like(rhs_b)
 
-    while not finished:
+    while bool(active.any()) and nMatvec < matvec_max:
         beta = rho_next / rho * alpha / omega
         rho = rho_next
 
-        # Update p in-place
-        p *= beta
-        p -= beta * omega * v
-        p += r
+        # Update the search direction (frozen columns evolve harmlessly —
+        # their x and r no longer update).
+        p = r + beta * (p - omega * v)
 
         # Compute preconditioned search direction
-        if precon is not None:
-            q = precon(p)
-        else:
-            q = p
+        q = precon(p) if precon is not None else p
 
-        v = op(q)
+        v = op.matvec(q)
         nMatvec += 1
 
-        alpha = rho / torch.dot(r0, v)
+        # <r0, v> = 0 is a breakdown: those columns freeze at their current
+        # iterate; the division is made safe so no NaN leaks into the batch.
+        den_rv = _dot_columns(r0, v)
+        active = active & (den_rv != 0)
+        alpha = rho / torch.where(den_rv == 0, torch.ones_like(den_rv), den_rv)
         s = r - alpha * v
 
-        # Check for CGS termination
-        residNorm = torch.linalg.norm(s)
+        # Check for CGS termination (per column)
+        residNorm = _column_norm(s)
 
-        settings.logger.info("%6d  %8.2e" % (nMatvec, residNorm))
+        settings.logger.info("%6d  %8.2e" % (nMatvec, _active_max(residNorm, active)))
 
-        if residNorm <= threshold:
-            x += alpha * q
-            finished = True
-            continue
+        # Columns satisfying the CGS test take the half-step update and freeze.
+        cgs_hit = active & (residNorm <= threshold)
+        x = torch.where(cgs_hit, x + alpha * q, x)
+        active = active & ~cgs_hit
 
-        if nMatvec >= matvec_max:
-            finished = True
-            continue
+        if not bool(active.any()) or nMatvec >= matvec_max:
+            break
 
-        if precon is not None:
-            z = precon(s)
-        else:
-            z = s
+        z = precon(s) if precon is not None else s
 
-        t = op(z)
+        t = op.matvec(z)
         nMatvec += 1
-        omega = torch.dot(t, s) / torch.dot(t, t)
-        rho_next = -omega * torch.dot(r0, t)
 
-        # Update residual
-        r = s - omega * t
+        # <t, t> = 0 is a breakdown: freeze those columns, keep divisions safe.
+        den_tt = _dot_columns(t, t)
+        active = active & (den_tt != 0)
+        omega = _dot_columns(t, s) / torch.where(den_tt == 0, torch.ones_like(den_tt), den_tt)
+        rho_next = -omega * _dot_columns(r0, t)
 
-        # Update solution in-place-ish. Note that 'z *= omega' alters s if
-        # precon = None. That's ok since s is no longer needed in this iter.
-        # 'q *= alpha' would alter p.
-        z *= omega
-        x += z
-        x += alpha * q
+        # Update residual and solution — masked so frozen columns keep theirs.
+        r = torch.where(active, s - omega * t, r)
+        x = torch.where(active, x + omega * z + alpha * q, x)
 
-        residNorm = torch.linalg.norm(r)
+        residNorm = _column_norm(r)
 
-        settings.logger.info("%6d  %8.2e" % (nMatvec, residNorm))
+        settings.logger.info("%6d  %8.2e" % (nMatvec, _active_max(residNorm, active)))
 
-        if residNorm <= threshold or nMatvec >= matvec_max:
-            finished = True
-            continue
+        # Columns that met their threshold freeze.
+        active = active & (residNorm > threshold)
 
-    # converged = residNorm <= threshold  # variable unused
-    bestSolution = x
-
-    return bestSolution
+    return restore_rhs_shape(x, was_vector, was_batched)

@@ -3,7 +3,16 @@ import torch
 from test_config import DEVICES, Tolerances
 
 from torchsparsegradutils import sparse_generic_lstsq
+from torchsparsegradutils._dispatch import backend_available
 from torchsparsegradutils.utils.random_sparse import rand_sparse
+
+
+def _require_backend_for_backward(device):
+    """sparse_generic_lstsq's backward routes gradA through tsgu::sddmm and
+    tsgu::spmm, which are CUDA-only (architecture.md §4; spec/commit.md
+    commit 17) — the forward host loop still runs anywhere."""
+    if device.type != "cuda" or not backend_available():
+        pytest.skip("backward requires the CUDA backend (tsgu::sddmm)")
 
 
 def _id_device(d):
@@ -90,6 +99,7 @@ def test_generic_lstsq_coo_format(device):
 
 # Test gradient correctness with COO format
 def test_generic_lstsq_gradient_coo_format(device):
+    _require_backend_for_backward(device)
     A_shape = (6, 3)
     B_shape = (6, 2)
     dtype = torch.float64
@@ -140,6 +150,7 @@ def test_generic_lstsq_gradient_coo_format(device):
 
 # Test gradient correctness with single RHS
 def test_generic_lstsq_gradient_default(device):
+    _require_backend_for_backward(device)
     A_shape = (7, 4)
     B_shape = (7, 1)
     dtype = torch.float64
@@ -190,6 +201,7 @@ def test_generic_lstsq_gradient_default(device):
 
 # Test gradient correctness with multiple RHS
 def test_generic_lstsq_gradient_multiple_rhs(device):
+    _require_backend_for_backward(device)
     A_shape = (6, 3)
     B_shape = (6, 4)  # Multiple RHS
     dtype = torch.float64

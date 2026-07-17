@@ -1,10 +1,18 @@
 # MIT-licensed code imported from https://github.com/cornellius-gp/linear_operator
 # Minor modifications for torchsparsegradutils to remove dependencies
+#
+# Refactored (spec/commit.md commit 17) to iterate on one batched matrix with
+# shape (batch_size, n, n_rhs) — batch_size == 1 encodes unbatched — with
+# per-batch convergence masks shaped (batch_size, 1, n_rhs). The operator is
+# adapted through BatchedOperator, so sparse matrices route their matvec
+# through ``tsgu::spmm`` on CUDA.
 
 import warnings
 from typing import Callable, NamedTuple, Optional, Union
 
 import torch
+
+from ._matvec import BatchedOperator, as_batched_rhs, restore_rhs_shape
 
 
 class LinearCGSettings(NamedTuple):
@@ -22,6 +30,23 @@ class LinearCGSettings(NamedTuple):
 
 def _default_preconditioner(x):
     return x.clone()
+
+
+def _wrap_unbatched_preconditioner(preconditioner):
+    """Feed an unbatched caller's preconditioner the operand shapes it received
+    before the batched refactor (the same contract BatchedOperator applies to
+    the matmul closure): the canonical batch axis (``batch_size == 1``) is
+    hidden, so the callable keeps seeing ``(n, n_rhs)`` operands. A batched
+    dense operator can widen the iterate's batch axis by broadcasting; such
+    operands were already batched before the refactor and pass through as-is.
+    """
+
+    def wrapped(operand):
+        if operand.shape[0] == 1:
+            return preconditioner(operand.squeeze(0)).unsqueeze(0)
+        return preconditioner(operand)
+
+    return wrapped
 
 
 @torch.jit.script
@@ -114,16 +139,26 @@ def linear_cg(
     Solve symmetric positive definite linear systems using conjugate gradient (CG).
 
     Implements linear CG for systems :math:`A x = b` with symmetric positive definite
-    operator :math:`A`. Supports single/multiple RHS and optional stochastic Lanczos
-    tridiagonalization for eigenvalue/log-determinant estimation.
+    operator :math:`A`. Supports single/multiple right-hand sides and optional
+    stochastic Lanczos tridiagonalization for eigenvalue/log-determinant estimation.
+
+    Internally the right-hand side is canonicalised to one batched matrix with shape
+    ``(batch_size, n, n_rhs)`` (``batch_size = 1`` encodes unbatched input) and all
+    iterates live in that shape, with per-batch convergence masks shaped
+    ``(batch_size, 1, n_rhs)``. When the operator is a sparse matrix, the matvec
+    routes through ``tsgu::spmm`` on CUDA.
 
     Parameters
     ----------
     matmul_closure : {``torch.Tensor``, callable(x) -> ``A x``}
-        Matrix–vector multiply. If a tensor is provided, its ``.matmul`` is used.
-        The callable must accept inputs shaped like ``rhs`` and return ``A @ rhs``.
-    rhs : torch.Tensor, shape ``(..., n)`` or ``(..., n, k)``
-        Right-hand side(s). Leading batch dims are supported.
+        Matrix-vector multiply. A dense matrix with shape ``(n, n)`` or a batched
+        dense matrix with shape ``(batch_size, n, n)`` uses ``.matmul``; a sparse
+        matrix (COO/CSR, optionally batched) routes through the native sparse
+        matmul. A callable must accept inputs shaped like ``rhs`` and return
+        ``A @ rhs``.
+    rhs : torch.Tensor, shape ``(n,)``, ``(n, n_rhs)``, or ``(batch_size, n, n_rhs)``
+        Right-hand side(s): a vector, a matrix of right-hand sides, or one batched
+        matrix of right-hand sides (one leading batch axis).
     n_tridiag : int, optional
         Number of Lanczos tridiagonalizations (probe vectors). If ``> 0``,
         tridiagonal matrices are returned in addition to the solution. Default: ``0``.
@@ -133,7 +168,7 @@ def linear_cg(
     eps : float, optional
         Small constant to avoid division by zero. Default: ``1e-10``.
     stop_updating_after : float, optional
-        Per-vector early-stop threshold for residual norms. Default: ``1e-10``.
+        Per-right-hand-side early-stop threshold for residual norms. Default: ``1e-10``.
     max_iter : int, optional
         Maximum CG iterations. If ``None``, uses ``settings.max_cg_iterations``.
     max_tridiag_iter : int, optional
@@ -142,8 +177,9 @@ def linear_cg(
     initial_guess : torch.Tensor, optional, shape like ``rhs``
         Initial guess. If ``None``, zeros are used.
     preconditioner : callable, optional
-        Preconditioner with signature ``preconditioner(x) -> M^{-1} x``.
-        If ``None``, no preconditioning is used.
+        Preconditioner with signature ``preconditioner(x) -> M^{-1} x``. It
+        receives operands shaped like ``rhs`` (the same contract as a callable
+        ``matmul_closure``). If ``None``, no preconditioning is used.
     settings : LinearCGSettings, optional
         Configuration for iteration caps, tolerances, and logging verbosity.
 
@@ -152,8 +188,9 @@ def linear_cg(
     torch.Tensor or (torch.Tensor, torch.Tensor)
         * If ``n_tridiag == 0``: solution ``x`` with the same shape as ``rhs``.
         * If ``n_tridiag > 0``: ``(x, T)`` where ``T`` has shape
-          ``(n_tridiag, *rhs.shape[:-2], r, r)`` with ``r = last_tridiag_iter + 1``
-          and ``r <= min(max_tridiag_iter, n)``. Without batch dims this is ``(n_tridiag, r, r)``.
+          ``(n_tridiag, batch_size, r, r)`` for a batched ``rhs`` and
+          ``(n_tridiag, r, r)`` otherwise, with ``r = last_tridiag_iter + 1``
+          and ``r <= min(max_tridiag_iter, n)``.
 
     Raises
     ------
@@ -183,9 +220,9 @@ def linear_cg(
         >>> x.shape
         torch.Size([2])
 
-    Multiple RHS::
+    Multiple right-hand sides::
 
-        >>> B = torch.randn(2, 5)  # 5 RHS
+        >>> B = torch.randn(2, 5)  # 5 right-hand sides
         >>> X = linear_cg(A.matmul, B, max_iter=100, tolerance=1e-8)
         >>> X.shape
         torch.Size([2, 5])
@@ -201,21 +238,20 @@ def linear_cg(
         >>> T.shape  # (n_tridiag, r, r) with r <= n
         torch.Size([1, 2, 2])
 
-    Sparse operator via closure::
+    Sparse operator (matvec routes through ``tsgu::spmm`` on CUDA)::
 
         >>> indices = torch.tensor([[0, 0, 1, 1, 2], [0, 1, 0, 1, 2]])
         >>> values = torch.tensor([4.0, -1.0, -1.0, 4.0, 2.0])
         >>> A_sp = torch.sparse_coo_tensor(indices, values, (3, 3))
-        >>> x = linear_cg(lambda v: A_sp @ v, torch.randn(3))
+        >>> x = linear_cg(A_sp, torch.randn(3))
 
     References
     ----------
     .. [1e] linear_operator library. https://github.com/cornellius-gp/linear_operator
     """
-    # Unsqueeze, if necessary
-    is_vector = rhs.ndimension() == 1
-    if is_vector:
-        rhs = rhs.unsqueeze(-1)
+    # Canonicalise the right-hand side to one batched matrix with shape
+    # (batch_size, n, n_rhs); batch_size == 1 encodes unbatched input.
+    rhs, was_vector, was_batched = as_batched_rhs(rhs)
 
     # Some default arguments
     if max_iter is None:
@@ -225,30 +261,34 @@ def linear_cg(
     if initial_guess is None:
         initial_guess = torch.zeros_like(rhs)
     else:
-        # Unsqueeze, if necessary
-        is_vector = initial_guess.ndimension() == 1
-        if is_vector:
-            initial_guess = initial_guess.unsqueeze(-1)
+        initial_guess, _, _ = as_batched_rhs(initial_guess)
     if tolerance is None:
         tolerance = settings.cg_tolerance
     if preconditioner is None:
         preconditioner = _default_preconditioner
         precond = False
     else:
+        if not was_batched:
+            preconditioner = _wrap_unbatched_preconditioner(preconditioner)
         precond = True
 
     # If we are running m CG iterations, we obviously can't get more than m Lanczos coefficients
     if max_tridiag_iter > max_iter:
         raise RuntimeError("Getting a tridiagonalization larger than the number of CG iterations run is not possible!")
 
-    # Check matmul_closure object
-    if torch.is_tensor(matmul_closure):
-        matmul_closure = matmul_closure.matmul
-    elif not callable(matmul_closure):
-        raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
-
     # Get some constants
     num_rows = rhs.size(-2)
+
+    # Build the batched operator once: sparse matrices route through tsgu::spmm
+    # (CUDA) or the pure-torch fallback; dense matrices use .matmul; a user
+    # callable keeps seeing operands shaped like the caller's right-hand side.
+    op = BatchedOperator(
+        matmul_closure,
+        callable_operand_ndim=3 if was_batched else 2,
+        n_rows=num_rows,
+        n_cols=num_rows,
+    )
+
     n_iter = min(max_iter, num_rows) if settings.terminate_cg_by_size else max_iter
     n_tridiag_iter = min(max_tridiag_iter, num_rows)
     eps = torch.tensor(eps, dtype=rhs.dtype, device=rhs.device)
@@ -265,7 +305,7 @@ def linear_cg(
     initial_guess = initial_guess.div(rhs_norm)
 
     # residual: residual_{0} = b_vec - lhs x_{0}
-    residual = rhs - matmul_closure(initial_guess)
+    residual = rhs - op.matvec(initial_guess)
     batch_shape = residual.shape[:-2]
 
     # result <- x_{0}
@@ -281,7 +321,7 @@ def linear_cg(
         raise RuntimeError("NaNs encountered when trying to perform matrix-vector multiplication")
 
     # Sometime we're lucky and the preconditioner solves the system right away
-    # Check for convergence
+    # Check for convergence — per-batch masks shaped (batch_size, 1, n_rhs)
     residual_norm = residual.norm(2, dim=-2, keepdim=True)
     has_converged = torch.lt(residual_norm, stop_updating_after)
 
@@ -321,7 +361,7 @@ def linear_cg(
     for k in range(n_iter):
         # Get next alpha
         # alpha_{k} = (residual_{k-1}^T precon_residual{k-1}) / (p_vec_{k-1}^T mat p_vec_{k-1})
-        mvms = matmul_closure(curr_conjugate_vec)
+        mvms = op.matvec(curr_conjugate_vec)
         if precond:
             torch.mul(curr_conjugate_vec, mvms, out=mul_storage)
             torch.sum(mul_storage, -2, keepdim=True, out=alpha)
@@ -422,11 +462,15 @@ def linear_cg(
             UserWarning,
         )
 
-    if is_vector:
-        result = result.squeeze(-1)
+    # Restore the caller's right-hand-side shape
+    result = restore_rhs_shape(result, was_vector, was_batched)
 
     if n_tridiag:
         t_mat = t_mat[: last_tridiag_iter + 1, : last_tridiag_iter + 1]
-        return result, t_mat.permute(-1, *range(2, 2 + len(batch_shape)), 0, 1).contiguous()
+        # (r, r, batch_size, n_tridiag) -> (n_tridiag, batch_size, r, r)
+        t_mat = t_mat.permute(-1, 2, 0, 1).contiguous()
+        if not was_batched:
+            t_mat = t_mat.squeeze(1)
+        return result, t_mat
     else:
         return result

@@ -249,3 +249,68 @@ def test_normar(device):
     x = lsmr(A, b)[0]
     residual = b - Afun(x)
     assert torch.allclose(Arfun(residual), torch.zeros_like(x), atol=ATOL, rtol=RTOL)
+
+
+# --- Batched-iterate tests (spec/commit.md commit 17) ---
+
+
+def test_lsmr_multi_rhs_matches_column_solves(device):
+    # A matrix of right-hand sides (m, n_rhs) must match a loop of vector solves.
+    m, n, n_rhs = 40, 24, 4
+    torch.manual_seed(0)
+    A = torch.randn(m, n, dtype=torch.float64, device=device)
+    b = torch.randn(m, n_rhs, dtype=torch.float64, device=device)
+
+    x = lsmr(A, b)[0]
+    assert x.shape == (n, n_rhs)
+    for j in range(n_rhs):
+        column = lsmr(A, b[:, j])[0]
+        # Identical per-column iteration path; tolerance covers gemm-vs-gemv
+        # rounding accumulated over the shared iteration count.
+        assert torch.allclose(x[:, j], column, atol=1e-7, rtol=1e-7)
+
+
+def test_lsmr_batched_rhs_matches_item_solves(device):
+    # A batched right-hand side (batch_size, m, n_rhs) must match a loop of
+    # per-item solves.
+    batch_size, m, n, n_rhs = 3, 40, 24, 2
+    torch.manual_seed(1)
+    A = torch.randn(m, n, dtype=torch.float64, device=device)
+    b = torch.randn(batch_size, m, n_rhs, dtype=torch.float64, device=device)
+
+    x = lsmr(A, b)[0]
+    assert x.shape == (batch_size, n, n_rhs)
+    for i in range(batch_size):
+        item = lsmr(A, b[i])[0]
+        assert torch.allclose(x[i], item, atol=1e-7, rtol=1e-7)
+
+
+def test_lsmr_sparse_operator_matches_dense_cpu():
+    # Sparse CSR and COO operators (descriptor matvec path, transpose matvec
+    # via the cached BatchedCSC) must match the dense-operator result.
+    m, n, n_rhs = 40, 24, 4
+    device = torch.device("cpu")
+    torch.manual_seed(2)
+    A = torch.randn(m, n, dtype=torch.float64, device=device)
+    b = torch.randn(m, n_rhs, dtype=torch.float64, device=device)
+
+    expected = lsmr(A, b)[0]
+    for A_sparse in (A.to_sparse_csr(), A.to_sparse_coo()):
+        x = lsmr(A_sparse, b)[0]
+        assert torch.allclose(x, expected, atol=1e-6, rtol=1e-6)
+
+
+def test_lsmr_sparse_operator_cuda():
+    from torchsparsegradutils._dispatch import backend_available
+
+    if not (torch.cuda.is_available() and backend_available()):
+        pytest.skip("CUDA backend not available")
+    m, n, n_rhs = 40, 24, 2
+    device = torch.device("cuda")
+    torch.manual_seed(3)
+    A = torch.randn(m, n, dtype=torch.float64, device=device)
+    b = torch.randn(m, n_rhs, dtype=torch.float64, device=device)
+
+    expected = lsmr(A, b)[0]
+    x = lsmr(A.to_sparse_csr(), b)[0]
+    assert torch.allclose(x, expected, atol=1e-6, rtol=1e-6)

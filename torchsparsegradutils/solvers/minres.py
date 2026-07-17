@@ -1,9 +1,16 @@
 # MIT-licensed code imported from https://github.com/cornellius-gp/linear_operator
 # Minor modifications for torchsparsegradutils to remove dependencies
+#
+# Refactored (spec/commit.md commit 17) to iterate on one batched matrix with
+# shape (batch_size, n, n_rhs) — batch_size == 1 encodes unbatched. The
+# operator is adapted through BatchedOperator, so sparse matrices route their
+# matvec through ``tsgu::spmm`` on CUDA.
 
 from typing import Callable, NamedTuple, Optional, Union
 
 import torch
+
+from ._matvec import BatchedOperator, as_batched_rhs, restore_rhs_shape
 
 
 class MINRESSettings(NamedTuple):
@@ -25,6 +32,23 @@ def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
     return obj.view(*new_shape)
 
 
+def _wrap_unbatched_preconditioner(preconditioner):
+    """Feed an unbatched caller's preconditioner the operand shapes it received
+    before the batched refactor (the same contract BatchedOperator applies to
+    the matmul closure): the canonical batch axis (``batch_size == 1``) is
+    hidden, so the callable keeps seeing ``(n, n_rhs)`` operands. A batched
+    dense operator can widen the iterate's batch axis by broadcasting; such
+    operands were already batched before the refactor and pass through as-is.
+    """
+
+    def wrapped(operand):
+        if operand.shape[0] == 1:
+            return preconditioner(operand.squeeze(0)).unsqueeze(0)
+        return preconditioner(operand)
+
+    return wrapped
+
+
 def minres(
     matmul_closure: Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]],
     rhs: torch.Tensor,
@@ -43,15 +67,22 @@ def minres(
     multiple shift values to solve ``(A + \\sigma I) x = b`` in one run. Gradually
     minimizes the residual norm ``||A x - b||_2`` via the Lanczos process.
 
+    Internally the right-hand side is canonicalised to one batched matrix with
+    shape ``(batch_size, n, n_rhs)`` (``batch_size = 1`` encodes unbatched input)
+    and all iterates live in that shape. When the operator is a sparse matrix,
+    the matvec routes through ``tsgu::spmm`` on CUDA.
+
     Parameters
     ----------
     matmul_closure : {torch.Tensor, callable(x) -> A @ x}
-        Matrix–vector multiplication operator. If a tensor is provided, its
-        ``.matmul`` is used. The operator should represent a symmetric/Hermitian
-        matrix for MINRES to behave as intended.
-    rhs : torch.Tensor, shape (..., n) or (..., n, k)
-        Right-hand side vector(s). Leading batch dimensions are supported; for
-        multi-RHS, the last two dims are ``(n, k)``.
+        Matrix-vector multiplication operator. A dense matrix with shape
+        ``(n, n)`` or a batched dense matrix with shape ``(batch_size, n, n)``
+        uses ``.matmul``; a sparse matrix (COO/CSR, optionally batched) routes
+        through the native sparse matmul. The operator should represent a
+        symmetric/Hermitian matrix for MINRES to behave as intended.
+    rhs : torch.Tensor, shape ``(n,)``, ``(n, n_rhs)``, or ``(batch_size, n, n_rhs)``
+        Right-hand side(s): a vector, a matrix of right-hand sides, or one
+        batched matrix of right-hand sides (one leading batch axis).
     eps : float, optional
         Small constant to prevent division by zero/numerical issues. Default: 1e-25.
     shifts : torch.Tensor or scalar, optional
@@ -66,8 +97,9 @@ def minres(
         Maximum iterations. If ``None``, uses ``settings.max_cg_iterations``.
         Internally capped at ``n + 1`` where ``n`` is the problem size.
     preconditioner : callable, optional
-        Left preconditioner with signature ``preconditioner(x) -> M^{-1} x``.
-        If ``None``, no preconditioning is used.
+        Left preconditioner with signature ``preconditioner(x) -> M^{-1} x``. It
+        receives operands shaped like ``rhs`` (the same contract as a callable
+        ``matmul_closure``). If ``None``, no preconditioning is used.
     settings : MINRESSettings, optional
         Configuration object controlling iteration caps and tolerances
         (e.g., ``minres_tolerance`` for the relative update criterion).
@@ -76,8 +108,7 @@ def minres(
     -------
     torch.Tensor
         If ``shifts`` is ``None`` or a scalar: solution with the **same shape as**
-        ``rhs`` (i.e., ``(..., n)`` or ``(..., n, k)``).
-        If ``shifts`` has length ``s``: a stacked tensor of shape
+        ``rhs``. If ``shifts`` has length ``s``: a stacked tensor of shape
         ``(s, *rhs.shape)`` containing solutions for each shift.
 
     Raises
@@ -127,12 +158,12 @@ def minres(
 
     >>> x_shifted = minres(A.matmul, b, shifts=torch.tensor(0.1))
 
-    Sparse operator via closure:
+    Sparse operator (matvec routes through ``tsgu::spmm`` on CUDA):
 
     >>> idx = torch.tensor([[0, 0, 1, 1], [0, 1, 0, 1]])
     >>> val = torch.tensor([2.0, 1.0, 1.0, -1.0])
     >>> A_sp = torch.sparse_coo_tensor(idx, val, (2, 2))
-    >>> x = minres(lambda v: A_sp @ v, b)
+    >>> x = minres(A_sp, b)
 
     With a simple diagonal preconditioner:
 
@@ -145,21 +176,28 @@ def minres(
     >>> settings = MINRESSettings(max_cg_iterations=200, minres_tolerance=1e-5)
     >>> x = minres(A.matmul, b, settings=settings)
     """
-    # Default values
-    if torch.is_tensor(matmul_closure):
-        matmul_closure = matmul_closure.matmul
-    mm_ = matmul_closure
-    if preconditioner is None:
-        preconditioner = lambda x: x.clone()
-
     if shifts is None:
         shifts = torch.tensor(0.0, dtype=rhs.dtype, device=rhs.device)
 
-    # Scale the rhs
-    squeeze = False
-    if rhs.dim() == 1:
-        rhs = rhs.unsqueeze(-1)
-        squeeze = True
+    # Canonicalise the right-hand side to one batched matrix with shape
+    # (batch_size, n, n_rhs); batch_size == 1 encodes unbatched input.
+    rhs, was_vector, was_batched = as_batched_rhs(rhs)
+
+    if preconditioner is None:
+        preconditioner = lambda x: x.clone()  # noqa: E731
+    elif not was_batched:
+        preconditioner = _wrap_unbatched_preconditioner(preconditioner)
+
+    # Build the batched operator once: sparse matrices route through tsgu::spmm
+    # (CUDA) or the pure-torch fallback; dense matrices use .matmul; a user
+    # callable keeps seeing operands shaped like the caller's right-hand side.
+    op = BatchedOperator(
+        matmul_closure,
+        callable_operand_ndim=3 if was_batched else 2,
+        n_rows=rhs.size(-2),
+        n_cols=rhs.size(-2),
+    )
+    mm_ = op.matvec
 
     rhs_norm = rhs.norm(2, dim=-2, keepdim=True)
     rhs_is_zero = rhs_norm.lt(1e-10)
@@ -313,16 +351,21 @@ def minres(
     # For rhs-s that are close to zero, set them to zero
     solution.masked_fill_(rhs_is_zero, 0)
 
-    if squeeze:
-        solution = solution.squeeze(-1)
-        rhs = rhs.squeeze(-1)
-        rhs_norm = rhs_norm.squeeze(-1)
+    # Un-normalise
+    solution = solution.mul_(rhs_norm)
 
     if shifts.numel() == 1:
-        # If we weren't shifting we shouldn't return a batch output
+        # If we weren't shifting we shouldn't return a shift axis
         solution = solution.squeeze(0)
+        return restore_rhs_shape(solution, was_vector, was_batched)
 
-    return solution.mul_(rhs_norm)
+    # One solution per shift: restore the caller's right-hand-side shape under
+    # the leading shift axis.
+    if not was_batched:
+        solution = solution.squeeze(1)
+    if was_vector:
+        solution = solution.squeeze(-1)
+    return solution
 
 
 def _jit_minres_updates(

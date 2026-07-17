@@ -46,6 +46,11 @@ _CUDA_ONLY_DOCTEST_MODULES = {
     "torchsparsegradutils.ops.logsumexp",
     "torchsparsegradutils.ops.matmul",
     "torchsparsegradutils.ops.triangular_solve",
+    # generic_solve/lstsq (spec/commit.md Phase 3 commit 17): the forward host
+    # loop runs anywhere, but their docstring gradient examples backward
+    # through tsgu::sddmm, so the examples are written on CUDA tensors.
+    "torchsparsegradutils.ops.generic_solve",
+    "torchsparsegradutils.ops.lstsq",
     "torchsparsegradutils.distributions.sparse_multivariate_normal",
 }
 

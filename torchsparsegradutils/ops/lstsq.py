@@ -2,6 +2,8 @@ from typing import Callable, Optional, cast
 
 import torch
 
+from torchsparsegradutils._batched import BatchedCSR
+
 
 def sparse_generic_lstsq(
     A: torch.Tensor,
@@ -75,7 +77,7 @@ def sparse_generic_lstsq(
 
     See Also
     --------
-    SparseGenericLstsq : Autograd implementation.
+    sparse_generic_solve : Square-system counterpart with sparse-aware gradients.
 
     References
     ----------
@@ -85,20 +87,24 @@ def sparse_generic_lstsq(
 
     Examples
     --------
+    The backward routes gradA through the CUDA-only ``tsgu::sddmm`` /
+    ``tsgu::spmm`` ops (architecture.md §4) -- these examples run on CUDA
+    tensors.
+
     >>> # Simple sparse least squares example:
     >>> import torch
     >>> from torchsparsegradutils import sparse_generic_lstsq
     >>> indices = torch.tensor([[0, 1, 2, 3, 4, 1, 2, 3],
     ...                         [0, 0, 0, 0, 1, 1, 1, 2]])
     >>> values = torch.tensor([1.0, 2.0, 1.0, 3.0, 1.0, 2.0, 1.0, 1.0])
-    >>> A = torch.sparse_coo_tensor(indices, values, (5, 3)).coalesce()
-    >>> B = torch.randn(5)
+    >>> A = torch.sparse_coo_tensor(indices, values, (5, 3)).coalesce().cuda()
+    >>> B = torch.randn(5).cuda()
     >>> x = sparse_generic_lstsq(A, B)
     >>> x.shape
     torch.Size([3])
 
     >>> # Multiple RHS:
-    >>> Bm = torch.randn(5, 4)
+    >>> Bm = torch.randn(5, 4).cuda()
     >>> Xm = sparse_generic_lstsq(A, Bm)
     >>> Xm.shape
     torch.Size([3, 4])
@@ -120,65 +126,81 @@ def sparse_generic_lstsq(
     >>> A.grad.is_sparse
     True
     """
-    return _legacy_sparse_generic_lstsq(A, B, lstsq, transpose_lstsq)
+    # Input validation (map.md invariant 7: invalid input raises, never
+    # silently accepted; messages state the accepted logical forms).
+    if not isinstance(A, torch.Tensor) or not isinstance(B, torch.Tensor):
+        raise ValueError("Both A and B should be instances of torch.Tensor")
+    if A.layout not in (torch.sparse_coo, torch.sparse_csr):
+        raise TypeError(f"Unsupported sparse layout: {A.layout}. Only COO and CSR are supported.")
+    if A.dim() != 2:
+        raise ValueError(f"A must be a sparse matrix with shape (n_rows, n_cols); got shape {tuple(A.shape)}")
+    if B.layout != torch.strided:
+        raise TypeError("B must be a dense (strided) tensor")
+    if B.dim() not in (1, 2):
+        raise ValueError(
+            f"B must be a right-hand side with shape (n_rows,) or (n_rows, n_rhs); got shape {tuple(B.shape)}"
+        )
+    if B.shape[0] != A.shape[0]:
+        raise ValueError(f"Incompatible dimensions: A has shape {tuple(A.shape)}, B has shape {tuple(B.shape)}")
 
-
-# deleted by its kernel commit (spec/commit.md Phase 3)
-def _legacy_sparse_generic_lstsq(A, B, lstsq, transpose_lstsq):
     if lstsq is None or transpose_lstsq is None:
         from ..utils import lsmr
 
         if lstsq is None:
-
+            # lsmr iterates batched (batch_size, n, n_rhs) right-hand sides
+            # natively (spec/commit.md commit 17) — no per-column loop.
             def lstsq_default(AA, BB):
-                # Handle multiple RHS by solving each column separately
-                if BB.dim() == 1:
-                    return lsmr(AA, BB)[0]
-                else:
-                    solutions = []
-                    for i in range(BB.shape[1]):
-                        sol = lsmr(AA, BB[:, i])[0]
-                        solutions.append(sol)
-                    return torch.stack(solutions, dim=1)
+                return lsmr(AA, BB)[0]
 
             lstsq = lstsq_default
         if transpose_lstsq is None:
 
             def transpose_lstsq_default(AA, BB):
-                # Handle multiple RHS by solving each column separately
-                if BB.dim() == 1:
-                    return lsmr(torch.adjoint(AA), BB, AA)[0]
-                else:
-                    solutions = []
-                    for i in range(BB.shape[1]):
-                        sol = lsmr(torch.adjoint(AA), BB[:, i], AA)[0]
-                        solutions.append(sol)
-                    return torch.stack(solutions, dim=1)
+                # torch.adjoint of CSR yields CSC — lsmr's operator adapter
+                # (solvers/_matvec.py) reads CSC as the O(1) transpose view,
+                # so this still routes through tsgu::spmm on CUDA.
+                return lsmr(torch.adjoint(AA), BB, AA)[0]
 
             transpose_lstsq = transpose_lstsq_default
 
-    # Autograd Function.apply is typed as Any; cast for type checkers.
-    return cast(torch.Tensor, SparseGenericLstsq.apply(A, B, lstsq, transpose_lstsq))
+    return _tsgu_sparse_generic_lstsq(A, B, lstsq, transpose_lstsq)
 
 
-class SparseGenericLstsq(torch.autograd.Function):
-    r"""Autograd kernel for sparse least squares with sparse-aware gradients.
+def _tsgu_sparse_generic_lstsq(A, B, lstsq, transpose_lstsq):
+    """Host-loop forward + ``tsgu::sddmm`` backward (spec/commit.md Phase 3
+    commit 17; map.md routing: ``sparse_generic_lstsq`` forward = host loop →
+    ``tsgu::spmm`` on A and its cached CSC — inside lsmr, via
+    ``solvers/_matvec.py`` — backward = host ``transpose_lstsq`` → gradA
+    ``tsgu::sddmm``; replaces ``_legacy_sparse_generic_lstsq`` /
+    ``SparseGenericLstsq``, deleted in this commit).
 
-    See Also
-    --------
-    sparse_generic_lstsq : User wrapper.
+    Same construction as ``_tsgu_sparse_generic_solve``: the pluggable
+    ``lstsq``/``transpose_lstsq`` callables cannot cross a ``torch.library``
+    schema, so the Golub–Pereyra adjoint is wired with a thin private
+    ``autograd.Function``; the descriptor's stored values thread through it
+    so the sampled gradient rewraps at ``A``'s own pattern in ``A``'s own
+    layout automatically (map.md invariant 3).
+    """
+    descriptor = BatchedCSR.from_torch(A)
+    return cast(
+        torch.Tensor,
+        _GenericLstsqIFT.apply(descriptor.values, B, descriptor.rowptr, descriptor.col, A, lstsq, transpose_lstsq),
+    )
 
+
+class _GenericLstsqIFT(torch.autograd.Function):
+    """Golub–Pereyra (1973, eq. 4.12) adjoint for the pluggable least-squares
+    solve, assuming tall full-column-rank A (so :math:`A^+ A = I`).
+
+    gradA at A's pattern is two ``tsgu::sddmm`` calls (map.md routing):
+    ``-dot(gradB[i, :], x[j, :])`` (negate epilogue fused) plus
+    ``dot((B - A x)[i, :], (A^+ gradB)[j, :])``; the residual's ``A x`` term
+    is one ``tsgu::spmm`` at the same descriptor arrays.
     """
 
     @staticmethod
-    def forward(ctx, A, B, lstsq, transpose_lstsq):
-        grad_flag = A.requires_grad or B.requires_grad
-        ctx.lstsq = lstsq
-        ctx.transpose_lstsq = transpose_lstsq
-
+    def forward(ctx, values, B, rowptr, col, A, lstsq, transpose_lstsq):
         x = lstsq(A.detach(), B.detach())
-
-        x.requires_grad = grad_flag
 
         if B.dim() == 1:
             if x.dim() == 2:
@@ -187,90 +209,52 @@ class SparseGenericLstsq(torch.autograd.Function):
             if x.dim() == 1:
                 x = x.unsqueeze(1)
 
-        ctx.save_for_backward(A.detach(), B.detach(), x.detach())
+        ctx.save_for_backward(values, rowptr, col, A, B, x)
+        ctx.lstsq = lstsq
+        ctx.transpose_lstsq = transpose_lstsq
         return x
 
     @staticmethod
     def backward(ctx, grad):  # type: ignore[override]
-        A, B, x = ctx.saved_tensors
-        if B.ndim == 1:
-            B = B.unsqueeze(1)
-        if x.ndim == 1:
-            x = x.unsqueeze(1)
+        values, rowptr, col, A, B, x = ctx.saved_tensors
+        n_rows, n_cols = A.shape[-2], A.shape[-1]
+
+        # We assume A is tall and full rank to get A^+ A = Id and simplify the
+        # derivation; we don't try to compute the rank of A for computational
+        # reasons, but at least check that A is a tall matrix.
+        if n_cols > n_rows:
+            raise ValueError(f"A should be a tall full-rank matrix. Got A.shape={tuple(A.shape)}")
+
+        B_matrix = B.unsqueeze(1) if B.ndim == 1 else B
+        x_matrix = x.unsqueeze(1) if x.ndim == 1 else x
 
         # Backprop rule: gradB = (A^T)^{+} grad
         gradB = ctx.transpose_lstsq(A, grad)
         if gradB.ndim == 1:
             gradB = gradB.unsqueeze(1)
 
-        # We make use of equation 4.12 in https://www.jstor.org/stable/2156365
-        # but assume A is tall and full rank to get A^+ A = Id and simplify the derivation.
-        # We don't try and compute the rank of A for computational reason but at least check
-        # that A is a tall matrix
-        if A.shape[1] > A.shape[0]:
-            raise ValueError(f"A should be a tall full-rank matrix. Got A.shape={A.shape}")
-        # Following the derivation in https://blog.flaport.net/solving-sparse-linear-systems-in-pytorch.html
-        # but using the pseudo-inverse instead of the inverse:
-        # The gradient with respect to the matrix A seen as a dense matrix would
-        # lead to a backprop rule as follows
-        # gradA = -((A^T)^{+} grad)(A^{+} B) - (Ax-B)(A^+ (A^T)^{+} grad )
-        #       = - gradB @ x.T - (Ax-B) @ (A^+ gradB).T
-        # but we are only interested in the gradient with respect to
-        # the (non-zero) values of A. To save memory, instead of computing the full
-        # dense matrices gradB @ x.T and (Ax-B) @ (A^+ gradB).T
-        # and then subsampling at the nnz locations in A,
-        # we can directly only compute the required values:
-        # gradA_u1[i,j] = - dotprod(gradB[i,:], x[j,:])
-        # gradA_u2[i,j] = - dotprod(residuals[i,:], (A^+ gradB)[j,:])
-
-        # Dense equivalent
-        # gradA_u1 = - gradB @ torch.t(x)
-        # mresiduals = B - A@x
-        # Apgb = ctx.lstsq(A,gradB)
-        # if Apgb.dim() == 1:
-        #     Apgb = Apgb.unsqueeze(1)
-        # gradA_u2 = mresiduals @ torch.t(Apgb)
-        # gradA = gradA_u1 + gradA_u2
-        # return gradA, gradB, None, None
-
-        # We start by getting the i and j indices:
-        if A.layout == torch.sparse_coo:
-            A_row_idx = A.indices()[0, :]
-            A_col_idx = A.indices()[1, :]
-        else:
-            A_col_idx = A.col_indices()
-            A_crow_idx = A.crow_indices()
-            # Uncompress row indices:
-            A_row_idx = torch.repeat_interleave(
-                torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
+        grad_values = None
+        if ctx.needs_input_grad[0]:
+            # gradA = -gradB @ x^T - (A x - B) @ (A^+ gradB)^T evaluated only
+            # at A's specified entries: two sddmm calls at A's pattern.
+            # First term, negate epilogue fused in the kernel:
+            grad_values = torch.ops.tsgu.sddmm(
+                rowptr, col, gradB.unsqueeze(0), x_matrix.unsqueeze(0), 1, n_rows, n_cols, True
+            )
+            # Second term: -(A x - B) = B - A x, with A x one spmm at the same
+            # descriptor arrays. Detached, as the legacy backward saved a
+            # detached A: the residual term contributes no higher-order path.
+            Ax = torch.ops.tsgu.spmm(values.detach(), rowptr, col, x_matrix.unsqueeze(0), 1, n_rows, n_cols)
+            residual_neg = B_matrix.unsqueeze(0) - Ax
+            Apgb = ctx.lstsq(A, gradB)
+            if Apgb.dim() == 1:
+                Apgb = Apgb.unsqueeze(1)
+            grad_values = grad_values + torch.ops.tsgu.sddmm(
+                rowptr, col, residual_neg, Apgb.unsqueeze(0), 1, n_rows, n_cols, False
             )
 
-        mgradbselect = -gradB.index_select(0, A_row_idx)  # -gradB[i, :]
-        xselect = x.index_select(0, A_col_idx)  # x[j, :]
+        grad_rhs = None
+        if ctx.needs_input_grad[1]:
+            grad_rhs = gradB.squeeze(1) if grad.ndim == 1 else gradB
 
-        # Dot product:
-        mgbx = mgradbselect * xselect
-        gradA_u1 = torch.sum(mgbx, dim=1)
-
-        # residuals
-        mresiduals = B - A @ x
-        mresidualsselect = mresiduals.index_select(0, A_row_idx)
-        Apgb = ctx.lstsq(A, gradB)
-        if Apgb.dim() == 1:
-            Apgb = Apgb.unsqueeze(1)
-        Apgbselect = Apgb.index_select(0, A_col_idx)
-
-        # Dot product:
-        mresApgb = mresidualsselect * Apgbselect
-        gradA_u2 = torch.sum(mresApgb, dim=1)
-
-        gradA = gradA_u1 + gradA_u2
-        if A.layout == torch.sparse_coo:
-            gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
-        else:
-            gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
-
-        if grad.ndim == 1:
-            gradB = gradB.squeeze()
-
-        return gradA, gradB, None, None
+        return grad_values, grad_rhs, None, None, None, None, None

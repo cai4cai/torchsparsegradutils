@@ -4,9 +4,19 @@ import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
+from torchsparsegradutils._dispatch import backend_available
 from torchsparsegradutils.ops.generic_solve import sparse_generic_solve
 from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, linear_cg, minres
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
+
+
+def _require_backend_for_backward(device):
+    """sparse_generic_solve's backward routes gradA through tsgu::sddmm,
+    which is CUDA-only (architecture.md §4; spec/commit.md commit 17) — the
+    forward host loop still runs anywhere."""
+    if device.type != "cuda" or not backend_available():
+        pytest.skip("backward requires the CUDA backend (tsgu::sddmm)")
+
 
 TEST_DATA = [
     # name  A_shape, B_shape, A_num_zero
@@ -215,6 +225,7 @@ def test_solve_forward_routine(layout, solve, device, value_dtype, index_dtype, 
 
 
 def test_solve_backward_routine(layout, solve, device, value_dtype, index_dtype, shapes):
+    _require_backend_for_backward(device)
     _, A_shape, B_shape, num_zero = shapes
     n = A_shape[0]
     As1, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
@@ -295,6 +306,7 @@ def test_minres_kwargs(device, value_dtype, layout):
 
 def test_kwargs_backward_pass(device, value_dtype, layout):
     """Test that kwargs work correctly during backward pass."""
+    _require_backend_for_backward(device)
     from torchsparsegradutils.solvers.cg import LinearCGSettings
 
     n = 10
@@ -390,6 +402,7 @@ def test_kwargs_with_different_solvers_same_matrix():
 
 @pytest.mark.parametrize("base_solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
 def test_sparse_generic_solve_higher_order_create_graph_no_out_error(layout, base_solve, device, value_dtype):
+    _require_backend_for_backward(device)
     torch.manual_seed(0)
 
     theta = torch.randn(8, dtype=value_dtype, device=device, requires_grad=True)
@@ -410,6 +423,7 @@ def test_sparse_generic_solve_higher_order_create_graph_no_out_error(layout, bas
 
 @pytest.mark.parametrize("base_solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
 def test_sparse_generic_solve_higher_order_matches_dense_reference(layout, base_solve, device, value_dtype):
+    _require_backend_for_backward(device)
     torch.manual_seed(1)
 
     theta_sparse = torch.randn(6, dtype=value_dtype, device=device, requires_grad=True)
@@ -442,6 +456,7 @@ def test_sparse_generic_solve_higher_order_matches_dense_reference(layout, base_
 
 
 def test_sparse_generic_solve_higher_order_nonsymmetric_bicgstab_matches_dense_reference(layout, device, value_dtype):
+    _require_backend_for_backward(device)
     torch.manual_seed(2)
 
     n = 6
