@@ -192,7 +192,7 @@ batch_size, event_size = 2, 1000
 loc = torch.zeros(batch_size, event_size)
 
 # Example 1: LDL^T parameterization (numerically stable for precision matrices)
-# Create sparse lower triangular matrix (unit triangular, no diagonal)
+# Create sparse lower triangular matrix (strictly lower triangular, no diagonal)
 
 scale_tril = rand_sparse_tri(
     (batch_size, event_size, event_size),
@@ -211,7 +211,7 @@ diagonal = torch.ones(batch_size, event_size) * 0.5
 dist_ldlt = SparseMultivariateNormal(
     loc=loc,
     diagonal=diagonal,
-    scale_tril=scale_tril  # Unit lower triangular
+    scale_tril=scale_tril  # Strictly lower triangular
 )
 
 # Example 2: LL^T parameterization (standard Cholesky)
@@ -243,7 +243,7 @@ precision_diagonal = torch.ones(batch_size, event_size) * 2.0
 dist_precision = SparseMultivariateNormal(
     loc=loc,
     diagonal=precision_diagonal,
-    precision_tril=precision_tril  # Unit triangular precision factor
+    precision_tril=precision_tril  # Strictly triangular precision factor
 )
 
 # Sample with gradient support
