@@ -196,7 +196,7 @@ loc = torch.zeros(batch_size, event_size)
 
 scale_tril = rand_sparse_tri(
     (batch_size, event_size, event_size),
-    nnz=5000,  # 5000 non-zeros for 1000x1000 dense matrix (0.5% sparsity)
+    nnz=5000,  # 5000 non-zeros for 1000x1000 dense matrix (99.5% sparsity)
     layout=torch.sparse_csr,
     upper=False,
     strict=True  # Strict triangular (exclude diagonal)
