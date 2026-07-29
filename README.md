@@ -192,14 +192,17 @@ batch_size, event_size = 2, 1000
 loc = torch.zeros(batch_size, event_size)
 
 # Example 1: LDL^T parameterization (numerically stable for precision matrices)
-# Create sparse lower triangular matrix (unit triangular, no diagonal)
+# Create sparse lower triangular matrix (strictly lower triangular, no diagonal)
+
 scale_tril = rand_sparse_tri(
     (batch_size, event_size, event_size),
-    nnz=5000,  # 5000 non-zeros for 1M parameters (0.5% sparsity)
+    nnz=5000,  # 5000 non-zeros for 1000x1000 dense matrix (99.5% sparsity)
     layout=torch.sparse_csr,
     upper=False,
-    unit_triangular=True  # Unit triangular for LDL^T
+    strict=True  # Strict triangular (exclude diagonal)
 )
+
+scale_tril.requires_grad_(True)
 
 # Diagonal component for LDL^T parameterization
 diagonal = torch.ones(batch_size, event_size) * 0.5
@@ -208,7 +211,7 @@ diagonal = torch.ones(batch_size, event_size) * 0.5
 dist_ldlt = SparseMultivariateNormal(
     loc=loc,
     diagonal=diagonal,
-    scale_tril=scale_tril  # Unit lower triangular
+    scale_tril=scale_tril  # Strictly lower triangular
 )
 
 # Example 2: LL^T parameterization (standard Cholesky)
@@ -217,7 +220,7 @@ scale_tril_chol = rand_sparse_tri(
     nnz=5000,
     layout=torch.sparse_csr,
     upper=False,
-    unit_triangular=False  # Include diagonal for LL^T
+    strict=False  # Include diagonal
 )
 
 # Create distribution with LL^T parameterization
@@ -232,7 +235,7 @@ precision_tril = rand_sparse_tri(
     nnz=5000,
     layout=torch.sparse_csr,
     upper=False,
-    unit_triangular=True
+    strict=True
 )
 
 precision_diagonal = torch.ones(batch_size, event_size) * 2.0
@@ -240,7 +243,7 @@ precision_diagonal = torch.ones(batch_size, event_size) * 2.0
 dist_precision = SparseMultivariateNormal(
     loc=loc,
     diagonal=precision_diagonal,
-    precision_tril=precision_tril  # Unit triangular precision factor
+    precision_tril=precision_tril  # Strictly triangular precision factor
 )
 
 # Sample with gradient support
