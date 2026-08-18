@@ -27,6 +27,7 @@ from cupyx.scipy.sparse.linalg._solve import spsolve_triangular
 from tqdm import tqdm
 
 from torchsparsegradutils import sparse_triangular_solve
+from torchsparsegradutils._compat import sparse_triangular_solve_compat
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
 from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
 
@@ -58,16 +59,19 @@ LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
 ALGORITHMS = [
     (
-        "dense.triangular_solve",
-        lambda A, B: torch.triangular_solve(
-            B, A.to_dense(), upper=UPPER, unitriangular=UNITRIANGULAR, transpose=TRANSPOSE
-        ).solution,
+        "dense.linalg.solve_triangular",
+        lambda A, B: torch.linalg.solve_triangular(
+            A.to_dense().transpose(-2, -1) if TRANSPOSE else A.to_dense(),
+            B,
+            upper=not UPPER if TRANSPOSE else UPPER,
+            unitriangular=UNITRIANGULAR,
+        ),
     ),
     (
-        "torch_triangular_solve",
-        lambda A, B: torch.triangular_solve(
+        "torch_sparse_triangular_solve_compat",
+        lambda A, B: sparse_triangular_solve_compat(
             B, A, upper=UPPER, unitriangular=UNITRIANGULAR, transpose=TRANSPOSE
-        ).solution,
+        ),
     ),
     (
         "sparse_triangular_solve",
@@ -153,8 +157,8 @@ def run_sparse_triangular_solve_benchmark():
                             with torch.no_grad():
                                 x = alg_fn(A_sparse, B)
                                 residual = A_sparse @ x - B
-                                resnorm = torch.norm(residual).cpu().item()
-                                relative_resnorm = resnorm / torch.norm(B).cpu().item()
+                                resnorm = torch.linalg.vector_norm(residual).cpu().item()
+                                relative_resnorm = resnorm / torch.linalg.vector_norm(B).cpu().item()
 
                             # # Calculate residual norm for solution accuracy
                             # with torch.no_grad():
@@ -165,8 +169,8 @@ def run_sparse_triangular_solve_benchmark():
                             #     else:
                             #         Ax = A_sparse @ x
                             #     residual = Ax - B
-                            #     resnorm = torch.norm(residual).cpu().item()
-                            #     relative_resnorm = resnorm / torch.norm(B).cpu().item()
+                            #     resnorm = torch.linalg.vector_norm(residual).cpu().item()
+                            #     relative_resnorm = resnorm / torch.linalg.vector_norm(B).cpu().item()
 
                             # Print result with residual norm
                             print_result_row(

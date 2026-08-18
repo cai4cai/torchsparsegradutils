@@ -662,7 +662,7 @@ def test_make_spd_sparse_solve_system(device):
     try:
         x_dense = torch.linalg.solve(A_dense, b)
         residual = A_dense @ x_dense - b
-        residual_norm = torch.norm(residual).item()
+        residual_norm = torch.linalg.vector_norm(residual).item()
 
         # Check that residual is small
         assert residual_norm < 1e-10, f"Dense solve residual too large: {residual_norm}"

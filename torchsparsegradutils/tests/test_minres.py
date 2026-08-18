@@ -18,7 +18,7 @@ def _run_minres(rhs_shape, shifts=None, matrix_batch_shape=torch.Size([])):
     rhs = torch.randn(rhs_shape, dtype=torch.float64)
     matrix = torch.randn(*matrix_batch_shape, size, size, dtype=torch.float64)
     matrix = matrix @ matrix.mT
-    matrix = matrix / matrix.norm()
+    matrix = matrix / torch.linalg.vector_norm(matrix)
     matrix = matrix + torch.eye(size, dtype=torch.float64) * 1e-1
     # compute minres
     if shifts is not None:

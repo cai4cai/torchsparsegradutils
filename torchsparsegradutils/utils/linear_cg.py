@@ -24,8 +24,7 @@ def _default_preconditioner(x):
     return x.clone()
 
 
-@torch.jit.script
-def _jit_linear_cg_updates(
+def _linear_cg_updates(
     result, alpha, residual_inner_prod, eps, beta, residual, precond_residual, mul_storage, is_zero, curr_conjugate_vec
 ):
     # # Update result
@@ -48,8 +47,7 @@ def _jit_linear_cg_updates(
     curr_conjugate_vec.mul_(beta).add_(precond_residual)
 
 
-@torch.jit.script
-def _jit_linear_cg_updates_no_precond(
+def _linear_cg_updates_no_precond(
     mvms,
     result,
     has_converged,
@@ -83,7 +81,7 @@ def _jit_linear_cg_updates_no_precond(
     # precon_residual{k} = M^-1 residual_{k}
     precond_residual = residual.clone()
 
-    _jit_linear_cg_updates(
+    _linear_cg_updates(
         result,
         alpha,
         residual_inner_prod,
@@ -256,7 +254,7 @@ def linear_cg(
     # Get the norm of the rhs - used for convergence checks
     # Here we're going to make almost-zero norms actually be 1 (so we don't get divide-by-zero issues)
     # But we'll store which norms were actually close to zero
-    rhs_norm = rhs.norm(2, dim=-2, keepdim=True)
+    rhs_norm = torch.linalg.vector_norm(rhs, ord=2, dim=-2, keepdim=True)
     rhs_is_zero = rhs_norm.lt(eps)
     rhs_norm = rhs_norm.masked_fill_(rhs_is_zero, 1)
 
@@ -282,7 +280,7 @@ def linear_cg(
 
     # Sometime we're lucky and the preconditioner solves the system right away
     # Check for convergence
-    residual_norm = residual.norm(2, dim=-2, keepdim=True)
+    residual_norm = torch.linalg.vector_norm(residual, ord=2, dim=-2, keepdim=True)
     has_converged = torch.lt(residual_norm, stop_updating_after)
 
     if has_converged.all() and not n_tridiag:
@@ -343,7 +341,7 @@ def linear_cg(
             # precon_residual{k} = M^-1 residual_{k}
             precond_residual = preconditioner(residual)
 
-            _jit_linear_cg_updates(
+            _linear_cg_updates(
                 result,
                 alpha,
                 residual_inner_prod,
@@ -356,7 +354,7 @@ def linear_cg(
                 curr_conjugate_vec,
             )
         else:
-            _jit_linear_cg_updates_no_precond(
+            _linear_cg_updates_no_precond(
                 mvms,
                 result,
                 has_converged,
@@ -371,7 +369,7 @@ def linear_cg(
                 curr_conjugate_vec,
             )
 
-        torch.norm(residual, 2, dim=-2, keepdim=True, out=residual_norm)
+        torch.linalg.vector_norm(residual, ord=2, dim=-2, keepdim=True, out=residual_norm)
         residual_norm.masked_fill_(rhs_is_zero, 0)
         torch.lt(residual_norm, stop_updating_after, out=has_converged)
 

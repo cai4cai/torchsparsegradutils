@@ -105,6 +105,11 @@ testpaths = [
 pythonpath = [
     "torchsparsegradutils/tests",
 ]
+filterwarnings = [
+    'error:torch\.norm is deprecated.*:UserWarning',
+    'error:torch\.triangular_solve is deprecated.*:UserWarning',
+    'error:.*torch\.jit\.script.*is deprecated.*:DeprecationWarning',
+]
 doctest_optionflags = [
     "NORMALIZE_WHITESPACE",
     "IGNORE_EXCEPTION_DETAIL",

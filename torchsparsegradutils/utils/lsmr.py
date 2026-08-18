@@ -181,19 +181,19 @@ def lsmr(
         maxiter = min(m, n)
 
     u = b.clone()
-    normb = b.norm()
+    normb = torch.linalg.vector_norm(b)
     if x0 is None:
         x = b.new_zeros(n)
         beta = normb.clone()
     else:
         x = torch.atleast_1d(x0).clone()
         u.sub_(A(x))
-        beta = u.norm()
+        beta = torch.linalg.vector_norm(u)
 
     if beta > 0:
         u.div_(beta)
         v = Armat(u)
-        alpha = v.norm()
+        alpha = torch.linalg.vector_norm(v)
     else:
         v = b.new_zeros(n)
         alpha = b.new_tensor(0, dtype=sdtype)
@@ -268,7 +268,7 @@ def lsmr(
         #        alpha*v  =  A'*u  -  beta*v.
 
         u.mul_(-alpha).add_(A(v))
-        torch.norm(u, out=beta)
+        torch.linalg.vector_norm(u, out=beta)
 
         if (not check_nonzero) or beta > 0:
             # check_nonzero option provides a means to avoid the GPU-CPU
@@ -276,7 +276,7 @@ def lsmr(
             # beta == 0 is unlikely, but use this option with caution.
             u.div_(beta)
             v.mul_(-beta).add_(Armat(u))
-            torch.norm(v, out=alpha)
+            torch.linalg.vector_norm(v, out=alpha)
             v = torch.where(alpha > 0, v / alpha, v)
 
         # At this point, beta = beta_{k+1}, alpha = alpha_{k+1}.
@@ -351,7 +351,7 @@ def lsmr(
         if True:
             # Compute norms for convergence testing.
             torch.abs(zetabar, out=normar)
-            torch.norm(x, out=normx)
+            torch.linalg.vector_norm(x, out=normx)
             torch.div(torch.max(maxrbar, rhotemp), torch.min(minrbar, rhotemp), out=condA)
 
             # Now use these norms to estimate certain other quantities,

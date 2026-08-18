@@ -201,10 +201,9 @@ def run_sparse_solve_benchmark():
                         with torch.no_grad():
                             x = alg_fn(A_sparse, B)
                             residual = A_sparse @ x - B
-                            resnorm = torch.norm(residual).cpu().item()
-                            relative_resnorm = (
-                                resnorm / torch.norm(B).cpu().item() if torch.norm(B).cpu().item() > 0 else 0.0
-                            )
+                            resnorm = torch.linalg.vector_norm(residual).cpu().item()
+                            B_norm = torch.linalg.vector_norm(B).cpu().item()
+                            relative_resnorm = resnorm / B_norm if B_norm > 0 else 0.0
 
                         # Print result with residual norm
                         print_result_row(

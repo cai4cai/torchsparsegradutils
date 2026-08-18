@@ -161,7 +161,7 @@ def minres(
         rhs = rhs.unsqueeze(-1)
         squeeze = True
 
-    rhs_norm = rhs.norm(2, dim=-2, keepdim=True)
+    rhs_norm = torch.linalg.vector_norm(rhs, ord=2, dim=-2, keepdim=True)
     rhs_is_zero = rhs_norm.lt(1e-10)
     rhs_norm = rhs_norm.masked_fill_(rhs_is_zero, 1)
     rhs = rhs.div(rhs_norm)
@@ -292,8 +292,8 @@ def minres(
 
         # Check convergence criterion
         if (i + 1) % 10 == 0:
-            torch.norm(search_update, dim=-2, out=search_update_norm)
-            torch.norm(solution, dim=-2, out=solution_norm)
+            torch.linalg.vector_norm(search_update, dim=-2, out=search_update_norm)
+            torch.linalg.vector_norm(solution, dim=-2, out=solution_norm)
             conv = search_update_norm.div_(solution_norm).mean().item()
             if conv < settings.minres_tolerance:
                 break

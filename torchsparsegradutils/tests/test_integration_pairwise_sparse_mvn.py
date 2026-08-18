@@ -360,7 +360,7 @@ def run_forward_backward_iterations(
 
         # Record gradient statistics
         if params.grad is not None:
-            grad_norm = params.grad.norm().item()
+            grad_norm = torch.linalg.vector_norm(params.grad).item()
             grad_max = params.grad.abs().max().item()
             grad_mean = params.grad.abs().mean().item()
 
@@ -505,7 +505,7 @@ def test_integration_gradient_flow_consistency_2d(
         # Backward pass
         loss.backward()
 
-        gradient_norms.append(params.grad.norm().item())
+        gradient_norms.append(torch.linalg.vector_norm(params.grad).item())
 
         # Zero gradients
         params.grad.zero_()
@@ -551,7 +551,7 @@ def test_integration_gradient_flow_consistency_3d(
         # Backward pass
         loss.backward()
 
-        gradient_norms.append(params.grad.norm().item())
+        gradient_norms.append(torch.linalg.vector_norm(params.grad).item())
 
         # Zero gradients
         params.grad.zero_()
@@ -591,7 +591,7 @@ def test_integration_parameter_optimization_2d(
 
     # Optimization loop
     optimizer = torch.optim.Adam([params], lr=0.01)
-    initial_param_norm = params.norm().item()
+    initial_param_norm = torch.linalg.vector_norm(params).item()
 
     for _ in range(10):
         optimizer.zero_grad()
@@ -611,7 +611,7 @@ def test_integration_parameter_optimization_2d(
         optimizer.step()
 
     # Check that parameters changed
-    final_param_norm = params.norm().item()
+    final_param_norm = torch.linalg.vector_norm(params).item()
     param_change = abs(final_param_norm - initial_param_norm) / initial_param_norm
 
     assert param_change > 0.01, f"Parameters barely changed: {param_change:.6f}"
@@ -642,7 +642,7 @@ def test_integration_parameter_optimization_3d(
 
     # Optimization loop
     optimizer = torch.optim.Adam([params], lr=0.01)
-    initial_param_norm = params.norm().item()
+    initial_param_norm = torch.linalg.vector_norm(params).item()
 
     for _ in range(10):
         optimizer.zero_grad()
@@ -662,7 +662,7 @@ def test_integration_parameter_optimization_3d(
         optimizer.step()
 
     # Check that parameters changed
-    final_param_norm = params.norm().item()
+    final_param_norm = torch.linalg.vector_norm(params).item()
     param_change = abs(final_param_norm - initial_param_norm) / initial_param_norm
 
     assert param_change > 0.01, f"Parameters barely changed: {param_change:.6f}"

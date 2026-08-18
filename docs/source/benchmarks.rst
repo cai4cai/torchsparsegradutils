@@ -368,11 +368,11 @@ This benchmark evaluates sparse triangular system solvers with gradient computat
    * - **Code Call**
      - **Description**
      - **Plot Alias**
-   * - ``torch.triangular_solve(B, A.to_dense(), upper=..., unitriangular=..., transpose=...).solution``
+   * - ``torch.linalg.solve_triangular(A.to_dense(), B, upper=..., unitriangular=...)``
      - Dense PyTorch triangular solve baseline operating on a densified copy of the sparse matrix
      - Dense
-   * - ``torch.triangular_solve(B, A, upper=..., unitriangular=..., transpose=...).solution``
-     - PyTorch triangular solve on a sparse input tensor (falls back internally as needed)
+   * - Internal PyTorch sparse compatibility backend
+     - PyTorch's legacy triangular solver on a sparse input tensor, isolated until the linalg API supports sparse CSR
      - torch
    * - ``tsgu.sparse_triangular_solve(A, B, upper=..., unitriangular=..., transpose=...)``
      - torchsparsegradutils sparse triangular solve with gradient support and memory efficiency
@@ -442,7 +442,7 @@ Using the same SuiteSparse matrix ``Rothberg/cfd2`` (shape 123,440 × 123,440, n
 **Conclusions:**
 
 1. Attempting to densify the sparse matrix for ``Dense`` triangular solve leads to OOM errors due to the large memory footprint (≈58 GB for float32, ≈114 GB for float64) on the RTX 4090.
-2. ``torch`` sparse triangular solve on COO layout also fails on backward and forward as torch.triangular_solve does not support sparse COO
+2. The ``torch`` sparse compatibility backend on COO layout fails on forward and backward because the underlying PyTorch solver does not support sparse COO.
 3. ``torch`` sparse triangular solve on CSR layout succeeds on forward pass but fails on backward pass due to internal densification of gradients.
 4. ``CuPy`` triangular solve does provide a sensible memory footprint but has excessive runtime on the backward pass
 5. ``tsgu`` triangular solve provides a good balance of memory efficiency and runtime performance on both forward and backward passes.

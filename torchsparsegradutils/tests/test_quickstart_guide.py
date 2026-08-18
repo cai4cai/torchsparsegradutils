@@ -5,13 +5,8 @@ This module tests all code examples from the quickstart documentation to ensure 
 It is integrated with pytest and runs as part of the CI pipeline.
 """
 
-import warnings
-
 import pytest
 import torch
-
-# Suppress warnings for cleaner test output
-warnings.filterwarnings("ignore")
 
 
 def test_sparse_mm_example():
@@ -76,7 +71,7 @@ def test_triangular_solve():
 
     # Verify solution (should be close to zero)
     residual = sparse_mm(L, x) - b
-    residual_norm = torch.norm(residual)
+    residual_norm = torch.linalg.vector_norm(residual)
     assert residual_norm < 1e-5, f"Residual too large: {residual_norm}"
 
 
@@ -97,7 +92,7 @@ def test_generic_solve():
 
     # Verify solution
     residual = A_sparse @ x_cg - b
-    residual_norm = torch.norm(residual)
+    residual_norm = torch.linalg.vector_norm(residual)
     assert residual_norm < 1e-4, f"Residual too large: {residual_norm}"
 
 
