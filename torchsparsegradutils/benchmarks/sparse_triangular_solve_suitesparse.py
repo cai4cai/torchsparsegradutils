@@ -34,7 +34,7 @@ from cupyx.scipy.sparse.linalg._solve import spsolve_triangular
 from tqdm import tqdm
 
 from torchsparsegradutils import sparse_triangular_solve
-from torchsparsegradutils._compat import sparse_triangular_solve_compat
+from torchsparsegradutils._compat import linalg_solve_triangular_compat
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
 
 # from jax.lax.linalg import triangular_solve  # NOTE: jax doesn't have a sparse triangular solve
@@ -67,9 +67,9 @@ ALGORITHMS = [
         ),
     ),
     (
-        "torch_sparse_triangular_solve_compat",
-        lambda A, B: sparse_triangular_solve_compat(
-            B, A, upper=UPPER, unitriangular=UNITRIANGULAR, transpose=TRANSPOSE
+        "linalg_solve_triangular_compat",
+        lambda A, B: linalg_solve_triangular_compat(
+            A, B, upper=UPPER, unitriangular=UNITRIANGULAR, transpose=TRANSPOSE
         ),
     ),
     (

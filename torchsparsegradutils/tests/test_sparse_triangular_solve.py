@@ -1,11 +1,13 @@
 import sys
 import warnings
+from unittest.mock import patch
 
 import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
 from torchsparsegradutils import sparse_triangular_solve
+from torchsparsegradutils._compat import linalg_solve_triangular_compat
 from torchsparsegradutils.utils import rand_sparse_tri
 
 TEST_DATA = [
@@ -201,6 +203,61 @@ def test_sparse_triangular_solve_does_not_emit_upstream_deprecation_warning():
         warning for warning in caught_warnings if "triangular_solve is deprecated" in str(warning.message)
     ]
     assert not deprecation_warnings
+
+
+@pytest.mark.parametrize("transpose", TRANSPOSE, ids=[transpose_id(d) for d in TRANSPOSE])
+def test_linalg_solve_triangular_compat_dispatches_dense_to_modern_backend(transpose):
+    A_dense = torch.tensor(
+        [[2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [4.0, 5.0, 6.0]],
+        dtype=torch.float64,
+    )
+    B = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float64)
+    expected = dense_triangular_solve(
+        A_dense,
+        B,
+        upper=False,
+        unitriangular=False,
+        transpose=transpose,
+    )
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        with patch("torch.linalg.solve_triangular", wraps=torch.linalg.solve_triangular) as modern_solve:
+            with patch("torch.triangular_solve", wraps=torch.triangular_solve) as legacy_solve:
+                result = linalg_solve_triangular_compat(A_dense, B, upper=False, transpose=transpose)
+
+    torch.testing.assert_close(result, expected)
+    modern_solve.assert_called_once()
+    legacy_solve.assert_not_called()
+    assert not [warning for warning in caught_warnings if "triangular_solve is deprecated" in str(warning.message)]
+
+
+@pytest.mark.parametrize("transpose", TRANSPOSE, ids=[transpose_id(d) for d in TRANSPOSE])
+def test_sparse_triangular_solve_dispatches_sparse_to_legacy_backend(layout, transpose):
+    A_dense = torch.tensor(
+        [[2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [4.0, 5.0, 6.0]],
+        dtype=torch.float64,
+    )
+    A = A_dense.to_sparse() if layout == torch.sparse_coo else A_dense.to_sparse_csr()
+    B = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float64)
+    expected = dense_triangular_solve(
+        A_dense,
+        B,
+        upper=False,
+        unitriangular=False,
+        transpose=transpose,
+    )
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        with patch("torch.linalg.solve_triangular", wraps=torch.linalg.solve_triangular) as modern_solve:
+            with patch("torch.triangular_solve", wraps=torch.triangular_solve) as legacy_solve:
+                result = sparse_triangular_solve(A, B, upper=False, transpose=transpose)
+
+    torch.testing.assert_close(result, expected)
+    modern_solve.assert_not_called()
+    legacy_solve.assert_called_once()
+    assert not [warning for warning in caught_warnings if "triangular_solve is deprecated" in str(warning.message)]
 
 
 def test_torch_linalg_solve_triangular_rejects_sparse_csr():

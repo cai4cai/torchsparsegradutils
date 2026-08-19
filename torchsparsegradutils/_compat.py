@@ -5,22 +5,34 @@ import warnings
 import torch
 
 
-def sparse_triangular_solve_compat(
-    B: torch.Tensor,
+def linalg_solve_triangular_compat(
     A: torch.Tensor,
+    B: torch.Tensor,
     *,
     upper: bool,
-    unitriangular: bool,
-    transpose: bool,
+    unitriangular: bool = False,
+    transpose: bool = False,
 ) -> torch.Tensor:
-    """Solve a sparse triangular system using PyTorch's legacy sparse backend.
+    """Solve a triangular system with the appropriate dense or sparse backend.
 
-    ``torch.linalg.solve_triangular`` replaces ``torch.triangular_solve`` for
-    dense tensors, but it does not provide the sparse CSR support required by
-    this package. Keep the deprecated call isolated here until a documented,
-    feature-equivalent sparse API is available in every supported PyTorch
-    version.
+    Dense coefficient matrices use ``torch.linalg.solve_triangular``. Sparse
+    matrices continue to use the isolated legacy call because the replacement
+    API does not support the sparse layouts required by this package. See
+    https://github.com/pytorch/pytorch/issues/87358 for upstream sparse feature
+    parity tracking.
     """
+    if A.layout == torch.strided:
+        if transpose:
+            A = A.transpose(-2, -1)
+            upper = not upper
+
+        return torch.linalg.solve_triangular(
+            A,
+            B,
+            upper=upper,
+            unitriangular=unitriangular,
+        )
+
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",

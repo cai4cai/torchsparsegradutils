@@ -3,7 +3,7 @@ from typing import Callable, Optional, cast
 
 import torch
 
-from torchsparsegradutils._compat import sparse_triangular_solve_compat
+from torchsparsegradutils._compat import linalg_solve_triangular_compat
 from torchsparsegradutils.utils import convert_coo_to_csr, sparse_block_diag, sparse_block_diag_split, stack_csr
 
 
@@ -178,8 +178,8 @@ class SparseTriangularSolve(torch.autograd.Function):
             A = convert_coo_to_csr(A)  # NOTE: triangular solve doesn't work with sparse coo
             ctx.csr = False
 
-        x = sparse_triangular_solve_compat(
-            B.detach(), A.detach(), upper=upper, unitriangular=unitriangular, transpose=transpose
+        x = linalg_solve_triangular_compat(
+            A.detach(), B.detach(), upper=upper, unitriangular=unitriangular, transpose=transpose
         )
 
         x.requires_grad = grad_flag
@@ -199,8 +199,8 @@ class SparseTriangularSolve(torch.autograd.Function):
 
         # Backprop rule: gradB = A^{-T} grad
 
-        gradB = sparse_triangular_solve_compat(
-            grad, A, upper=ctx.upper, transpose=not ctx.transpose, unitriangular=ctx.unitriangular
+        gradB = linalg_solve_triangular_compat(
+            A, grad, upper=ctx.upper, transpose=not ctx.transpose, unitriangular=ctx.unitriangular
         )
 
         # The gradient with respect to the matrix A seen as a dense matrix would
