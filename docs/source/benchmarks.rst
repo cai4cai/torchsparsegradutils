@@ -368,7 +368,7 @@ This benchmark evaluates sparse triangular system solvers with gradient computat
    * - **Code Call**
      - **Description**
      - **Plot Alias**
-   * - ``torch.linalg.solve_triangular(A.to_dense(), B, upper=..., unitriangular=...)``
+   * - ``torch.linalg.solve_triangular(A.to_dense().transpose(-2, -1) if transpose else A.to_dense(), B, upper=not upper if transpose else upper, unitriangular=...)``
      - Dense PyTorch triangular solve baseline operating on a densified copy of the sparse matrix
      - Dense
    * - Internal PyTorch sparse compatibility backend
