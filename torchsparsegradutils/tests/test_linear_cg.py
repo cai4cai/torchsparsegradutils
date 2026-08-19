@@ -10,7 +10,7 @@ def test_cg():
     # SPD matrix
     matrix = torch.randn(size, size, dtype=torch.float64)
     matrix = matrix.matmul(matrix.mT)
-    matrix.div_(matrix.norm()).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
+    matrix.div_(torch.linalg.vector_norm(matrix)).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
     # single RHS
     rhs = torch.randn(size, dtype=torch.float64)
     solves = linear_cg(matrix.matmul, rhs=rhs, max_iter=size)
@@ -36,7 +36,7 @@ def test_cg_with_tridiag():
     size = 10
     matrix = torch.randn(size, size, dtype=torch.float64)
     matrix = matrix.matmul(matrix.mT)
-    matrix.div_(matrix.norm()).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
+    matrix.div_(torch.linalg.vector_norm(matrix)).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
     rhs = torch.randn(size, 50, dtype=torch.float64)
     solves, t_mats = linear_cg(
         matrix.matmul, rhs=rhs, n_tridiag=5, max_tridiag_iter=10, max_iter=size, tolerance=0, eps=1e-15
@@ -57,7 +57,7 @@ def test_batch_cg(batch):
     shape = (batch, size, size) if batch else (size, size)
     matrix = torch.randn(*shape, dtype=torch.float64)
     matrix = matrix.matmul(matrix.mT)
-    matrix.div_(matrix.norm()).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
+    matrix.div_(torch.linalg.vector_norm(matrix)).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
     b_shape = (batch, size, 50) if batch else (size, 50)
     rhs = torch.randn(*b_shape, dtype=torch.float64)
     solves = linear_cg(matrix.matmul, rhs=rhs, max_iter=size)
@@ -72,7 +72,7 @@ def test_batch_cg_with_tridiag(batch):
     shape = (batch, size, size) if batch else (size, size)
     matrix = torch.randn(*shape, dtype=torch.float64)
     matrix = matrix.matmul(matrix.mT)
-    matrix.div_(matrix.norm()).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
+    matrix.div_(torch.linalg.vector_norm(matrix)).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
     b_shape = (batch, size, 10) if batch else (size, 10)
     rhs = torch.randn(*b_shape, dtype=torch.float64)
     solves, t_mats = linear_cg(
@@ -95,7 +95,7 @@ def test_batch_cg_init():
     size = 100
     matrix = torch.randn(batch, size, size, dtype=torch.float64)
     matrix = matrix.matmul(matrix.mT)
-    matrix.div_(matrix.norm()).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
+    matrix.div_(torch.linalg.vector_norm(matrix)).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
     rhs = torch.randn(batch, size, 50, dtype=torch.float64)
     solves = linear_cg(matrix.matmul, rhs=rhs, max_iter=size, max_tridiag_iter=0)
     solves_init = linear_cg(matrix.matmul, rhs=rhs, max_iter=1, initial_guess=solves, max_tridiag_iter=0)

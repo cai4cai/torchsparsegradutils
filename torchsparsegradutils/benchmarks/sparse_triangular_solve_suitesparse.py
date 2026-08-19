@@ -34,6 +34,7 @@ from cupyx.scipy.sparse.linalg._solve import spsolve_triangular
 from tqdm import tqdm
 
 from torchsparsegradutils import sparse_triangular_solve
+from torchsparsegradutils._compat import linalg_solve_triangular_compat
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
 
 # from jax.lax.linalg import triangular_solve  # NOTE: jax doesn't have a sparse triangular solve
@@ -57,16 +58,19 @@ LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
 
 ALGORITHMS = [
     (
-        "dense.triangular_solve",
-        lambda A, B: torch.triangular_solve(
-            B, A.to_dense(), upper=UPPER, unitriangular=UNITRIANGULAR, transpose=TRANSPOSE
-        ).solution,
+        "dense.linalg.solve_triangular",
+        lambda A, B: torch.linalg.solve_triangular(
+            A.to_dense().transpose(-2, -1) if TRANSPOSE else A.to_dense(),
+            B,
+            upper=not UPPER if TRANSPOSE else UPPER,
+            unitriangular=UNITRIANGULAR,
+        ),
     ),
     (
-        "torch_triangular_solve",
-        lambda A, B: torch.triangular_solve(
-            B, A, upper=UPPER, unitriangular=UNITRIANGULAR, transpose=TRANSPOSE
-        ).solution,
+        "linalg_solve_triangular_compat",
+        lambda A, B: linalg_solve_triangular_compat(
+            A, B, upper=UPPER, unitriangular=UNITRIANGULAR, transpose=TRANSPOSE
+        ),
     ),
     (
         "sparse_triangular_solve",
@@ -185,10 +189,9 @@ def run_triangular_solve_benchmark():
                             # Use the triangular matrix A_sparse (not A_full) for residual calculation
                             # This ensures the residual is computed correctly for the actual triangular system solved
                             residual = A_sparse @ x - B
-                            resnorm = torch.norm(residual).cpu().item()
-                            relative_resnorm = (
-                                resnorm / torch.norm(B).cpu().item() if torch.norm(B).cpu().item() > 0 else 0.0
-                            )
+                            resnorm = torch.linalg.vector_norm(residual).cpu().item()
+                            B_norm = torch.linalg.vector_norm(B).cpu().item()
+                            relative_resnorm = resnorm / B_norm if B_norm > 0 else 0.0
 
                         # Print result
                         print_result_row(

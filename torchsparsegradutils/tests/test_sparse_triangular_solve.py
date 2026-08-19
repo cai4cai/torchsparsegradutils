@@ -1,10 +1,13 @@
 import sys
+import warnings
+from unittest.mock import patch
 
 import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
 from torchsparsegradutils import sparse_triangular_solve
+from torchsparsegradutils._compat import linalg_solve_triangular_compat
 from torchsparsegradutils.utils import rand_sparse_tri
 
 TEST_DATA = [
@@ -49,6 +52,19 @@ def transpose_id(transpose):
 
 def layout_id(layout):
     return "coo" if layout == torch.sparse_coo else "csr"
+
+
+def dense_triangular_solve(A, B, *, upper, unitriangular, transpose):
+    if transpose:
+        A = A.transpose(-2, -1)
+        upper = not upper
+
+    return torch.linalg.solve_triangular(
+        A,
+        B,
+        upper=upper,
+        unitriangular=unitriangular,
+    )
 
 
 # Define Fixtures
@@ -115,7 +131,7 @@ def test_tri_solve_forward_routine(layout, device, value_dtype, index_dtype, sha
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
     Ad = A.to_dense()
 
-    res_ref = torch.triangular_solve(B, Ad, upper=upper, unitriangular=unitriangular, transpose=transpose).solution
+    res_ref = dense_triangular_solve(Ad, B, upper=upper, unitriangular=unitriangular, transpose=transpose)
     res_test = sparse_triangular_solve(A, B, upper=upper, unitriangular=unitriangular, transpose=transpose)
 
     atol, rtol = Tolerances.direct(value_dtype)
@@ -139,108 +155,117 @@ def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, sh
         device=device,
     )
 
-    Ad2 = As1.to_dense().detach().clone()  # detach and clone to create seperate graph
-    Ad3 = Ad2.detach().clone()
+    Ad_ref = As1.to_dense().detach().clone()
 
     Bd1 = torch.rand(*B_shape, dtype=value_dtype, device=device)
-    Bd2 = Bd1.detach().clone()
-    Bd3 = Bd1.detach().clone()
+    Bd_ref = Bd1.detach().clone()
 
     As1.requires_grad_()
-    Ad2.requires_grad_()
-    Ad3.requires_grad_()
+    Ad_ref.requires_grad_()
     Bd1.requires_grad_()
-    Bd2.requires_grad_()
-    Bd3.requires_grad_()
+    Bd_ref.requires_grad_()
 
-    res_ref = torch.triangular_solve(Bd2, Ad2, upper=upper, unitriangular=unitriangular, transpose=transpose).solution
+    res_ref = dense_triangular_solve(Ad_ref, Bd_ref, upper=upper, unitriangular=unitriangular, transpose=transpose)
     res_test = sparse_triangular_solve(As1, Bd1, upper=upper, unitriangular=unitriangular, transpose=transpose)
-
-    # Let's add another test to make sure that the transpose argument is working as epexcted:
-    if transpose:
-        res_test2 = torch.linalg.solve_triangular(
-            Ad3.transpose(-2, -1), Bd3, upper=not upper, unitriangular=unitriangular
-        )
-    else:
-        res_test2 = torch.linalg.solve_triangular(Ad3, Bd3, upper=upper, unitriangular=unitriangular)
 
     # Generate random gradients for the backward pass
     grad_output = torch.rand_like(res_test, dtype=value_dtype, device=device)
 
     res_ref.backward(grad_output)
     res_test.backward(grad_output)
-    res_test2.backward(grad_output)
 
     nz_mask = As1.grad.to_dense() != 0.0
 
     atol, rtol = Tolerances.direct(value_dtype)
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=atol, rtol=rtol)
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad3.grad[nz_mask], atol=atol, rtol=rtol)
+    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad_ref.grad[nz_mask], atol=atol, rtol=rtol)
 
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=atol, rtol=rtol)
-    assert torch.allclose(Bd1.grad, Bd3.grad, atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1.grad, Bd_ref.grad, atol=atol, rtol=rtol)
 
 
-def test_torch_triangular_solve_backward_fail(
-    layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose
-):
-    if sys.platform == "win32" and device == torch.device("cpu"):
-        pytest.skip("Skipping backward failure test on Windows CPU")
-    # unpack shapes
-    _, A_shape, B_shape, A_nnz = shapes
-    # create a random sparse triangular A and a dense B
-    As1 = rand_sparse_tri(
-        A_shape,
-        A_nnz,
-        layout,
-        upper=upper,
-        strict=unitriangular,
-        indices_dtype=index_dtype,
-        values_dtype=value_dtype,
-        device=device,
+def test_sparse_triangular_solve_does_not_emit_upstream_deprecation_warning():
+    A = rand_sparse_tri(
+        (4, 4),
+        6,
+        torch.sparse_csr,
+        upper=False,
+        strict=False,
+        indices_dtype=torch.int64,
+        values_dtype=torch.float64,
+        device=torch.device("cpu"),
     )
-    Bd1 = torch.rand(*B_shape, dtype=value_dtype, device=device)
-    Ad = As1.to_dense()
-    # torch.triangular_solve does not support backward on general inputs
-    with pytest.raises(RuntimeError):
-        sol = torch.triangular_solve(Bd1, Ad, upper=upper, unitriangular=unitriangular, transpose=transpose).solution
-        sol.sum().backward()
+    B = torch.rand(4, 2, dtype=torch.float64)
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        sparse_triangular_solve(A, B, upper=False)
+
+    deprecation_warnings = [
+        warning for warning in caught_warnings if "triangular_solve is deprecated" in str(warning.message)
+    ]
+    assert not deprecation_warnings
 
 
-def test_torch_linalg_solve_triangular_backward_fail(
-    layout, device, value_dtype, index_dtype, shapes, upper, unitriangular, transpose
-):
-    if sys.platform == "win32" and device == torch.device("cpu"):
-        pytest.skip("Skipping backward failure test on Windows CPU")
-    _, A_shape, B_shape, A_nnz = shapes
-    As1 = rand_sparse_tri(
-        A_shape,
-        A_nnz,
-        layout,
-        upper=upper,
-        strict=unitriangular,
-        indices_dtype=index_dtype,
-        values_dtype=value_dtype,
-        device=device,
+@pytest.mark.parametrize("transpose", TRANSPOSE, ids=[transpose_id(d) for d in TRANSPOSE])
+def test_linalg_solve_triangular_compat_dispatches_dense_to_modern_backend(transpose):
+    A_dense = torch.tensor(
+        [[2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [4.0, 5.0, 6.0]],
+        dtype=torch.float64,
     )
-    Bd1 = torch.rand(*B_shape, dtype=value_dtype, device=device)
-    Ad = As1.to_dense()
-    with pytest.raises(RuntimeError):
-        if transpose:
-            sol = torch.linalg.solve_triangular(
-                Ad.transpose(-2, -1),
-                Bd1,
-                upper=not upper,
-                unitriangular=unitriangular,
-            )
-        else:
-            sol = torch.linalg.solve_triangular(
-                Ad,
-                Bd1,
-                upper=upper,
-                unitriangular=unitriangular,
-            )
-        sol.sum().backward()
+    B = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float64)
+    expected = dense_triangular_solve(
+        A_dense,
+        B,
+        upper=False,
+        unitriangular=False,
+        transpose=transpose,
+    )
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        with patch("torch.linalg.solve_triangular", wraps=torch.linalg.solve_triangular) as modern_solve:
+            with patch("torch.triangular_solve", wraps=torch.triangular_solve) as legacy_solve:
+                result = linalg_solve_triangular_compat(A_dense, B, upper=False, transpose=transpose)
+
+    torch.testing.assert_close(result, expected)
+    modern_solve.assert_called_once()
+    legacy_solve.assert_not_called()
+    assert not [warning for warning in caught_warnings if "triangular_solve is deprecated" in str(warning.message)]
+
+
+@pytest.mark.parametrize("transpose", TRANSPOSE, ids=[transpose_id(d) for d in TRANSPOSE])
+def test_sparse_triangular_solve_dispatches_sparse_to_legacy_backend(layout, transpose):
+    A_dense = torch.tensor(
+        [[2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [4.0, 5.0, 6.0]],
+        dtype=torch.float64,
+    )
+    A = A_dense.to_sparse() if layout == torch.sparse_coo else A_dense.to_sparse_csr()
+    B = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float64)
+    expected = dense_triangular_solve(
+        A_dense,
+        B,
+        upper=False,
+        unitriangular=False,
+        transpose=transpose,
+    )
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        with patch("torch.linalg.solve_triangular", wraps=torch.linalg.solve_triangular) as modern_solve:
+            with patch("torch.triangular_solve", wraps=torch.triangular_solve) as legacy_solve:
+                result = sparse_triangular_solve(A, B, upper=False, transpose=transpose)
+
+    torch.testing.assert_close(result, expected)
+    modern_solve.assert_not_called()
+    legacy_solve.assert_called_once()
+    assert not [warning for warning in caught_warnings if "triangular_solve is deprecated" in str(warning.message)]
+
+
+def test_torch_linalg_solve_triangular_rejects_sparse_csr():
+    A = torch.eye(4, dtype=torch.float64).to_sparse_csr()
+    B = torch.ones(4, 2, dtype=torch.float64)
+
+    with pytest.raises(NotImplementedError, match="SparseCsr"):
+        torch.linalg.solve_triangular(A, B, upper=False)
 
 
 def test_sparse_triangular_solve_optimize_A_multiple_steps(layout, device, value_dtype, index_dtype):

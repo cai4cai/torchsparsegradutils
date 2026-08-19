@@ -86,7 +86,7 @@ For sparse triangular systems, use :func:`~torchsparsegradutils.sparse_triangula
    # Verify solution (should be close to zero)
    from torchsparsegradutils import sparse_mm
    residual = sparse_mm(L, x) - b
-   print(f"Residual norm: {torch.norm(residual):.6f}")
+   print(f"Residual norm: {torch.linalg.vector_norm(residual):.6f}")
 
 General Linear Systems
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -110,7 +110,7 @@ For general sparse linear systems, use :func:`~torchsparsegradutils.sparse_gener
 
    # Verify solution
    residual = A_sparse @ x_minres - b
-   print(f"MINRES residual norm: {torch.norm(residual):.6f}")
+   print(f"MINRES residual norm: {torch.linalg.vector_norm(residual):.6f}")
 
 Sparse Multivariate Normal Distributions
 -----------------------------------------
@@ -174,8 +174,8 @@ The distributions support reparameterized sampling for gradient computation:
    loss = samples.mean()
    loss.backward()
 
-   print(f"Location gradient norm: {torch.norm(loc.grad):.6f}")
-   print(f"Diagonal gradient norm: {torch.norm(diagonal.grad):.6f}")
+   print(f"Location gradient norm: {torch.linalg.vector_norm(loc.grad):.6f}")
+   print(f"Diagonal gradient norm: {torch.linalg.vector_norm(diagonal.grad):.6f}")
    print(f"Scale gradient nnz: {scale_tril.grad._nnz()}")
 
 Working with Different Backends

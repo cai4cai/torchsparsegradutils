@@ -3,6 +3,7 @@ from typing import Callable, Optional, cast
 
 import torch
 
+from torchsparsegradutils._compat import linalg_solve_triangular_compat
 from torchsparsegradutils.utils import convert_coo_to_csr, sparse_block_diag, sparse_block_diag_split, stack_csr
 
 
@@ -154,7 +155,7 @@ class SparseTriangularSolve(torch.autograd.Function):
     See Also
     --------
     sparse_triangular_solve : User-facing function that calls this autograd function.
-    torch.triangular_solve : PyTorch's native triangular solver.
+    torch.linalg.solve_triangular : PyTorch's native dense triangular solver.
     """
 
     @staticmethod
@@ -177,11 +178,9 @@ class SparseTriangularSolve(torch.autograd.Function):
             A = convert_coo_to_csr(A)  # NOTE: triangular solve doesn't work with sparse coo
             ctx.csr = False
 
-        # NOTE: DEPRECATED: Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
-
-        x = torch.triangular_solve(
-            B.detach(), A.detach(), upper=upper, unitriangular=unitriangular, transpose=transpose
-        ).solution
+        x = linalg_solve_triangular_compat(
+            A.detach(), B.detach(), upper=upper, unitriangular=unitriangular, transpose=transpose
+        )
 
         x.requires_grad = grad_flag
         ctx.save_for_backward(A, x.detach())
@@ -199,11 +198,10 @@ class SparseTriangularSolve(torch.autograd.Function):
         A, x = ctx.saved_tensors
 
         # Backprop rule: gradB = A^{-T} grad
-        # NOTE: DEPRECATED: Check if a workaround for https://github.com/pytorch/pytorch/issues/88890 is needed
 
-        gradB = torch.triangular_solve(
-            grad, A, upper=ctx.upper, transpose=not ctx.transpose, unitriangular=ctx.unitriangular
-        ).solution
+        gradB = linalg_solve_triangular_compat(
+            A, grad, upper=ctx.upper, transpose=not ctx.transpose, unitriangular=ctx.unitriangular
+        )
 
         # The gradient with respect to the matrix A seen as a dense matrix would
         # lead to a backprop rule as follows
