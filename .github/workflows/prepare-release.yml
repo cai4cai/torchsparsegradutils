@@ -1,0 +1,139 @@
+name: Prepare release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable release version without a leading v (for example, 0.2.6)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    name: Create release PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create release-bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Check out the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Verify the workflow is running from the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "${GITHUB_REF_NAME}" != "${DEFAULT_BRANCH}" ]]; then
+            echo "Run this workflow from ${DEFAULT_BRANCH}, not ${GITHUB_REF_NAME}." >&2
+            exit 1
+          fi
+
+      - name: Update and verify release metadata
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python .github/scripts/update_release_version.py "${RELEASE_VERSION}"
+          python .github/scripts/update_release_version.py "${RELEASE_VERSION}" --check
+          if git rev-parse --quiet --verify "refs/tags/v${RELEASE_VERSION}" >/dev/null; then
+            echo "Tag v${RELEASE_VERSION} already exists." >&2
+            exit 1
+          fi
+          if gh release view "v${RELEASE_VERSION}" --repo "${REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release v${RELEASE_VERSION} already exists." >&2
+            exit 1
+          fi
+
+      - name: Build and check distributions
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Resolve release-bot identity
+        id: bot
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          bot_login="${APP_SLUG}[bot]"
+          bot_id="$(gh api "/users/${bot_login}" --jq .id)"
+          echo "name=${bot_login}" >> "${GITHUB_OUTPUT}"
+          echo "email=${bot_id}+${bot_login}@users.noreply.github.com" >> "${GITHUB_OUTPUT}"
+
+      - name: Create release pull request
+        id: release-pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          add-paths: |
+            Dockerfile.pip-install
+            docs/source/conf.py
+            pyproject.toml
+          branch: release/v${{ inputs.version }}
+          base: ${{ github.event.repository.default_branch }}
+          delete-branch: true
+          commit-message: "chore: prepare v${{ inputs.version }} release"
+          title: "chore: prepare v${{ inputs.version }} release"
+          committer: "${{ steps.bot.outputs.name }} <${{ steps.bot.outputs.email }}>"
+          author: "${{ steps.bot.outputs.name }} <${{ steps.bot.outputs.email }}>"
+          sign-commits: true
+          reviewers: ${{ github.actor }}
+          body: |
+            ## Summary
+
+            - bump the package version to `${{ inputs.version }}`
+            - keep Sphinx and installed-wheel validation metadata aligned
+
+            ## Why
+
+            This bot-authored PR prepares the next release after the functional
+            changes have already been reviewed and merged.
+
+            ## Human review checklist
+
+            - [ ] Confirm the intended release version is `${{ inputs.version }}`.
+            - [ ] Confirm the diff contains only `pyproject.toml`,
+                  `docs/source/conf.py`, and `Dockerfile.pip-install`.
+            - [ ] Confirm all required CI checks pass.
+            - [ ] Approve and squash-merge this PR.
+
+            After merge, the release workflow will create an unpublished draft
+            GitHub release. Review and edit its generated notes before publishing;
+            publishing the release triggers the existing PyPI deployment.
+
+      - name: Summarize result
+        env:
+          OPERATION: ${{ steps.release-pr.outputs.pull-request-operation }}
+          PR_URL: ${{ steps.release-pr.outputs.pull-request-url }}
+        run: |
+          {
+            echo "## Release PR"
+            echo
+            echo "Operation: ${OPERATION}"
+            echo "Pull request: ${PR_URL}"
+          } >> "${GITHUB_STEP_SUMMARY}"
