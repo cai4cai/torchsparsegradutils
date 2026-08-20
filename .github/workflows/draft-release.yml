@@ -1,0 +1,104 @@
+name: Draft GitHub release
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: draft-release-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  draft-release:
+    name: Create draft release
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create release-bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: read
+
+      - name: Check out the merge commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Verify release-only scope
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          expected_files=$'Dockerfile.pip-install\ndocs/source/conf.py\npyproject.toml'
+          actual_files="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename' | LC_ALL=C sort)"
+          if [[ "${actual_files}" != "${expected_files}" ]]; then
+            echo "Refusing to draft a release for a PR with unexpected files:" >&2
+            echo "${actual_files}" >&2
+            exit 1
+          fi
+
+      - name: Verify merged version metadata
+        id: release
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          version="${HEAD_BRANCH#release/v}"
+          python .github/scripts/update_release_version.py "${version}" --check
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create unpublished draft release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if git rev-parse --quiet --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Refusing to create a draft because tag ${TAG} already exists." >&2
+            exit 1
+          fi
+          if gh release view "${TAG}" --repo "${REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; leaving it unchanged."
+            exit 0
+          fi
+          gh release create "${TAG}" --repo "${REPOSITORY}" --draft --generate-notes --target "${MERGE_SHA}" --title "${TAG}"
+
+      - name: Summarize next step
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          release_url="$(gh release view "${TAG}" --repo "${REPOSITORY}" --json url --jq .url)"
+          {
+            echo "## Draft release created"
+            echo
+            echo "Review and edit the generated notes before publishing:"
+            echo "${release_url}"
+            echo
+            echo "Publishing triggers the existing PyPI deployment workflow."
+          } >> "${GITHUB_STEP_SUMMARY}"
