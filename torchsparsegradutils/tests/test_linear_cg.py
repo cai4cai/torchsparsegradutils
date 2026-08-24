@@ -102,3 +102,79 @@ def test_batch_cg_init():
     chol = torch.linalg.cholesky(matrix)
     actual = torch.cholesky_solve(rhs, chol)
     assert torch.allclose(solves_init, actual, atol=1e-3, rtol=1e-4)
+
+
+def test_tight_tolerance_does_not_stall_at_historical_absolute_epsilon():
+    size = 36
+    diagonal = torch.full((size,), 2.0, dtype=torch.float64)
+    off_diagonal = torch.full((size - 1,), -0.25, dtype=torch.float64)
+    matrix = torch.diag(diagonal) + torch.diag(off_diagonal, 1) + torch.diag(off_diagonal, -1)
+    rhs = torch.zeros(size, dtype=torch.float64)
+    rhs[size // 2] = 1
+
+    solution, info = linear_cg(matrix, rhs, tolerance=1e-12, max_iter=200, return_info=True)
+    expected = torch.linalg.solve(matrix, rhs)
+
+    torch.testing.assert_close(solution, expected, rtol=1e-10, atol=1e-12)
+    assert info.reason == "converged"
+    assert info.converged.all()
+    assert info.true_relative_residual.max() <= 1e-12
+    assert info.iterations <= size
+
+
+def test_all_rhs_convergence_does_not_hide_one_hard_column():
+    size = 40
+    matrix = torch.diag(torch.linspace(1.0, 100.0, size, dtype=torch.float64))
+    rhs = torch.zeros((size, 101), dtype=torch.float64)
+    rhs[:, -1] = 1
+
+    with pytest.warns(UserWarning):
+        _, mean_info = linear_cg(
+            matrix,
+            rhs,
+            tolerance=1e-4,
+            max_iter=size,
+            convergence_reduction="mean",
+            return_info=True,
+        )
+    all_solution, all_info = linear_cg(
+        matrix,
+        rhs,
+        tolerance=1e-4,
+        max_iter=size,
+        convergence_reduction="all",
+        return_info=True,
+    )
+
+    assert mean_info.reason == "mean_converged"
+    assert not mean_info.converged[..., -1].all()
+    assert all_info.reason == "converged"
+    assert all_info.converged.all()
+    assert all_info.true_relative_residual.max() <= 1e-4
+    torch.testing.assert_close(all_solution, torch.linalg.solve(matrix, rhs), rtol=2e-4, atol=1e-6)
+
+
+def test_zero_rhs_returns_zero_even_with_nonzero_initial_guess():
+    matrix = torch.diag(torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64))
+    rhs = torch.zeros(3, dtype=torch.float64)
+    initial_guess = torch.ones(3, dtype=torch.float64)
+
+    solution, info = linear_cg(matrix, rhs, initial_guess=initial_guess, return_info=True)
+
+    torch.testing.assert_close(solution, torch.zeros_like(rhs), rtol=0, atol=0)
+    assert info.iterations == 0
+    assert info.converged.all()
+    assert info.true_relative_residual.max() == 0
+
+
+def test_vector_rank_is_preserved_with_vector_initial_guess():
+    matrix = torch.diag(torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64))
+    rhs = torch.ones(3, dtype=torch.float64)
+    solution = linear_cg(matrix, rhs, initial_guess=torch.zeros_like(rhs))
+    assert solution.shape == rhs.shape
+
+    column_guess_solution = linear_cg(matrix, rhs, initial_guess=torch.zeros((3, 1), dtype=torch.float64))
+    assert column_guess_solution.shape == rhs.shape
+
+    with pytest.raises(ValueError, match="initial_guess must have shape"):
+        linear_cg(matrix, rhs, initial_guess=torch.zeros((3, 2), dtype=torch.float64))

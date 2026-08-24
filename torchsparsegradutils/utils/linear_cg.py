@@ -2,7 +2,9 @@
 # Minor modifications for torchsparsegradutils to remove dependencies
 
 import warnings
-from typing import Callable, NamedTuple, Optional, Union
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import NamedTuple
 
 import torch
 
@@ -15,13 +17,32 @@ class LinearCGSettings(NamedTuple):
     )
     # Lanczos quadrature. This is ONLY used for log determinant calculations and
     # computing Tr(K^{-1}dK/d\theta)
-    cg_tolerance: float = 1  # Relative residual tolerance to use for terminating CG.
+    cg_tolerance: float = 1e-5  # Relative residual tolerance to use for terminating CG.
     terminate_cg_by_size: bool = False  # If set to true, cg will terminate after n iterations for an n x n matrix.
     verbose_linalg: bool = False  # Print out information whenever running an expensive linear algebra routine
 
 
+_DEFAULT_LINEAR_CG_SETTINGS = LinearCGSettings()
+
+
 def _default_preconditioner(x):
     return x.clone()
+
+
+@dataclass(frozen=True)
+class CGInfo:
+    """Convergence information returned by linear_cg.
+
+    Residual tensors have shape (batch_shape, num_rhs). Vector right-hand
+    sides therefore produce a length-one residual tensor.
+    """
+
+    iterations: int
+    matvecs: int
+    converged: torch.Tensor
+    recursive_relative_residual: torch.Tensor
+    true_relative_residual: torch.Tensor
+    reason: str
 
 
 def _linear_cg_updates(
@@ -64,6 +85,10 @@ def _linear_cg_updates_no_precond(
     torch.mul(curr_conjugate_vec, mvms, out=mul_storage)
     torch.sum(mul_storage, dim=-2, keepdim=True, out=alpha)
 
+    active = ~has_converged
+    if bool((active & ((alpha <= 0) | ~torch.isfinite(alpha))).any()):
+        raise RuntimeError("CG breakdown: p^T A p must be finite and positive for active right-hand sides")
+
     # Do a safe division here
     torch.lt(alpha, eps, out=is_zero)
     alpha.masked_fill_(is_zero, 1)
@@ -95,19 +120,27 @@ def _linear_cg_updates_no_precond(
     )
 
 
-def linear_cg(
-    matmul_closure: Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]],
+def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one recurrence
+    matmul_closure: torch.Tensor | Callable[[torch.Tensor], torch.Tensor],
     rhs: torch.Tensor,
     n_tridiag: int = 0,
-    tolerance: Optional[float] = None,
-    eps: float = 1e-10,
-    stop_updating_after: float = 1e-10,
-    max_iter: Optional[int] = None,
-    max_tridiag_iter: Optional[int] = None,
-    initial_guess: Optional[torch.Tensor] = None,
-    preconditioner: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
-    settings: LinearCGSettings = LinearCGSettings(),
-) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+    tolerance: float | None = None,
+    eps: float | None = None,
+    stop_updating_after: float | None = None,
+    max_iter: int | None = None,
+    max_tridiag_iter: int | None = None,
+    initial_guess: torch.Tensor | None = None,
+    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    settings: LinearCGSettings = _DEFAULT_LINEAR_CG_SETTINGS,
+    convergence_reduction: str = "all",
+    min_iter: int = 0,
+    return_info: bool = False,
+) -> (
+    torch.Tensor
+    | tuple[torch.Tensor, torch.Tensor]
+    | tuple[torch.Tensor, CGInfo]
+    | tuple[torch.Tensor, torch.Tensor, CGInfo]
+):
     r"""
     Solve symmetric positive definite linear systems using conjugate gradient (CG).
 
@@ -126,12 +159,15 @@ def linear_cg(
         Number of Lanczos tridiagonalizations (probe vectors). If ``> 0``,
         tridiagonal matrices are returned in addition to the solution. Default: ``0``.
     tolerance : float, optional
-        Average residual-norm stopping criterion. If ``None``, uses
+        Relative residual-norm stopping criterion. If ``None``, uses
         ``settings.cg_tolerance``.
     eps : float, optional
-        Small constant to avoid division by zero. Default: ``1e-10``.
+        Absolute breakdown threshold for recurrence denominators. If ``None``,
+        uses the smallest positive normal value of the RHS dtype. The historical
+        fixed default of 1e-10 can stall accurate solves.
     stop_updating_after : float, optional
-        Per-vector early-stop threshold for residual norms. Default: ``1e-10``.
+        Per-vector early-stop threshold for normalized residual norms. If
+        ``None``, uses ``tolerance``.
     max_iter : int, optional
         Maximum CG iterations. If ``None``, uses ``settings.max_cg_iterations``.
     max_tridiag_iter : int, optional
@@ -144,14 +180,23 @@ def linear_cg(
         If ``None``, no preconditioning is used.
     settings : LinearCGSettings, optional
         Configuration for iteration caps, tolerances, and logging verbosity.
+    convergence_reduction : {"all", "mean"}, optional
+        Stop when every right-hand side passes tolerance (default), or retain
+        the historical mean-residual behavior.
+    min_iter : int, optional
+        Minimum number of iterations before tolerance termination. Default: 0.
+    return_info : bool, optional
+        Return ``CGInfo`` containing recomputed true relative residuals,
+        per-right-hand-side convergence, iterations, and matvecs.
 
     Returns
     -------
-    torch.Tensor or (torch.Tensor, torch.Tensor)
+    torch.Tensor or tuple
         * If ``n_tridiag == 0``: solution ``x`` with the same shape as ``rhs``.
         * If ``n_tridiag > 0``: ``(x, T)`` where ``T`` has shape
           ``(n_tridiag, *rhs.shape[:-2], r, r)`` with ``r = last_tridiag_iter + 1``
           and ``r <= min(max_tridiag_iter, n)``. Without batch dims this is ``(n_tridiag, r, r)``.
+        * If ``return_info`` is true, append a ``CGInfo`` object.
 
     Raises
     ------
@@ -210,10 +255,16 @@ def linear_cg(
     ----------
     .. [1e] linear_operator library. https://github.com/cornellius-gp/linear_operator
     """
-    # Unsqueeze, if necessary
+    if not isinstance(rhs, torch.Tensor) or not torch.is_floating_point(rhs):
+        raise TypeError("rhs must be a real floating-point torch.Tensor")
+    if rhs.ndimension() not in (1, 2, 3):
+        raise ValueError("rhs must be a vector, matrix, or batched matrix")
+
+    # Unsqueeze vector right-hand sides without later reusing this rank flag.
     is_vector = rhs.ndimension() == 1
     if is_vector:
         rhs = rhs.unsqueeze(-1)
+    rhs_original = rhs
 
     # Some default arguments
     if max_iter is None:
@@ -223,12 +274,28 @@ def linear_cg(
     if initial_guess is None:
         initial_guess = torch.zeros_like(rhs)
     else:
-        # Unsqueeze, if necessary
-        is_vector = initial_guess.ndimension() == 1
-        if is_vector:
+        if initial_guess.ndimension() == 1:
             initial_guess = initial_guess.unsqueeze(-1)
+        if initial_guess.shape != rhs.shape:
+            raise ValueError(f"initial_guess must have shape {tuple(rhs.shape)}, got {tuple(initial_guess.shape)}")
+        if initial_guess.device != rhs.device or initial_guess.dtype != rhs.dtype:
+            raise ValueError("initial_guess must share rhs device and dtype")
     if tolerance is None:
         tolerance = settings.cg_tolerance
+    if tolerance < 0:
+        raise ValueError("tolerance must be nonnegative")
+    if eps is None:
+        eps = torch.finfo(rhs.dtype).tiny
+    if eps <= 0:
+        raise ValueError("eps must be positive")
+    if stop_updating_after is None:
+        stop_updating_after = tolerance
+    if stop_updating_after < 0:
+        raise ValueError("stop_updating_after must be nonnegative")
+    if convergence_reduction not in ("all", "mean"):
+        raise ValueError("convergence_reduction must be 'all' or 'mean'")
+    if min_iter < 0:
+        raise ValueError("min_iter must be nonnegative")
     if preconditioner is None:
         preconditioner = _default_preconditioner
         precond = False
@@ -249,21 +316,27 @@ def linear_cg(
     num_rows = rhs.size(-2)
     n_iter = min(max_iter, num_rows) if settings.terminate_cg_by_size else max_iter
     n_tridiag_iter = min(max_tridiag_iter, num_rows)
-    eps = torch.tensor(eps, dtype=rhs.dtype, device=rhs.device)
+    eps_tensor = torch.tensor(eps, dtype=rhs.dtype, device=rhs.device)
 
     # Get the norm of the rhs - used for convergence checks
     # Here we're going to make almost-zero norms actually be 1 (so we don't get divide-by-zero issues)
     # But we'll store which norms were actually close to zero
     rhs_norm = torch.linalg.vector_norm(rhs, ord=2, dim=-2, keepdim=True)
-    rhs_is_zero = rhs_norm.lt(eps)
+    rhs_is_zero = rhs_norm.eq(0)
     rhs_norm = rhs_norm.masked_fill_(rhs_is_zero, 1)
 
     # Let's normalize. We'll un-normalize afterwards
     rhs = rhs.div(rhs_norm)
     initial_guess = initial_guess.div(rhs_norm)
+    # The unique solution of an SPD zero-RHS system is zero. Do not return an
+    # arbitrary nonzero initial guess while marking that column converged.
+    initial_guess = initial_guess.masked_fill(rhs_is_zero, 0)
 
     # residual: residual_{0} = b_vec - lhs x_{0}
     residual = rhs - matmul_closure(initial_guess)
+    matvecs = 1
+    if residual.shape != rhs.shape or residual.device != rhs.device or residual.dtype != rhs.dtype:
+        raise RuntimeError("matmul_closure output must match rhs shape, device, and dtype")
     batch_shape = residual.shape[:-2]
 
     # result <- x_{0}
@@ -290,8 +363,17 @@ def linear_cg(
     else:
         # precon_residual{0} = M^-1 residual_{0}
         precond_residual = preconditioner(residual)
+        if (
+            precond_residual.shape != residual.shape
+            or precond_residual.device != residual.device
+            or precond_residual.dtype != residual.dtype
+        ):
+            raise RuntimeError("preconditioner output must match residual shape, device, and dtype")
         curr_conjugate_vec = precond_residual
         residual_inner_prod = precond_residual.mul(residual).sum(-2, keepdim=True)
+        active = ~has_converged
+        if bool((active & ((residual_inner_prod <= 0) | ~torch.isfinite(residual_inner_prod))).any()):
+            raise RuntimeError("CG breakdown: preconditioned residual inner product must be finite and positive")
 
         # Define storage matrices
         mul_storage = torch.empty_like(residual)
@@ -314,18 +396,26 @@ def linear_cg(
 
     # It's conceivable we reach the tolerance on the last iteration, so can't just check iteration number.
     tolerance_reached = False
+    iterations = 0
 
     # Start the iteration
     for k in range(n_iter):
         # Get next alpha
         # alpha_{k} = (residual_{k-1}^T precon_residual{k-1}) / (p_vec_{k-1}^T mat p_vec_{k-1})
         mvms = matmul_closure(curr_conjugate_vec)
+        matvecs += 1
+        if mvms.shape != rhs.shape or mvms.device != rhs.device or mvms.dtype != rhs.dtype:
+            raise RuntimeError("matmul_closure output must match rhs shape, device, and dtype")
         if precond:
             torch.mul(curr_conjugate_vec, mvms, out=mul_storage)
             torch.sum(mul_storage, -2, keepdim=True, out=alpha)
 
+            active = ~has_converged
+            if bool((active & ((alpha <= 0) | ~torch.isfinite(alpha))).any()):
+                raise RuntimeError("CG breakdown: p^T A p must be finite and positive for active right-hand sides")
+
             # Do a safe division here
-            torch.lt(alpha, eps, out=is_zero)
+            torch.lt(alpha, eps_tensor, out=is_zero)
             alpha.masked_fill_(is_zero, 1)
             torch.div(residual_inner_prod, alpha, out=alpha)
             alpha.masked_fill_(is_zero, 0)
@@ -340,12 +430,18 @@ def linear_cg(
             # Update precond_residual
             # precon_residual{k} = M^-1 residual_{k}
             precond_residual = preconditioner(residual)
+            if (
+                precond_residual.shape != residual.shape
+                or precond_residual.device != residual.device
+                or precond_residual.dtype != residual.dtype
+            ):
+                raise RuntimeError("preconditioner output must match residual shape, device, and dtype")
 
             _linear_cg_updates(
                 result,
                 alpha,
                 residual_inner_prod,
-                eps,
+                eps_tensor,
                 beta,
                 residual,
                 precond_residual,
@@ -360,7 +456,7 @@ def linear_cg(
                 has_converged,
                 alpha,
                 residual_inner_prod,
-                eps,
+                eps_tensor,
                 beta,
                 residual,
                 precond_residual,
@@ -370,14 +466,15 @@ def linear_cg(
             )
 
         torch.linalg.vector_norm(residual, ord=2, dim=-2, keepdim=True, out=residual_norm)
-        residual_norm.masked_fill_(rhs_is_zero, 0)
         torch.lt(residual_norm, stop_updating_after, out=has_converged)
+        iterations = k + 1
 
-        if (
-            k >= min(10, max_iter - 1)
-            and bool(residual_norm.mean() < tolerance)
-            and not (n_tridiag and k < min(n_tridiag_iter, max_iter - 1))
-        ):
+        if convergence_reduction == "all":
+            convergence_reached = bool(torch.le(residual_norm, tolerance).all())
+        else:
+            convergence_reached = bool(residual_norm.mean() <= tolerance)
+
+        if iterations >= min_iter and convergence_reached and not (n_tridiag and k < min(n_tridiag_iter, max_iter - 1)):
             tolerance_reached = True
             break
 
@@ -405,26 +502,52 @@ def linear_cg(
             prev_alpha_reciprocal.copy_(alpha_reciprocal)
             prev_beta.copy_(beta_tridiag)
 
-    # Un-normalize
+    # Un-normalize and recompute a true residual before reporting convergence.
     result = result.mul(rhs_norm)
+    true_residual = rhs_original - matmul_closure(result)
+    matvecs += 1
+    if true_residual.shape != rhs.shape or true_residual.device != rhs.device or true_residual.dtype != rhs.dtype:
+        raise RuntimeError("matmul_closure output must match rhs shape, device, and dtype")
+    rhs_original_norm = torch.linalg.vector_norm(rhs_original, ord=2, dim=-2, keepdim=True)
+    denominator = rhs_original_norm.masked_fill(rhs_original_norm.eq(0), 1)
+    true_relative_residual = torch.linalg.vector_norm(true_residual, ord=2, dim=-2, keepdim=True) / denominator
+    recursive_relative_residual = residual_norm
+    converged = torch.le(true_relative_residual, tolerance)
+    all_true_converged = bool(converged.all())
+    if all_true_converged:
+        reason = "converged"
+    elif tolerance_reached and convergence_reduction == "mean":
+        reason = "mean_converged"
+    else:
+        reason = "max_iter"
 
-    if not tolerance_reached and n_iter > 0:
+    if tolerance > 0 and not all_true_converged and n_iter > 0:
         warnings.warn(
-            "CG terminated in {} iterations with average residual norm {}"
-            " which is larger than the tolerance of {} specified by"
-            " linear_operator.settings.cg_tolerance."
-            " If performance is affected, consider raising the maximum number of CG iterations by running code in"
-            " a linear_operator.settings.max_cg_iterations(value) context.".format(
-                k + 1, residual_norm.mean(), tolerance
-            ),
+            f"CG terminated in {iterations} iterations with maximum true relative residual "
+            f"{true_relative_residual.max()} which is larger than the tolerance of {tolerance}. "
+            f"{(~converged).sum()} of {converged.numel()} right-hand sides did not converge.",
             UserWarning,
+            stacklevel=2,
         )
+
+    info = CGInfo(
+        iterations=iterations,
+        matvecs=matvecs,
+        converged=converged.squeeze(-2).detach(),
+        recursive_relative_residual=recursive_relative_residual.squeeze(-2).detach(),
+        true_relative_residual=true_relative_residual.squeeze(-2).detach(),
+        reason=reason,
+    )
 
     if is_vector:
         result = result.squeeze(-1)
 
     if n_tridiag:
         t_mat = t_mat[: last_tridiag_iter + 1, : last_tridiag_iter + 1]
-        return result, t_mat.permute(-1, *range(2, 2 + len(batch_shape)), 0, 1).contiguous()
-    else:
-        return result
+        tridiagonal = t_mat.permute(-1, *range(2, 2 + len(batch_shape)), 0, 1).contiguous()
+        if return_info:
+            return result, tridiagonal, info
+        return result, tridiagonal
+    if return_info:
+        return result, info
+    return result

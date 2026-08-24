@@ -1,6 +1,6 @@
 from .bicgstab import BICGSTABSettings, bicgstab
 from .dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
-from .linear_cg import LinearCGSettings, linear_cg
+from .linear_cg import CGInfo, LinearCGSettings, linear_cg
 from .lsmr import lsmr
 from .minres import MINRESSettings, minres
 from .random_sparse import rand_sparse, rand_sparse_tri
@@ -16,6 +16,7 @@ from .utils import (
 __all__ = [
     "linear_cg",
     "LinearCGSettings",
+    "CGInfo",
     "minres",
     "MINRESSettings",
     "bicgstab",
