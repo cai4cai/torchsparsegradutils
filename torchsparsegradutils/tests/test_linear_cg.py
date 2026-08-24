@@ -178,3 +178,17 @@ def test_vector_rank_is_preserved_with_vector_initial_guess():
 
     with pytest.raises(ValueError, match="initial_guess must have shape"):
         linear_cg(matrix, rhs, initial_guess=torch.zeros((3, 2), dtype=torch.float64))
+
+
+def test_multiple_batch_dimensions_are_supported():
+    with pytest.raises(ValueError, match="at least one dimension"):
+        linear_cg(torch.ones((1, 1), dtype=torch.float64), torch.tensor(1.0, dtype=torch.float64))
+
+    matrix = torch.diag(torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64))
+    rhs = torch.ones((2, 4, 3, 2), dtype=torch.float64)
+
+    solution = linear_cg(matrix, rhs, tolerance=1e-12)
+    expected = torch.linalg.solve(matrix, rhs)
+
+    assert solution.shape == rhs.shape
+    torch.testing.assert_close(solution, expected, rtol=1e-12, atol=1e-12)

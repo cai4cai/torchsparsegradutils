@@ -257,8 +257,8 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     """
     if not isinstance(rhs, torch.Tensor) or not torch.is_floating_point(rhs):
         raise TypeError("rhs must be a real floating-point torch.Tensor")
-    if rhs.ndimension() not in (1, 2, 3):
-        raise ValueError("rhs must be a vector, matrix, or batched matrix")
+    if rhs.ndimension() < 1:
+        raise ValueError("rhs must have at least one dimension")
 
     # Unsqueeze vector right-hand sides without later reusing this rank flag.
     is_vector = rhs.ndimension() == 1
@@ -318,9 +318,8 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     n_tridiag_iter = min(max_tridiag_iter, num_rows)
     eps_tensor = torch.tensor(eps, dtype=rhs.dtype, device=rhs.device)
 
-    # Get the norm of the rhs - used for convergence checks
-    # Here we're going to make almost-zero norms actually be 1 (so we don't get divide-by-zero issues)
-    # But we'll store which norms were actually close to zero
+    # Get the norm of the rhs for convergence checks. Replace exact-zero
+    # norms with 1 to avoid division by zero, while tracking those RHS columns.
     rhs_norm = torch.linalg.vector_norm(rhs, ord=2, dim=-2, keepdim=True)
     rhs_is_zero = rhs_norm.eq(0)
     rhs_norm = rhs_norm.masked_fill_(rhs_is_zero, 1)
@@ -522,10 +521,12 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
         reason = "max_iter"
 
     if tolerance > 0 and not all_true_converged and n_iter > 0:
+        maximum_residual = true_relative_residual.max().item()
+        num_unconverged = (~converged).sum().item()
         warnings.warn(
             f"CG terminated in {iterations} iterations with maximum true relative residual "
-            f"{true_relative_residual.max()} which is larger than the tolerance of {tolerance}. "
-            f"{(~converged).sum()} of {converged.numel()} right-hand sides did not converge.",
+            f"{maximum_residual} which is larger than the tolerance of {tolerance}. "
+            f"{num_unconverged} of {converged.numel()} right-hand sides did not converge.",
             UserWarning,
             stacklevel=2,
         )

@@ -54,12 +54,17 @@ class CountedMatmul:
 
 def load_historical_linear_cg(revision: str) -> Callable[..., torch.Tensor]:
     """Load ``linear_cg`` from a Git revision without changing the worktree."""
-    completed = subprocess.run(
-        ["git", "-C", str(REPOSITORY_ROOT), "show", f"{revision}:{LINEAR_CG_PATH}"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    command = ["git", "-C", str(REPOSITORY_ROOT), "show", f"{revision}:{LINEAR_CG_PATH}"]
+    try:
+        completed = subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError as error:
+        raise RuntimeError("Cannot load the historical solver because the Git executable was not found") from error
+    except subprocess.CalledProcessError as error:
+        detail = error.stderr.strip() or "Git could not resolve the requested revision and file"
+        raise RuntimeError(
+            f"Cannot load the historical solver from revision {revision!r}. "
+            f"Run this benchmark from a Git checkout containing that revision. Git reported: {detail}"
+        ) from error
     module = types.ModuleType("historical_linear_cg")
     exec(compile(completed.stdout, f"{revision}:{LINEAR_CG_PATH}", "exec"), module.__dict__)
     return module.linear_cg
