@@ -73,10 +73,10 @@ docker run --rm torchsparsegradutils-pip-install:<version>
 - Require the normal human approval and status checks on the release PR, then
   squash-merge it. Do not bypass the review step for functional changes.
 - Merging an internal `release/vX.Y.Z` PR creates an unpublished draft GitHub
-  release at that exact merge commit. Review and edit the generated notes before
-  publishing.
-- Publishing the GitHub release creates the tag and triggers the PyPI deployment
-  workflow, which builds from the release state.
+  release and its associated tag at that exact merge commit. Review and edit the
+  generated notes before publishing.
+- Publishing the GitHub release triggers the PyPI deployment workflow, which
+  builds from the release state.
 - After publication, verify:
   - PyPI has the new version.
   - `pip install "torchsparsegradutils[all]==<version>"` no longer warns about missing extras.

@@ -77,13 +77,27 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           TAG: ${{ steps.release.outputs.tag }}
         run: |
+          existing_release="$(
+            gh release view "${TAG}" --repo "${REPOSITORY}" \
+              --json isDraft,targetCommitish \
+              --jq '[.isDraft, .targetCommitish] | @tsv' 2>/dev/null || true
+          )"
+          if [[ -n "${existing_release}" ]]; then
+            IFS=$'\t' read -r existing_is_draft existing_target <<< "${existing_release}"
+            if [[ "${existing_is_draft}" != "true" ]]; then
+              echo "Release ${TAG} already exists and is not a draft." >&2
+              exit 1
+            fi
+            if [[ "${existing_target}" != "${MERGE_SHA}" ]]; then
+              echo "Draft release ${TAG} targets ${existing_target}, not ${MERGE_SHA}." >&2
+              exit 1
+            fi
+            echo "Draft release ${TAG} already exists at ${MERGE_SHA}; leaving it unchanged."
+            exit 0
+          fi
           if git rev-parse --quiet --verify "refs/tags/${TAG}" >/dev/null; then
             echo "Refusing to create a draft because tag ${TAG} already exists." >&2
             exit 1
-          fi
-          if gh release view "${TAG}" --repo "${REPOSITORY}" >/dev/null 2>&1; then
-            echo "Release ${TAG} already exists; leaving it unchanged."
-            exit 0
           fi
           gh release create "${TAG}" --repo "${REPOSITORY}" --draft --generate-notes --target "${MERGE_SHA}" --title "${TAG}"
 
