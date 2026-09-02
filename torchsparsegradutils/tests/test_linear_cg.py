@@ -180,6 +180,27 @@ def test_vector_rank_is_preserved_with_vector_initial_guess():
         linear_cg(matrix, rhs, initial_guess=torch.zeros((3, 2), dtype=torch.float64))
 
 
+def test_min_iter_is_honored_for_converged_initial_guess():
+    matrix = torch.eye(3, dtype=torch.float64)
+    rhs = torch.ones(3, dtype=torch.float64)
+
+    solution, info = linear_cg(
+        matrix,
+        rhs,
+        initial_guess=rhs,
+        min_iter=3,
+        max_iter=5,
+        max_tridiag_iter=0,
+        return_info=True,
+    )
+
+    torch.testing.assert_close(solution, rhs, rtol=0, atol=0)
+    assert info.iterations == 3
+    assert info.matvecs == 5
+    assert info.reason == "converged"
+    assert info.converged.all()
+
+
 def test_multiple_batch_dimensions_are_supported():
     with pytest.raises(ValueError, match="at least one dimension"):
         linear_cg(torch.ones((1, 1), dtype=torch.float64), torch.tensor(1.0, dtype=torch.float64))

@@ -355,7 +355,7 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     residual_norm = torch.linalg.vector_norm(residual, ord=2, dim=-2, keepdim=True)
     has_converged = torch.lt(residual_norm, stop_updating_after)
 
-    if has_converged.all() and not n_tridiag:
+    if has_converged.all() and not n_tridiag and min_iter == 0:
         n_iter = 0  # Skip the iteration!
 
     # Otherwise, let's define precond_residual and curr_conjugate_vec
