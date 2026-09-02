@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.abspath("../../"))
 project = "torchsparsegradutils"
 copyright = "2026, CAI4CAI research group"
 author = "CAI4CAI research group"
-release = "0.2.5"
-version = "0.2.5"
+release = "0.2.6"
+version = "0.2.6"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
