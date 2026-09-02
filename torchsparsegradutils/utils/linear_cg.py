@@ -1,10 +1,11 @@
 # MIT-licensed code imported from https://github.com/cornellius-gp/linear_operator
 # Minor modifications for torchsparsegradutils to remove dependencies
 
+import math
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import torch
 
@@ -33,8 +34,14 @@ def _default_preconditioner(x):
 class CGInfo:
     """Convergence information returned by linear_cg.
 
-    Residual tensors have shape (batch_shape, num_rhs). Vector right-hand
+    Residual tensors have shape (*batch_shape, num_rhs). Vector right-hand
     sides therefore produce a length-one residual tensor.
+
+    The reason is "converged" when the recomputed true residual meets
+    tolerance, "recursive_converged" or "mean_converged" when an internal
+    stopping criterion is met but the true residual is not, "stopped_updating"
+    when the initial residual is below stop_updating_after but not tolerance,
+    and "max_iter" when the iteration limit is reached.
     """
 
     iterations: int
@@ -42,7 +49,29 @@ class CGInfo:
     converged: torch.Tensor
     recursive_relative_residual: torch.Tensor
     true_relative_residual: torch.Tensor
-    reason: str
+    tolerance: float
+    reason: Literal["converged", "recursive_converged", "mean_converged", "stopped_updating", "max_iter"]
+
+
+def _validate_recurrence_denominators(
+    curvature: torch.Tensor,
+    residual_inner_prod: torch.Tensor,
+    eps: torch.Tensor,
+    has_converged: torch.Tensor,
+) -> None:
+    """Reject invalid active recurrence denominators with one device sync."""
+    active = ~has_converged
+    invalid_curvature = active & ((curvature < eps) | ~torch.isfinite(curvature))
+    invalid_inner_product = active & ((residual_inner_prod < eps) | ~torch.isfinite(residual_inner_prod))
+    curvature_failed, inner_product_failed = torch.stack(
+        (invalid_curvature.any(), invalid_inner_product.any())
+    ).tolist()
+    if curvature_failed:
+        raise RuntimeError("CG breakdown: p^T A p must be finite and at least eps for active right-hand sides")
+    if inner_product_failed:
+        raise RuntimeError(
+            "CG breakdown: residual inner product must be finite and at least eps for active right-hand sides"
+        )
 
 
 def _linear_cg_updates(
@@ -85,9 +114,7 @@ def _linear_cg_updates_no_precond(
     torch.mul(curr_conjugate_vec, mvms, out=mul_storage)
     torch.sum(mul_storage, dim=-2, keepdim=True, out=alpha)
 
-    active = ~has_converged
-    if bool((active & ((alpha <= 0) | ~torch.isfinite(alpha))).any()):
-        raise RuntimeError("CG breakdown: p^T A p must be finite and positive for active right-hand sides")
+    _validate_recurrence_denominators(alpha, residual_inner_prod, eps, has_converged)
 
     # Do a safe division here
     torch.lt(alpha, eps, out=is_zero)
@@ -132,7 +159,7 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     initial_guess: torch.Tensor | None = None,
     preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
     settings: LinearCGSettings = _DEFAULT_LINEAR_CG_SETTINGS,
-    convergence_reduction: str = "all",
+    convergence_reduction: Literal["all", "mean"] = "all",
     min_iter: int = 0,
     return_info: bool = False,
 ) -> (
@@ -159,15 +186,16 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
         Number of Lanczos tridiagonalizations (probe vectors). If ``> 0``,
         tridiagonal matrices are returned in addition to the solution. Default: ``0``.
     tolerance : float, optional
-        Relative residual-norm stopping criterion. If ``None``, uses
-        ``settings.cg_tolerance``.
+        Finite, nonnegative relative residual-norm stopping criterion. If
+        ``None``, uses ``settings.cg_tolerance``.
     eps : float, optional
-        Absolute breakdown threshold for recurrence denominators. If ``None``,
-        uses the smallest positive normal value of the RHS dtype. The historical
-        fixed default of 1e-10 can stall accurate solves.
+        Finite, positive breakdown threshold for recurrence denominators.
+        Active denominators below this threshold raise ``RuntimeError`` rather
+        than silently freezing an unconverged column. If ``None``, uses the
+        smallest positive normal value of the RHS dtype.
     stop_updating_after : float, optional
-        Per-vector early-stop threshold for normalized residual norms. If
-        ``None``, uses ``tolerance``.
+        Finite, nonnegative per-vector early-stop threshold for normalized
+        residual norms. If ``None``, uses ``tolerance``.
     max_iter : int, optional
         Maximum CG iterations. If ``None``, uses ``settings.max_cg_iterations``.
     max_tridiag_iter : int, optional
@@ -187,7 +215,8 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
         Minimum number of iterations before tolerance termination. Default: 0.
     return_info : bool, optional
         Return ``CGInfo`` containing recomputed true relative residuals,
-        per-right-hand-side convergence, iterations, and matvecs.
+        the requested tolerance, per-right-hand-side convergence, iterations,
+        matvecs, and termination reason.
 
     Returns
     -------
@@ -200,10 +229,14 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
 
     Raises
     ------
+    TypeError
+        If ``rhs`` is not a real floating-point tensor.
+    ValueError
+        If tensor shapes, devices, or dtypes are incompatible, or if a solver
+        setting is invalid.
     RuntimeError
-        If ``max_tridiag_iter > max_iter``.
-    RuntimeError
-        If ``matmul_closure`` is neither a tensor nor a callable.
+        If Lanczos settings are incompatible, an operator returns an invalid
+        tensor, or an active CG recurrence denominator breaks down.
 
     Notes
     -----
@@ -229,7 +262,7 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     Multiple RHS::
 
         >>> B = torch.randn(2, 5)  # 5 RHS
-        >>> X = linear_cg(A.matmul, B, max_iter=100, tolerance=1e-8)
+        >>> X = linear_cg(A.matmul, B, max_iter=100, tolerance=1e-5)
         >>> X.shape
         torch.Size([2, 5])
 
@@ -260,7 +293,7 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     if rhs.ndimension() < 1:
         raise ValueError("rhs must have at least one dimension")
 
-    # Unsqueeze vector right-hand sides without later reusing this rank flag.
+    # Temporarily add a column dimension for vector right-hand sides.
     is_vector = rhs.ndimension() == 1
     if is_vector:
         rhs = rhs.unsqueeze(-1)
@@ -282,16 +315,16 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
             raise ValueError("initial_guess must share rhs device and dtype")
     if tolerance is None:
         tolerance = settings.cg_tolerance
-    if tolerance < 0:
-        raise ValueError("tolerance must be nonnegative")
+    if not math.isfinite(tolerance) or tolerance < 0:
+        raise ValueError("tolerance must be finite and nonnegative")
     if eps is None:
         eps = torch.finfo(rhs.dtype).tiny
-    if eps <= 0:
-        raise ValueError("eps must be positive")
+    if not math.isfinite(eps) or eps <= 0:
+        raise ValueError("eps must be finite and positive")
     if stop_updating_after is None:
         stop_updating_after = tolerance
-    if stop_updating_after < 0:
-        raise ValueError("stop_updating_after must be nonnegative")
+    if not math.isfinite(stop_updating_after) or stop_updating_after < 0:
+        raise ValueError("stop_updating_after must be finite and nonnegative")
     if convergence_reduction not in ("all", "mean"):
         raise ValueError("convergence_reduction must be 'all' or 'mean'")
     if min_iter < 0:
@@ -317,6 +350,8 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     n_iter = min(max_iter, num_rows) if settings.terminate_cg_by_size else max_iter
     n_tridiag_iter = min(max_tridiag_iter, num_rows)
     eps_tensor = torch.tensor(eps, dtype=rhs.dtype, device=rhs.device)
+    if not bool(eps_tensor > 0):
+        raise ValueError("eps must be representable as a positive value in the rhs dtype")
 
     # Get the norm of the rhs for convergence checks. Replace exact-zero
     # norms with 1 to avoid division by zero, while tracking those RHS columns.
@@ -353,10 +388,12 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     # Sometime we're lucky and the preconditioner solves the system right away
     # Check for convergence
     residual_norm = torch.linalg.vector_norm(residual, ord=2, dim=-2, keepdim=True)
-    has_converged = torch.lt(residual_norm, stop_updating_after)
+    has_converged = torch.le(residual_norm, stop_updating_after)
+    stopped_before_iteration = False
 
     if has_converged.all() and not n_tridiag and min_iter == 0:
         n_iter = 0  # Skip the iteration!
+        stopped_before_iteration = True
 
     # Otherwise, let's define precond_residual and curr_conjugate_vec
     else:
@@ -371,8 +408,8 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
         curr_conjugate_vec = precond_residual
         residual_inner_prod = precond_residual.mul(residual).sum(-2, keepdim=True)
         active = ~has_converged
-        if bool((active & ((residual_inner_prod <= 0) | ~torch.isfinite(residual_inner_prod))).any()):
-            raise RuntimeError("CG breakdown: preconditioned residual inner product must be finite and positive")
+        if bool((active & ((residual_inner_prod < eps_tensor) | ~torch.isfinite(residual_inner_prod))).any()):
+            raise RuntimeError("CG breakdown: preconditioned residual inner product must be finite and at least eps")
 
         # Define storage matrices
         mul_storage = torch.empty_like(residual)
@@ -409,9 +446,7 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
             torch.mul(curr_conjugate_vec, mvms, out=mul_storage)
             torch.sum(mul_storage, -2, keepdim=True, out=alpha)
 
-            active = ~has_converged
-            if bool((active & ((alpha <= 0) | ~torch.isfinite(alpha))).any()):
-                raise RuntimeError("CG breakdown: p^T A p must be finite and positive for active right-hand sides")
+            _validate_recurrence_denominators(alpha, residual_inner_prod, eps_tensor, has_converged)
 
             # Do a safe division here
             torch.lt(alpha, eps_tensor, out=is_zero)
@@ -465,7 +500,7 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
             )
 
         torch.linalg.vector_norm(residual, ord=2, dim=-2, keepdim=True, out=residual_norm)
-        torch.lt(residual_norm, stop_updating_after, out=has_converged)
+        torch.le(residual_norm, stop_updating_after, out=has_converged)
         iterations = k + 1
 
         if convergence_reduction == "all":
@@ -515,12 +550,14 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     all_true_converged = bool(converged.all())
     if all_true_converged:
         reason = "converged"
-    elif tolerance_reached and convergence_reduction == "mean":
-        reason = "mean_converged"
+    elif tolerance_reached:
+        reason = "mean_converged" if convergence_reduction == "mean" else "recursive_converged"
+    elif stopped_before_iteration:
+        reason = "stopped_updating"
     else:
         reason = "max_iter"
 
-    if tolerance > 0 and not all_true_converged and n_iter > 0:
+    if not all_true_converged:
         maximum_residual = true_relative_residual.max().item()
         num_unconverged = (~converged).sum().item()
         warnings.warn(
@@ -531,14 +568,16 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
             stacklevel=2,
         )
 
-    info = CGInfo(
-        iterations=iterations,
-        matvecs=matvecs,
-        converged=converged.squeeze(-2).detach(),
-        recursive_relative_residual=recursive_relative_residual.squeeze(-2).detach(),
-        true_relative_residual=true_relative_residual.squeeze(-2).detach(),
-        reason=reason,
-    )
+    if return_info:
+        info = CGInfo(
+            iterations=iterations,
+            matvecs=matvecs,
+            converged=converged.squeeze(-2).detach(),
+            recursive_relative_residual=recursive_relative_residual.squeeze(-2).detach(),
+            true_relative_residual=true_relative_residual.squeeze(-2).detach(),
+            tolerance=tolerance,
+            reason=reason,
+        )
 
     if is_vector:
         result = result.squeeze(-1)

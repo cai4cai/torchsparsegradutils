@@ -235,20 +235,9 @@ class SparseTriangularSolve(torch.autograd.Function):
         gradA = torch.sum(mgbx, dim=1)
 
         if ctx.csr is False:
-            gradA = torch.sparse_coo_tensor(
-                torch.stack([A_row_idx, A_col_idx]),
-                gradA,
-                A.shape,
-                check_invariants=True,
-            )
+            gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
-            gradA = torch.sparse_csr_tensor(
-                A_crow_idx,
-                A_col_idx,
-                gradA,
-                A.shape,
-                check_invariants=True,
-            )
+            gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
 
         if ctx.batch_size is not None:
             shapes = ctx.A_shape[0] * (ctx.A_shape[-2:],)
@@ -519,20 +508,9 @@ class SparseGenericSolve(torch.autograd.Function):
             gradA = gradA.to(dtype=A.dtype)
 
         if A.layout == torch.sparse_coo:
-            gradA = torch.sparse_coo_tensor(
-                torch.stack([A_row_idx, A_col_idx]),
-                gradA,
-                A.shape,
-                check_invariants=True,
-            )
+            gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
-            gradA = torch.sparse_csr_tensor(
-                A.crow_indices(),
-                A_col_idx,
-                gradA,
-                A.shape,
-                check_invariants=True,
-            )
+            gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
 
         # Squeeze gradB back to original shape if it was a vector
         if is_vector:

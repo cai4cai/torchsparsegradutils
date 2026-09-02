@@ -8,7 +8,7 @@ environment on identical deterministic inputs.
 Example
 -------
 python -m torchsparsegradutils.benchmarks.linear_cg_convergence \
-    --baseline-ref a4fab0b --repeats 100
+    --baseline-ref ea7b8f0 --repeats 100
 """
 
 from __future__ import annotations
@@ -176,7 +176,7 @@ def measure(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline-ref", default="a4fab0b", help="Git revision containing the historical solver")
+    parser.add_argument("--baseline-ref", default="ea7b8f0", help="Git revision containing the historical solver")
     parser.add_argument("--device", default="cpu", help="PyTorch device (default: cpu)")
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--repeats", type=int, default=50)
