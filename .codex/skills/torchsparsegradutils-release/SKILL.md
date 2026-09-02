@@ -65,8 +65,18 @@ docker run --rm torchsparsegradutils-pip-install:<version>
 
 ## Publish Flow
 
-- Merge the PR into `main` before creating the GitHub release.
-- Create the release tag from `main`; the PyPI deployment workflow builds from the release state.
+- Merge functional PRs into `main` before preparing a release.
+- Once the release automation is configured, run the `Prepare release` workflow
+  from `main` with a stable version in `X.Y.Z` form. It updates
+  `pyproject.toml`, `docs/source/conf.py`, and `Dockerfile.pip-install`,
+  validates the distributions, and opens a bot-authored release PR.
+- Require the normal human approval and status checks on the release PR, then
+  squash-merge it. Do not bypass the review step for functional changes.
+- Merging an internal `release/vX.Y.Z` PR creates an unpublished draft GitHub
+  release and its associated tag at that exact merge commit. Review and edit the
+  generated notes before publishing.
+- Publishing the GitHub release triggers the PyPI deployment workflow, which
+  builds from the release state.
 - After publication, verify:
   - PyPI has the new version.
   - `pip install "torchsparsegradutils[all]==<version>"` no longer warns about missing extras.
