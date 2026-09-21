@@ -147,3 +147,23 @@ def test_bicgstab_negative_matvec_budget(device, supplied_guess, multiple_rhs):
 
     with pytest.raises(ValueError, match="matvec_max must be nonnegative"):
         bicgstab(unexpected_call, rhs, initial_guess, BICGSTABSettings(matvec_max=-1, precon=unexpected_call))
+
+
+@pytest.mark.parametrize("matvec_max", [0, 1])
+@pytest.mark.parametrize("multiple_rhs", [False, True])
+@pytest.mark.parametrize("invalid_argument", ["operator", "preconditioner"])
+def test_bicgstab_validates_arguments_before_budget_return(device, matvec_max, multiple_rhs, invalid_argument):
+    # A zero budget skips computation, but must still reject invalid argument types.
+    rhs = torch.ones((2, 2) if multiple_rhs else (2,), dtype=torch.float64, device=device)
+
+    def unexpected_call(x):
+        pytest.fail("Invalid arguments must be rejected before any operator or preconditioner calls")
+
+    operator = object() if invalid_argument == "operator" else unexpected_call
+    precon = object() if invalid_argument == "preconditioner" else unexpected_call
+    message = (
+        "matmul_closure must be a tensor" if invalid_argument == "operator" else "settings.precon must be a tensor"
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        bicgstab(operator, rhs, settings=BICGSTABSettings(matvec_max=matvec_max, precon=precon))

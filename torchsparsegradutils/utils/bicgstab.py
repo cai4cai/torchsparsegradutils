@@ -116,6 +116,22 @@ def bicgstab(
     """
     if settings.matvec_max is not None and settings.matvec_max < 0:
         raise ValueError("settings.matvec_max must be nonnegative or None")
+    if torch.is_tensor(matmul_closure):
+        op = matmul_closure.matmul
+    elif callable(matmul_closure):
+        op = matmul_closure
+    else:
+        raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
+
+    if settings.precon is None:
+        precon = None
+    elif torch.is_tensor(settings.precon):
+        precon = settings.precon.matmul
+    elif callable(settings.precon):
+        precon = settings.precon
+    else:
+        raise RuntimeError("settings.precon must be a tensor, or a callable object!")
+
     if settings.matvec_max == 0:
         warnings.warn(
             "matvec_max=0: returning the initial iterate without evaluating the operator or checking convergence.",
@@ -140,22 +156,6 @@ def bicgstab(
 
     n = rhs.shape[0]
     nMatvec = 0
-
-    if torch.is_tensor(matmul_closure):
-        op = matmul_closure.matmul
-    elif callable(matmul_closure):
-        op = matmul_closure
-    else:
-        raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
-
-    if settings.precon is None:
-        precon = None
-    elif torch.is_tensor(settings.precon):
-        precon = settings.precon.matmul
-    elif callable(settings.precon):
-        precon = settings.precon
-    else:
-        raise RuntimeError("settings.precon must be a tensor, or a callable object!")
 
     # Initial guess is zero unless one is supplied
     res_device = rhs.device
