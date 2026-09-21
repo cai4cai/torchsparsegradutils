@@ -108,3 +108,42 @@ def test_bicgstab_initial_residual_counts_toward_matvec_budget(device):
     torch.testing.assert_close(calls[0], initial_guess)
     torch.testing.assert_close(result, initial_guess)
     assert result.data_ptr() != initial_guess.data_ptr()
+
+
+@pytest.mark.parametrize("supplied_guess", [False, True])
+@pytest.mark.parametrize("multiple_rhs", [False, True])
+def test_bicgstab_zero_matvec_budget(device, supplied_guess, multiple_rhs):
+    # No budget means no operator/preconditioner calls, even with multiple RHSs.
+    rhs = torch.tensor([[1.0, 3.0], [2.0, -1.0]], dtype=torch.float64, device=device)
+    if not multiple_rhs:
+        rhs = rhs[:, 0]
+    initial_guess = torch.full_like(rhs, 0.3) if supplied_guess else None
+    expected = torch.zeros_like(rhs) if initial_guess is None else initial_guess.clone()
+    saved_rhs = rhs.clone()
+
+    def unexpected_call(x):
+        pytest.fail("A zero budget must not evaluate the operator or preconditioner")
+
+    with pytest.warns(UserWarning, match="matvec_max=0.*without evaluating the operator") as caught:
+        result = bicgstab(unexpected_call, rhs, initial_guess, BICGSTABSettings(matvec_max=0, precon=unexpected_call))
+
+    assert len(caught) == 1  # Warn once per solve, not once per RHS column.
+    torch.testing.assert_close(result, expected)
+    torch.testing.assert_close(rhs, saved_rhs)
+    assert result.data_ptr() != rhs.data_ptr()
+    if initial_guess is not None:
+        torch.testing.assert_close(initial_guess, expected)
+        assert result.data_ptr() != initial_guess.data_ptr()
+
+
+@pytest.mark.parametrize("supplied_guess", [False, True])
+@pytest.mark.parametrize("multiple_rhs", [False, True])
+def test_bicgstab_negative_matvec_budget(device, supplied_guess, multiple_rhs):
+    rhs = torch.ones((2, 2) if multiple_rhs else (2,), dtype=torch.float64, device=device)
+    initial_guess = torch.full_like(rhs, 0.3) if supplied_guess else None
+
+    def unexpected_call(x):
+        pytest.fail("An invalid budget must be rejected before evaluating the operator or preconditioner")
+
+    with pytest.raises(ValueError, match="matvec_max must be nonnegative"):
+        bicgstab(unexpected_call, rhs, initial_guess, BICGSTABSettings(matvec_max=-1, precon=unexpected_call))

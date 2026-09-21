@@ -2,6 +2,7 @@
 # Modifications to fit torchsparsegradutils
 
 import logging
+import warnings
 from typing import Callable, NamedTuple, Optional, Union
 
 import torch
@@ -12,7 +13,7 @@ _null_log.disabled = True
 
 
 class BICGSTABSettings(NamedTuple):
-    matvec_max: Optional[int] = None  # Max number of matvecs (default 2n)
+    matvec_max: Optional[int] = None  # Nonnegative max matvecs per RHS (default 2n)
     abstol: float = 1.0e-8  # Absolute stopping tolerance
     reltol: float = 1.0e-6  # Relative stopping tolerance
     precon: Optional[Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]]] = None
@@ -43,7 +44,9 @@ def bicgstab(
     initial_guess : torch.Tensor, optional, shape like ``rhs``
         Initial guess. If ``None``, zero initialization is used.
     settings : BICGSTABSettings, optional
-        Convergence tolerances, maximum matvecs, optional preconditioner and logger.
+        Convergence tolerances, maximum matvecs per RHS, optional preconditioner and logger.
+        A zero matvec budget returns the initial iterate without evaluating the operator
+        or checking convergence, and emits a warning. Negative budgets are invalid.
 
     Returns
     -------
@@ -52,6 +55,8 @@ def bicgstab(
 
     Raises
     ------
+    ValueError
+        If ``settings.matvec_max`` is negative.
     RuntimeError
         If ``matmul_closure`` is neither tensor nor callable, or if the
         ``precon`` is neither tensor nor callable.
@@ -109,6 +114,16 @@ def bicgstab(
     ... )
     >>> x = bicgstab(A.matmul, b, settings=settings_precond)
     """
+    if settings.matvec_max is not None and settings.matvec_max < 0:
+        raise ValueError("settings.matvec_max must be nonnegative or None")
+    if settings.matvec_max == 0:
+        warnings.warn(
+            "matvec_max=0: returning the initial iterate without evaluating the operator or checking convergence.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return torch.zeros_like(rhs) if initial_guess is None else initial_guess.clone()
+
     # support multiple right‐hand sides by solving each column separately
     if rhs.dim() > 1:
         cols = rhs.shape[1]
