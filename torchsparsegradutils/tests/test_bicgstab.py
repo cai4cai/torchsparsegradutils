@@ -3,6 +3,7 @@ import torch
 from test_config import DEVICES, Tolerances
 
 from torchsparsegradutils.utils import bicgstab
+from torchsparsegradutils.utils.bicgstab import BICGSTABSettings
 
 ATOL, RTOL = Tolerances.iterative(torch.float64)
 
@@ -56,3 +57,54 @@ def test_bicgstab_2d_rhs(device):
     # sparse-matrix API
     solves = bicgstab(matrix_sparse, rhs=rhs2d)
     assert torch.allclose(solves, actual, atol=ATOL, rtol=RTOL)
+
+
+@pytest.mark.parametrize("exact_start", [False, True])
+@pytest.mark.parametrize("multiple_rhs", [False, True])
+@pytest.mark.parametrize("operator_kind", ["tensor", "callable"])
+def test_bicgstab_nonzero_initial_guess(device, exact_start, multiple_rhs, operator_kind):
+    A = torch.tensor([[4.0, 1.0, 0.0], [0.0, 3.0, -0.5], [0.25, 0.0, 2.0]], dtype=torch.float64, device=device)
+    rhs = torch.tensor([[1.0, 3.0], [2.0, -1.0], [-1.0, 2.0]], dtype=A.dtype, device=device)
+    if not multiple_rhs:
+        rhs = rhs[:, 0]
+    expected = torch.linalg.solve(A, rhs)
+    initial_guess = expected.clone() if exact_start else torch.full_like(rhs, 0.3)
+    saved_guess = initial_guess.clone()
+    saved_rhs = rhs.clone()
+    matvecs = []
+
+    def operator(x):
+        matvecs.append(x.clone())
+        return A @ x
+
+    actual = bicgstab(
+        A if operator_kind == "tensor" else operator,
+        rhs,
+        initial_guess=initial_guess,
+        settings=BICGSTABSettings(reltol=1e-12, abstol=1e-13, matvec_max=40),
+    )
+
+    torch.testing.assert_close(actual, expected, atol=1e-11, rtol=1e-11)
+    torch.testing.assert_close(A @ actual, rhs, atol=1e-11, rtol=1e-11)
+    torch.testing.assert_close(initial_guess, saved_guess)
+    torch.testing.assert_close(rhs, saved_rhs)
+    if exact_start and operator_kind == "callable":
+        # An exact warm start needs only the initial residual check for each column.
+        assert len(matvecs) == (2 if multiple_rhs else 1)
+
+
+def test_bicgstab_initial_residual_counts_toward_matvec_budget(device):
+    rhs = torch.tensor([1.0, 2.0], dtype=torch.float64, device=device)
+    initial_guess = torch.tensor([0.1, 0.2], dtype=rhs.dtype, device=device)
+    calls = []
+
+    def operator(x):
+        calls.append(x.clone())
+        return 2 * x
+
+    # Computing b - A @ x0 uses the sole matvec, leaving no budget to update the initial guess.
+    result = bicgstab(operator, rhs, initial_guess, BICGSTABSettings(matvec_max=1))
+    assert len(calls) == 1
+    torch.testing.assert_close(calls[0], initial_guess)
+    torch.testing.assert_close(result, initial_guess)
+    assert result.data_ptr() != initial_guess.data_ptr()

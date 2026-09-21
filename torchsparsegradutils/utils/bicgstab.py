@@ -154,11 +154,9 @@ def bicgstab(
     # matvec_max = kwargs.get('matvec_max', 2*n)
     matvec_max = 2 * n if settings.matvec_max is None else settings.matvec_max
 
-    # Initial residual is the fixed vector
-    r0 = rhs.clone()
-    if initial_guess is None:
-        r0 = rhs - op(x)
-        nMatvec += 1
+    # The fixed shadow residual must reflect the supplied initial iterate.
+    r0 = rhs - op(x)
+    nMatvec += 1
 
     rho = alpha = omega = 1.0
     rho_next = torch.dot(r0, r0)
