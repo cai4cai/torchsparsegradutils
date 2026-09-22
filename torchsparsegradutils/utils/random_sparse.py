@@ -12,11 +12,17 @@ Notes
 """
 
 import random
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, overload
 
 import torch
 from torch.types import Device
 
+from torchsparsegradutils.sparse_types import (
+    SparseCOOTensor,
+    SparseCSRTensor,
+    require_sparse_coo,
+    require_sparse_csr,
+)
 from torchsparsegradutils.utils.utils import convert_coo_to_csr, convert_coo_to_csr_indices_values
 
 __all__ = [
@@ -34,6 +40,33 @@ __all__ = [
 SparseSize = Union[torch.Size, list[int], tuple[int, ...]]
 
 
+@overload
+def rand_sparse(
+    size: SparseSize,
+    nnz: int,
+    *,
+    indices_dtype: torch.dtype = torch.int64,
+    values_dtype: torch.dtype = torch.float32,
+    device: Device = torch.device("cpu"),
+    well_conditioned: bool = False,
+    min_diag_value: float = 1.0,
+) -> SparseCOOTensor: ...
+
+
+@overload
+def rand_sparse(
+    size: SparseSize,
+    nnz: int,
+    layout: torch.layout,
+    *,
+    indices_dtype: torch.dtype = torch.int64,
+    values_dtype: torch.dtype = torch.float32,
+    device: Device = torch.device("cpu"),
+    well_conditioned: bool = False,
+    min_diag_value: float = 1.0,
+) -> Union[SparseCOOTensor, SparseCSRTensor]: ...
+
+
 def rand_sparse(
     size: SparseSize,
     nnz: int,
@@ -44,7 +77,7 @@ def rand_sparse(
     device: Device = torch.device("cpu"),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
-) -> torch.Tensor:
+) -> Union[SparseCOOTensor, SparseCSRTensor]:
     r"""
     Generate a random sparse matrix.
 
@@ -121,6 +154,39 @@ def rand_sparse(
         raise ValueError("Unsupported layout type. It should be either torch.sparse_coo or torch.sparse_csr")
 
 
+@overload
+def rand_sparse_tri(
+    size: SparseSize,
+    nnz: int,
+    *,
+    upper: bool = True,
+    strict: bool = False,
+    indices_dtype: torch.dtype = torch.int64,
+    values_dtype: torch.dtype = torch.float32,
+    device: Device = torch.device("cpu"),
+    value_range: Tuple[float, float] = (0, 1),
+    well_conditioned: bool = False,
+    min_diag_value: float = 1.0,
+) -> SparseCOOTensor: ...
+
+
+@overload
+def rand_sparse_tri(
+    size: SparseSize,
+    nnz: int,
+    layout: torch.layout,
+    *,
+    upper: bool = True,
+    strict: bool = False,
+    indices_dtype: torch.dtype = torch.int64,
+    values_dtype: torch.dtype = torch.float32,
+    device: Device = torch.device("cpu"),
+    value_range: Tuple[float, float] = (0, 1),
+    well_conditioned: bool = False,
+    min_diag_value: float = 1.0,
+) -> Union[SparseCOOTensor, SparseCSRTensor]: ...
+
+
 def rand_sparse_tri(
     size: SparseSize,
     nnz: int,
@@ -134,7 +200,7 @@ def rand_sparse_tri(
     value_range: Tuple[float, float] = (0, 1),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
-) -> torch.Tensor:
+) -> Union[SparseCOOTensor, SparseCSRTensor]:
     r"""
     Generate a random sparse triangular matrix.
 
@@ -327,7 +393,7 @@ def generate_random_sparse_coo_matrix(
     device: Device = torch.device("cpu"),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
-) -> torch.Tensor:
+) -> SparseCOOTensor:
     """
     Generate a random sparse COO matrix.
 
@@ -441,7 +507,7 @@ def generate_random_sparse_coo_matrix(
                     + min_diag_value
                 )
 
-    return torch.sparse_coo_tensor(coo_indices, values, size, device=device).coalesce()
+    return require_sparse_coo(torch.sparse_coo_tensor(coo_indices, values, size, device=device).coalesce())
 
 
 def generate_random_sparse_csr_matrix(
@@ -453,7 +519,7 @@ def generate_random_sparse_csr_matrix(
     device: Device = torch.device("cpu"),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
-) -> torch.Tensor:
+) -> SparseCSRTensor:
     """
     Generate a random sparse CSR matrix.
 
@@ -577,7 +643,7 @@ def generate_random_sparse_csr_matrix(
             coo_indices, size[-2], values=values.view(-1)
         )
 
-    return torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device)
+    return require_sparse_csr(torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device))
 
 
 # Square strictly Triangular:
@@ -663,7 +729,7 @@ def generate_random_sparse_strictly_triangular_coo_matrix(
     values_dtype: torch.dtype = torch.float32,
     device: Device = torch.device("cpu"),
     value_range: Tuple[float, float] = (0.0, 1.0),
-) -> torch.Tensor:
+) -> SparseCOOTensor:
     """
     Generate a random strictly triangular sparse COO matrix.
 
@@ -758,7 +824,7 @@ def generate_random_sparse_strictly_triangular_coo_matrix(
         values = torch.rand(nnz * size[0], dtype=values_dtype, device=device)
 
     values = values * (value_range[1] - value_range[0]) + value_range[0]
-    return torch.sparse_coo_tensor(coo_indices, values, size, device=device).coalesce()
+    return require_sparse_coo(torch.sparse_coo_tensor(coo_indices, values, size, device=device).coalesce())
 
 
 def generate_random_sparse_strictly_triangular_csr_matrix(
@@ -770,7 +836,7 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
     values_dtype: torch.dtype = torch.float32,
     device: Device = torch.device("cpu"),
     value_range: Tuple[float, float] = (0.0, 1.0),
-) -> torch.Tensor:
+) -> SparseCSRTensor:
     """
     Generate a random strictly triangular sparse CSR matrix.
 
@@ -867,7 +933,7 @@ def generate_random_sparse_strictly_triangular_csr_matrix(
         values = torch.rand((size[0], nnz), dtype=values_dtype, device=device)
 
     values = values * (value_range[1] - value_range[0]) + value_range[0]
-    return torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device)
+    return require_sparse_csr(torch.sparse_csr_tensor(crow_indices, col_indices, values, size, device=device))
 
 
 # helper for non-strict triangular coordinates
@@ -952,7 +1018,7 @@ def generate_random_sparse_triangular_coo_matrix(
     value_range: Tuple[float, float] = (0.0, 1.0),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
-) -> torch.Tensor:
+) -> SparseCOOTensor:
     """
     Generate a random sparse COO matrix with non-strict triangular structure.
 
@@ -1074,7 +1140,7 @@ def generate_random_sparse_triangular_coo_matrix(
         else:
             values = values * (value_range[1] - value_range[0]) + value_range[0]
 
-    return torch.sparse_coo_tensor(coo_idx, values, size, device=device).coalesce()
+    return require_sparse_coo(torch.sparse_coo_tensor(coo_idx, values, size, device=device).coalesce())
 
 
 def generate_random_sparse_triangular_csr_matrix(
@@ -1088,7 +1154,7 @@ def generate_random_sparse_triangular_csr_matrix(
     value_range: Tuple[float, float] = (0.0, 1.0),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
-) -> torch.Tensor:
+) -> SparseCSRTensor:
     """
     Generate a random sparse CSR matrix with non-strict triangular structure.
 
@@ -1226,7 +1292,7 @@ def generate_random_sparse_triangular_csr_matrix(
 
         crow, col, values = convert_coo_to_csr_indices_values(coo_idx, n, values=values.view(-1))
 
-    return torch.sparse_csr_tensor(crow, col, values, size, device=device)
+    return require_sparse_csr(torch.sparse_csr_tensor(crow, col, values, size, device=device))
 
 
 def make_spd_sparse(
@@ -1237,7 +1303,7 @@ def make_spd_sparse(
     device: Device,
     sparsity_ratio: float = 0.5,
     nz: Optional[int] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[Union[SparseCOOTensor, SparseCSRTensor], torch.Tensor]:
     """
     Generate a random sparse symmetric positive definite (SPD) matrix.
 
@@ -1370,10 +1436,14 @@ def make_spd_sparse(
     if layout == torch.sparse_coo:
         # For COO, create tensor and coalesce
         # Note: PyTorch automatically converts int32 indices to int64 during coalesce()
-        A_sparse = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
+        A_sparse = require_sparse_coo(
+            torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
+        )
     elif layout == torch.sparse_csr:
         # For CSR, first create COO then convert to CSR
-        A_coo = torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
+        A_coo = require_sparse_coo(
+            torch.sparse_coo_tensor(idx, vals, (n, n), dtype=value_dtype, device=device).coalesce()
+        )
         A_sparse = convert_coo_to_csr(A_coo)
     else:
         raise ValueError(f"Unsupported layout: {layout}. Use torch.sparse_coo or torch.sparse_csr.")

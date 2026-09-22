@@ -1,12 +1,19 @@
-from typing import List, Tuple
+from typing import List, NoReturn, Sequence, Tuple, Union, overload
 
 import torch
 
+from torchsparsegradutils.sparse_types import (
+    SparseCOOTensor,
+    SparseCSRTensor,
+    require_sparse_coo,
+    require_sparse_csr,
+)
+
 
 def stack_csr(
-    tensors: List[torch.Tensor],
+    tensors: Sequence[torch.Tensor],
     dim: int = 0,
-) -> torch.Tensor:
+) -> SparseCSRTensor:
     """
     Stack CSR sparse tensors along a new dimension.
 
@@ -85,7 +92,7 @@ def stack_csr(
     shape.insert(dim, len(tensors))
     shape = tuple(shape)
 
-    return torch.sparse_csr_tensor(crow_indices, col_indices, values, shape)
+    return require_sparse_csr(torch.sparse_csr_tensor(crow_indices, col_indices, values, shape))
 
 
 def _sort_coo_indices(
@@ -346,7 +353,7 @@ def convert_coo_to_csr_indices_values(coo_indices, num_rows, values=None):
     return crow_indices, col_indices, values
 
 
-def convert_coo_to_csr(sparse_coo_tensor):
+def convert_coo_to_csr(sparse_coo_tensor: torch.Tensor) -> SparseCSRTensor:
     """
     Convert COO sparse tensor to CSR format.
 
@@ -405,7 +412,7 @@ def convert_coo_to_csr(sparse_coo_tensor):
         crow_indices, col_indices, values = convert_coo_to_csr_indices_values(
             sparse_coo_tensor.indices(), sparse_coo_tensor.size()[-2], sparse_coo_tensor.values()
         )
-        return torch.sparse_csr_tensor(crow_indices, col_indices, values, sparse_coo_tensor.size())
+        return require_sparse_csr(torch.sparse_csr_tensor(crow_indices, col_indices, values, sparse_coo_tensor.size()))
     else:
         raise ValueError(f"Unsupported layout: {sparse_coo_tensor.layout}")
 
@@ -470,8 +477,28 @@ def _demcompress_crow_indices(crow_indices, num_rows):
     return row_indices
 
 
+@overload
+def sparse_block_diag(sparse_tensor: SparseCOOTensor, *sparse_tensors: SparseCOOTensor) -> SparseCOOTensor: ...
+
+
+@overload
+def sparse_block_diag(sparse_tensor: SparseCSRTensor, *sparse_tensors: SparseCSRTensor) -> SparseCSRTensor: ...
+
+
+@overload
+def sparse_block_diag() -> NoReturn: ...
+
+
+@overload
+def sparse_block_diag(
+    sparse_tensor: torch.Tensor, *sparse_tensors: torch.Tensor
+) -> Union[SparseCOOTensor, SparseCSRTensor]: ...
+
+
 # use @torch.jit.script ?
-def sparse_block_diag(*sparse_tensors: torch.Tensor) -> torch.Tensor:
+def sparse_block_diag(
+    sparse_tensor: torch.Tensor | None = None, *sparse_tensors: torch.Tensor
+) -> Union[SparseCOOTensor, SparseCSRTensor]:
     """
     Construct a block-diagonal sparse matrix from COO/CSR inputs.
 
@@ -543,28 +570,32 @@ def sparse_block_diag(*sparse_tensors: torch.Tensor) -> torch.Tensor:
     torch.block_diag : Dense block-diagonal construction for dense inputs.
     stack_csr : Stack CSR matrices along a new batch dimension.
     """
+    all_sparse_tensors = () if sparse_tensor is None else (sparse_tensor, *sparse_tensors)
+
     # ---- validation ----
-    for i, t in enumerate(sparse_tensors):
+    for i, t in enumerate(all_sparse_tensors):
         if not isinstance(t, torch.Tensor):
             raise TypeError(f"TypeError: expected Tensor as element {i} in argument 0, but got {type(t).__name__}")
 
-    if len(sparse_tensors) == 0:
+    if len(all_sparse_tensors) == 0:
         raise ValueError("At least one sparse tensor must be provided.")
 
-    if all(t.layout == torch.sparse_coo for t in sparse_tensors):
+    if all(t.layout == torch.sparse_coo for t in all_sparse_tensors):
         layout = torch.sparse_coo
-    elif all(t.layout == torch.sparse_csr for t in sparse_tensors):
+    elif all(t.layout == torch.sparse_csr for t in all_sparse_tensors):
         layout = torch.sparse_csr
     else:
         raise ValueError("Sparse tensors must either be all sparse_coo or all sparse_csr.")
 
-    if not all(t.sparse_dim() == 2 for t in sparse_tensors):
+    if not all(t.sparse_dim() == 2 for t in all_sparse_tensors):
         raise ValueError("All sparse tensors must have exactly two sparse dimensions.")
-    if not all(t.dense_dim() == 0 for t in sparse_tensors):
+    if not all(t.dense_dim() == 0 for t in all_sparse_tensors):
         raise ValueError("All sparse tensors must have zero dense dimensions.")
 
-    if len(sparse_tensors) == 1:
-        return sparse_tensors[0]
+    if len(all_sparse_tensors) == 1:
+        if layout == torch.sparse_coo:
+            return require_sparse_coo(all_sparse_tensors[0])
+        return require_sparse_csr(all_sparse_tensors[0])
 
     # ---- COO path ----
     if layout == torch.sparse_coo:
@@ -576,7 +607,7 @@ def sparse_block_diag(*sparse_tensors: torch.Tensor) -> torch.Tensor:
 
         row_offset = 0
         col_offset = 0
-        for t in sparse_tensors:
+        for t in all_sparse_tensors:
             t = t.coalesce() if not t.is_coalesced() else t
             rows, cols = t.indices()
             vals = t.values()
@@ -597,8 +628,8 @@ def sparse_block_diag(*sparse_tensors: torch.Tensor) -> torch.Tensor:
         cols_all = torch.cat(col_parts, dim=0)
         vals_all = torch.cat(val_parts, dim=0)
 
-        return torch.sparse_coo_tensor(
-            torch.stack([rows_all, cols_all], dim=0), vals_all, size=(total_rows, total_cols)
+        return require_sparse_coo(
+            torch.sparse_coo_tensor(torch.stack([rows_all, cols_all], dim=0), vals_all, size=(total_rows, total_cols))
         )
 
     # ---- CSR path ----
@@ -612,7 +643,7 @@ def sparse_block_diag(*sparse_tensors: torch.Tensor) -> torch.Tensor:
     col_offset = 0
     crow_running_last = None  # last crow value of accumulated blocks
 
-    for idx, t in enumerate(sparse_tensors):
+    for idx, t in enumerate(all_sparse_tensors):
         crow = t.crow_indices()
         col = t.col_indices()
         vals = t.values()
@@ -643,12 +674,30 @@ def sparse_block_diag(*sparse_tensors: torch.Tensor) -> torch.Tensor:
     col_all = torch.cat(col_parts, dim=0)
     vals_all = torch.cat(val_parts, dim=0)
 
-    return torch.sparse_csr_tensor(crow_all, col_all, vals_all, size=(total_rows, total_cols))
+    return require_sparse_csr(torch.sparse_csr_tensor(crow_all, col_all, vals_all, size=(total_rows, total_cols)))
+
+
+@overload
+def sparse_block_diag_split(
+    sparse_block_diag_tensor: SparseCOOTensor, *shapes: Tuple[int, int]
+) -> tuple[SparseCOOTensor, ...]: ...
+
+
+@overload
+def sparse_block_diag_split(
+    sparse_block_diag_tensor: SparseCSRTensor, *shapes: Tuple[int, int]
+) -> tuple[SparseCSRTensor, ...]: ...
+
+
+@overload
+def sparse_block_diag_split(
+    sparse_block_diag_tensor: torch.Tensor, *shapes: Tuple[int, int]
+) -> tuple[Union[SparseCOOTensor, SparseCSRTensor], ...]: ...
 
 
 def sparse_block_diag_split(
     sparse_block_diag_tensor: torch.Tensor, *shapes: Tuple[int, int]
-) -> tuple[torch.Tensor, ...]:
+) -> tuple[Union[SparseCOOTensor, SparseCSRTensor], ...]:
     """
     Split a block-diagonal sparse matrix back into its component blocks.
 
@@ -724,7 +773,7 @@ def sparse_block_diag_split(
         row_idx, col_idx = t.indices()
         vals = t.values()
 
-        blocks: list[torch.Tensor] = []
+        coo_blocks: list[SparseCOOTensor] = []
         row_offset = 0
         col_offset = 0
 
@@ -737,20 +786,22 @@ def sparse_block_diag_split(
             sub_cols = col_idx[mask] - col_offset
             sub_vals = vals[mask]
 
-            blocks.append(
-                torch.sparse_coo_tensor(
-                    torch.stack((sub_rows, sub_cols), dim=0),
-                    sub_vals,
-                    size=(rows, cols),
-                    device=t.device,
-                    dtype=sub_vals.dtype,
+            coo_blocks.append(
+                require_sparse_coo(
+                    torch.sparse_coo_tensor(
+                        torch.stack((sub_rows, sub_cols), dim=0),
+                        sub_vals,
+                        size=(rows, cols),
+                        device=t.device,
+                        dtype=sub_vals.dtype,
+                    )
                 )
             )
 
             row_offset += rows
             col_offset += cols
 
-        return tuple(blocks)
+        return tuple(coo_blocks)
 
     # CSR path
     t = sparse_block_diag_tensor
@@ -758,7 +809,7 @@ def sparse_block_diag_split(
     ccol = t.col_indices()
     vals = t.values()
 
-    blocks: list[torch.Tensor] = []
+    csr_blocks: list[SparseCSRTensor] = []
     row_offset = 0
     col_offset = 0
 
@@ -774,21 +825,46 @@ def sparse_block_diag_split(
         # Row pointers for this block: subtract start_ptr to rebase to 0
         sub_crow = crow[row_offset : row_offset + rows + 1] - crow[row_offset]
 
-        blocks.append(
-            torch.sparse_csr_tensor(
-                sub_crow,
-                sub_ccol,
-                sub_vals,
-                size=(rows, cols),
-                device=t.device,
-                dtype=sub_vals.dtype,
+        csr_blocks.append(
+            require_sparse_csr(
+                torch.sparse_csr_tensor(
+                    sub_crow,
+                    sub_ccol,
+                    sub_vals,
+                    size=(rows, cols),
+                    device=t.device,
+                    dtype=sub_vals.dtype,
+                )
             )
         )
 
         row_offset += rows
         col_offset += cols
 
-    return tuple(blocks)
+    return tuple(csr_blocks)
+
+
+@overload
+def sparse_eye(
+    size: Tuple[int, ...],
+    *,
+    values_dtype: torch.dtype = torch.float64,
+    indices_dtype: torch.dtype = torch.int64,
+    device: torch.device = torch.device("cpu"),
+    requires_grad: bool = False,
+) -> SparseCOOTensor: ...
+
+
+@overload
+def sparse_eye(
+    size: Tuple[int, ...],
+    *,
+    layout: torch.layout,
+    values_dtype: torch.dtype = torch.float64,
+    indices_dtype: torch.dtype = torch.int64,
+    device: torch.device = torch.device("cpu"),
+    requires_grad: bool = False,
+) -> Union[SparseCOOTensor, SparseCSRTensor]: ...
 
 
 def sparse_eye(
@@ -799,7 +875,7 @@ def sparse_eye(
     indices_dtype: torch.dtype = torch.int64,
     device: torch.device = torch.device("cpu"),
     requires_grad: bool = False,
-) -> torch.Tensor:
+) -> Union[SparseCOOTensor, SparseCSRTensor]:
     """
     Create a sparse identity matrix.
 
@@ -889,8 +965,16 @@ def sparse_eye(
             values = values.repeat(size[0])
 
         # NOTE: is_coalesced=True since there are no duplicate indices in identity matrix, flag avails in PyTorch 2.1+
-        return torch.sparse_coo_tensor(
-            indices, values, size, dtype=values_dtype, device=device, requires_grad=requires_grad, is_coalesced=True
+        return require_sparse_coo(
+            torch.sparse_coo_tensor(
+                indices,
+                values,
+                size,
+                dtype=values_dtype,
+                device=device,
+                requires_grad=requires_grad,
+                is_coalesced=True,
+            )
         )
 
     elif layout == torch.sparse_csr:
@@ -905,8 +989,16 @@ def sparse_eye(
             col_indices = col_indices.repeat(size[0], 1)
             values = values.repeat(size[0], 1)
 
-        return torch.sparse_csr_tensor(
-            crow_indices, col_indices, values, size, dtype=values_dtype, device=device, requires_grad=requires_grad
+        return require_sparse_csr(
+            torch.sparse_csr_tensor(
+                crow_indices,
+                col_indices,
+                values,
+                size,
+                dtype=values_dtype,
+                device=device,
+                requires_grad=requires_grad,
+            )
         )
 
     else:
