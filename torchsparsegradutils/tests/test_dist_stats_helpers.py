@@ -107,7 +107,7 @@ class TestMeanHotellingT2Test:
 
         # Should fail for all batches
         assert not result.any().item(), (
-            f"Test should fail with wrong parameters. " f"T² stats: {t2_stat}, threshold: {t2_thresh}"
+            f"Test should fail with wrong parameters. T² stats: {t2_stat}, threshold: {t2_thresh}"
         )
 
     def test_input_validation(self):
@@ -205,7 +205,7 @@ class TestCovNagaoTest:
 
         # Should fail for all batches
         assert not result.any().item(), (
-            f"Test should fail with wrong parameters. " f"T_N stats: {t_n_stat}, threshold: {chi2_thresh}"
+            f"Test should fail with wrong parameters. T_N stats: {t_n_stat}, threshold: {chi2_thresh}"
         )
 
     def test_return_types_and_shapes_cov(self):
@@ -253,9 +253,9 @@ class TestIntegrationBehavior:
         # Thresholds should be increasing with confidence level
         conf_levels = sorted(thresholds.keys())
         for i in range(len(conf_levels) - 1):
-            assert (
-                thresholds[conf_levels[i]] <= thresholds[conf_levels[i + 1]]
-            ), f"Threshold for {conf_levels[i]} should be <= threshold for {conf_levels[i + 1]}"
+            assert thresholds[conf_levels[i]] <= thresholds[conf_levels[i + 1]], (
+                f"Threshold for {conf_levels[i]} should be <= threshold for {conf_levels[i + 1]}"
+            )
 
     def test_known_statistical_example(self):
         """Test with a known statistical example for validation."""

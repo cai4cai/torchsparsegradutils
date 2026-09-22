@@ -47,7 +47,7 @@ To switch configurations, modify the ``dockerfile`` field in ``.devcontainer/dev
 - **CUDA 12.8**: Full GPU development support with NVIDIA drivers
 - **Pre-installed Dependencies**: PyTorch, CuPy, JAX, SciPy, and all development tools
 - **VS Code Extensions**: Python, Pylance, Jupyter, GitHub Copilot, and code formatting tools
-- **Development Tools**: pytest, black, flake8, pre-commit hooks
+- **Development Tools**: pytest, Ruff, pre-commit hooks
 - **Python Environment**: Python 3.10+ with all optional dependencies
 
 **Benefits:**
@@ -93,13 +93,14 @@ Development Workflow
 Code Style
 ----------
 
-We use several tools to maintain code quality:
+We use Ruff to maintain code quality:
 
-**Black** for code formatting:
+**Ruff** for linting and code formatting:
 
 .. code-block:: bash
 
-   black torchsparsegradutils/ tests/
+   ruff check .
+   ruff format --check .
 
 **Type hints** are encouraged:
 
@@ -314,7 +315,7 @@ Continuous Integration
 
 Our CI pipeline runs:
 
-1. **Code formatting** checks (Black)
+1. **Linting and code formatting** checks (Ruff)
 2. **Type checking** (mypy, when available)
 3. **Unit tests** on multiple Python versions
 4. **Integration tests** with different PyTorch versions

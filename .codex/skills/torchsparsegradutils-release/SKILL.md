@@ -38,9 +38,8 @@ description: Use when preparing torchsparsegradutils PRs, releases, packaging me
 - Recommended final validation:
 
 ```bash
-python -m black --check .
-python -m isort --check-only --diff .
-python -m flake8 . --count --show-source --statistics
+python -m ruff check .
+python -m ruff format --check .
 python -m pytest -q
 python -m build
 ```

@@ -335,8 +335,7 @@ def sparse_logsumexp(
     for d in dims_list:
         if not -input.ndim <= d < input.ndim:
             raise IndexError(
-                f"Dimension out of range (expected to be in range of "
-                f"[{-input.ndim}, {input.ndim - 1}], but got {d})"
+                f"Dimension out of range (expected to be in range of [{-input.ndim}, {input.ndim - 1}], but got {d})"
             )
     normalised = [d % input.ndim for d in dims_list]
     if len(set(normalised)) != len(normalised):

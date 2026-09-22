@@ -9,9 +9,9 @@ torchsparsegradutils Documentation
    :target: https://github.com/cai4cai/torchsparsegradutils?tab=Apache-2.0-1-ov-file#readme
    :alt: License
 
-.. image:: https://img.shields.io/badge/code%20style-black-000000.svg
-   :target: https://github.com/psf/black
-   :alt: Code Style: Black
+.. image:: https://img.shields.io/badge/lint%20%26%20format-Ruff-D7FF64.svg?logo=ruff
+   :target: https://docs.astral.sh/ruff/
+   :alt: Lint and format with Ruff
 
 **torchsparsegradutils** is a comprehensive collection of utility functions to work with PyTorch sparse tensors,
 ensuring memory efficiency and supporting various sparsity-preserving tensor operations with automatic differentiation.

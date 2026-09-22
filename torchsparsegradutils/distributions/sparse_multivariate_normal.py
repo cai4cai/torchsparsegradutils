@@ -283,7 +283,7 @@ class SparseMultivariateNormal(Distribution):
 
             if scale_tril.dim() < 2:
                 raise ValueError(
-                    "scale_tril matrix must be at least two-dimensional, " "with optional leading batch dimension"
+                    "scale_tril matrix must be at least two-dimensional, with optional leading batch dimension"
                 )
             elif scale_tril.dim() > 3:
                 raise ValueError("scale_tril can only have 1 batch dimension, but has {}".format(scale_tril.dim() - 2))
@@ -306,7 +306,7 @@ class SparseMultivariateNormal(Distribution):
 
             if precision_tril.dim() < 2:
                 raise ValueError(
-                    "precision_tril must be at least two-dimensional, " "with optional leading batch dimensions"
+                    "precision_tril must be at least two-dimensional, with optional leading batch dimensions"
                 )
             elif precision_tril.dim() > 3:
                 raise ValueError(

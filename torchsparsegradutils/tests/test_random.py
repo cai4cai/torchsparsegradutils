@@ -72,9 +72,9 @@ def test_gen_random_coo_indices_dtype_behavior(indices_dtype, device):
 
     if indices_dtype == torch.int32:
         # PyTorch converts int32 to int64 for COO tensors - this is expected behavior
-        assert (
-            A.indices().dtype == torch.int64
-        ), f"Expected int64, got {A.indices().dtype} (PyTorch converts int32->int64 for COO)"
+        assert A.indices().dtype == torch.int64, (
+            f"Expected int64, got {A.indices().dtype} (PyTorch converts int32->int64 for COO)"
+        )
     else:
         # int64 should be preserved
         assert A.indices().dtype == indices_dtype, f"Expected {indices_dtype}, got {A.indices().dtype}"
@@ -193,9 +193,9 @@ def test_gen_random_strict_tri_coo_indices_dtype_behavior(indices_dtype, device)
 
     if indices_dtype == torch.int32:
         # PyTorch converts int32 to int64 for COO tensors - this is expected behavior
-        assert (
-            A.indices().dtype == torch.int64
-        ), f"Expected int64, got {A.indices().dtype} (PyTorch converts int32->int64 for COO)"
+        assert A.indices().dtype == torch.int64, (
+            f"Expected int64, got {A.indices().dtype} (PyTorch converts int32->int64 for COO)"
+        )
     else:
         # int64 should be preserved
         assert A.indices().dtype == indices_dtype, f"Expected {indices_dtype}, got {A.indices().dtype}"
@@ -475,9 +475,9 @@ def test_rand_sparse_tri_value_range_with_conditioning(layout, device):
 
     # Diagonal elements should be >= min_diag_value (conditioning takes precedence)
     diag_elements = torch.diag(Ad)
-    assert torch.all(
-        diag_elements >= min_diag_val - 1e-6
-    ), f"Diagonal elements should be >= {min_diag_val}, got {diag_elements}"
+    assert torch.all(diag_elements >= min_diag_val - 1e-6), (
+        f"Diagonal elements should be >= {min_diag_val}, got {diag_elements}"
+    )
 
     # Off-diagonal elements should be in value_range (check that most are in reasonable bounds)
     mask = ~torch.eye(size[0], dtype=torch.bool, device=device)
@@ -486,9 +486,9 @@ def test_rand_sparse_tri_value_range_with_conditioning(layout, device):
     if len(nonzero_off_diag) > 0:
         # Check that most values are in the expected range (allowing for some precision tolerance)
         in_range = (nonzero_off_diag >= value_range[0] - 0.1) & (nonzero_off_diag <= value_range[1] + 0.1)
-        assert (
-            torch.sum(in_range).item() >= len(nonzero_off_diag) * 0.7
-        ), f"Most off-diagonal elements should be near value_range {value_range}, got {nonzero_off_diag}"
+        assert torch.sum(in_range).item() >= len(nonzero_off_diag) * 0.7, (
+            f"Most off-diagonal elements should be near value_range {value_range}, got {nonzero_off_diag}"
+        )
 
 
 def test_rand_sparse_batched_well_conditioned(device):
@@ -735,9 +735,9 @@ def test_make_spd_sparse_value_dtype(layout, value_dtype, device):
     # Check value dtypes
     assert A_sparse.dtype == value_dtype, f"Expected sparse values dtype {value_dtype}, got {A_sparse.dtype}"
     assert A_dense.dtype == value_dtype, f"Expected dense values dtype {value_dtype}, got {A_dense.dtype}"
-    assert (
-        A_sparse.values().dtype == value_dtype
-    ), f"Expected sparse values dtype {value_dtype}, got {A_sparse.values().dtype}"
+    assert A_sparse.values().dtype == value_dtype, (
+        f"Expected sparse values dtype {value_dtype}, got {A_sparse.values().dtype}"
+    )
 
 
 @pytest.mark.parametrize("index_dtype", [torch.int32, torch.int64])
@@ -760,7 +760,7 @@ def test_make_spd_sparse_index_dtype_coo(index_dtype, device):
     if index_dtype == torch.int32:
         # PyTorch converts int32 to int64 for COO tensors during coalesce - this is expected
         assert A_sparse.indices().dtype == torch.int64, (
-            f"Expected int64 (PyTorch auto-converts int32->int64 for COO), " f"got {A_sparse.indices().dtype}"
+            f"Expected int64 (PyTorch auto-converts int32->int64 for COO), got {A_sparse.indices().dtype}"
         )
     else:  # torch.int64
         # int64 should be preserved
