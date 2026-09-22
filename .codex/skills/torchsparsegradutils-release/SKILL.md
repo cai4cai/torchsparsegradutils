@@ -40,6 +40,7 @@ description: Use when preparing torchsparsegradutils PRs, releases, packaging me
 ```bash
 python -m ruff check .
 python -m ruff format --check .
+python -m pyrefly check
 python -m pytest -q
 python -m build
 ```
