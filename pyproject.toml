@@ -45,6 +45,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "ruff==0.16.6",
+    "typing_extensions>=4.2",
 ]
 
 [project.urls]
@@ -59,6 +60,7 @@ zip-safe = false
 include-package-data = true
 
 [tool.setuptools.packages.find]
+include = ["torchsparsegradutils*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
