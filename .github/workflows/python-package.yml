@@ -60,3 +60,18 @@ jobs:
         cd "${RUNNER_TEMP}/typing-contracts"
         pyrefly check --preset default --python-interpreter-path "$(command -v python)" sparse_layout_positive.py
         pyrefly check --preset default --python-interpreter-path "$(command -v python)" --expectations sparse_layout_negative.py
+    - name: Check experimental sparse shapes
+      if: matrix.python-version == '3.12' && matrix.torch-version == '2.13.0'
+      run: |
+        shape_deps="${GITHUB_WORKSPACE}/.cache/pyrefly-shapes"
+        python -m pip install --no-deps --target "$shape_deps" -r requirements-shapes.txt
+        python -m pyrefly check -c pyrefly-shapes.toml
+        python -m pyrefly check -c pyrefly-shapes.toml --expectations typing_tests/shapes/negative.py
+        PYTHONPATH=. python typing_tests/shapes/runtime.py
+        shape_contracts="$(mktemp -d)"
+        cp typing_tests/shapes/*.py "$shape_contracts/"
+        cd "$shape_contracts"
+        shape_stubs="$(python -c 'from pathlib import Path; import torchsparsegradutils; print(Path(torchsparsegradutils.__file__).parent / "_shape_stubs")')"
+        python -m pyrefly check --preset default --python-version 3.13 --search-path "$shape_stubs" --search-path "$shape_deps" --python-interpreter-path "$(command -v python)" positive.py
+        python -m pyrefly check --preset default --python-version 3.13 --search-path "$shape_stubs" --search-path "$shape_deps" --python-interpreter-path "$(command -v python)" --expectations negative.py
+        python runtime.py

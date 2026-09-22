@@ -1,0 +1,17 @@
+# Optional experimental check. The default pyproject.toml remains layout-only.
+required-version = "==1.3.1"
+preset = "default"
+# Upstream shape stubs use Python 3.13 typing syntax. This is a static target;
+# ordinary project checks still enforce Python 3.10 compatibility.
+python-version = "3.13"
+project-includes = [
+    "typing_tests/shapes/positive.py",
+    "torchsparsegradutils/_shape_stubs/**/*.pyi",
+]
+project-excludes = [".cache/**"]
+search-path = [
+    "torchsparsegradutils/_shape_stubs",
+    ".cache/pyrefly-shapes",
+    ".",
+]
+use-ignore-files = false

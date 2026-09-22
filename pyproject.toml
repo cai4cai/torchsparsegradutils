@@ -64,7 +64,12 @@ include = ["torchsparsegradutils*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-torchsparsegradutils = ["py.typed"]
+torchsparsegradutils = [
+    "py.typed",
+    "_shape_stubs/torchsparsegradutils-stubs/py.typed",
+    "_shape_stubs/torchsparsegradutils-stubs/*.pyi",
+    "_shape_stubs/torchsparsegradutils-stubs/utils/*.pyi",
+]
 
 [tool.ruff]
 line-length = 120
@@ -77,6 +82,11 @@ ignore = ["E203", "E266", "E501", "F401", "E731", "E402"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 25
+
+[tool.ruff.lint.per-file-ignores]
+# Jaxtyping shape strings are dimension expressions, not forward references.
+"torchsparsegradutils/_shape_stubs/**/*.pyi" = ["F722"]
+"typing_tests/shapes/*.py" = ["F722"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["torchsparsegradutils"]
