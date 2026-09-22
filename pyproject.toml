@@ -41,6 +41,7 @@ docs = [
     "sphinx-gallery>=0.13.0",
 ]
 dev = [
+    "pyrefly==1.3.1",
     "pytest",
     "pytest-cov",
     "ruff==0.16.6",
@@ -75,6 +76,18 @@ max-complexity = 25
 [tool.ruff.lint.isort]
 known-first-party = ["torchsparsegradutils"]
 combine-as-imports = true
+
+[tool.pyrefly]
+required-version = "==1.3.1"
+preset = "default"
+python-version = "3.10"
+project-includes = ["torchsparsegradutils/**/*.py"]
+project-excludes = [
+    "torchsparsegradutils/benchmarks/**",
+    "torchsparsegradutils/tests/**",
+]
+use-ignore-files = false
+ignore-missing-imports = ["cupy.*", "cupyx.*", "dgl.*"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
