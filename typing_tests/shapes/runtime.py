@@ -42,6 +42,22 @@ def check_matmul() -> None:
             raise AssertionError("Layout validator accepted a dense tensor")
 
 
+def check_broadcasting() -> None:
+    a = generate_random_sparse_coo_matrix((3, 4), 5)
+    weights = torch.ones(2, 3, 4)
+    broadcast = tsgu.require_sparse_coo(a.mul(weights))
+    assert broadcast.shape == (2, 3, 4)
+    torch.testing.assert_close(broadcast.to_dense(), a.to_dense() * weights)
+    rhs = torch.ones(2, 4, 2)
+    torch.testing.assert_close(tsgu.sparse_mm(broadcast, rhs), broadcast.to_dense() @ rhs)
+    try:
+        tsgu.sparse_mm(broadcast, torch.ones(4, 2))
+    except ValueError as error:
+        assert "both be 2D or both be 3D" in str(error)
+    else:
+        raise AssertionError("Sparse matmul accepted mismatched operand ranks after broadcasting")
+
+
 def check_solvers() -> None:
     a = tsgu.require_sparse_csr(torch.eye(4, dtype=torch.float64).to_sparse_csr())
     b = torch.randn(4, 2, dtype=torch.float64)
@@ -109,6 +125,7 @@ def check_stub_parameters() -> None:
 
 if __name__ == "__main__":
     check_matmul()
+    check_broadcasting()
     check_solvers()
     check_stub_parameters()
     print("Runtime shape contracts passed: identity, layouts, outputs, gradients, and public stub parameters.")

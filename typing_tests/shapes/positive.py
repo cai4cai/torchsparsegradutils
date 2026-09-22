@@ -14,6 +14,7 @@ from torchsparsegradutils import (
     gather_mm,
     is_sparse_coo,
     is_sparse_csr,
+    require_sparse_coo,
     require_sparse_coo_or_csr,
     require_sparse_csc,
     require_sparse_csr,
@@ -94,3 +95,63 @@ def symbolic(a: Shaped[SparseCSRTensor, "m n"], b: Shaped[Tensor, "n k"]) -> Sha
 
 
 assert_type(symbolic(csr, rhs), Tensor[[3, 2]])
+
+# Tensor operands can broadcast. These static assertions do not certify
+# PyTorch kernel support for a particular sparse layout or dtype.
+broadcast_rhs = torch.ones(2, 3, 4)
+assert_type(coo * broadcast_rhs, Tensor[[2, 3, 4]])
+assert_type(coo.add(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.sub(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.mul(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.div(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.pow(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.remainder(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.eq(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.ne(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.lt(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.le(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.gt(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.ge(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.logical_and(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.logical_or(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.atan2(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.hypot(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.fmod(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.copysign(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.nextafter(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.bitwise_and(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.bitwise_or(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.bitwise_xor(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.bitwise_left_shift(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.bitwise_right_shift(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.maximum(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.minimum(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.fmax(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.fmin(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo**broadcast_rhs, Tensor[[2, 3, 4]])
+assert_type(coo.isclose(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.lerp(broadcast_rhs, 0.5), Tensor[[2, 3, 4]])
+assert_type(coo.masked_fill(broadcast_rhs, 1.0), Tensor[[2, 3, 4]])
+assert_type(coo.masked_scatter(broadcast_rhs, torch.ones(24)), Tensor[[2, 3, 4]])
+assert_type(coo.clamp_min(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.clamp_max(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.clamp(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.clip(broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.clamp(max=broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.clamp(None, broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.clip(max=broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.clip(None, broadcast_rhs), Tensor[[2, 3, 4]])
+assert_type(coo.clamp(broadcast_rhs, torch.ones(5, 1, 1, 1)), Tensor[[5, 2, 3, 4]])
+assert_type(coo.clip(broadcast_rhs, torch.ones(5, 1, 1, 1)), Tensor[[5, 2, 3, 4]])
+assert_type(coo.mul(2), SparseCOOTensor[[3, 4]])
+assert_type(coo.div(2), SparseCOOTensor[[3, 4]])
+assert_type(coo.pow(2), SparseCOOTensor[[3, 4]])
+assert_type(coo.remainder(2), SparseCOOTensor[[3, 4]])
+assert_type(coo**2, SparseCOOTensor[[3, 4]])
+assert_type(coo.clamp(0, 1), Tensor[[3, 4]])
+assert_type(coo.clip(0, 1), Tensor[[3, 4]])
+assert_type(coo.clamp_min(0), Tensor[[3, 4]])
+assert_type(coo.clamp_max(1), Tensor[[3, 4]])
+broadcast_coo = require_sparse_coo(coo.mul(broadcast_rhs))
+assert_type(broadcast_coo, SparseCOOTensor[[2, 3, 4]])
+assert_type(sparse_mm(broadcast_coo, torch.ones(2, 4, 2)), Tensor[[2, 3, 2]])

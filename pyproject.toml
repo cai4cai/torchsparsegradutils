@@ -76,6 +76,10 @@ line-length = 120
 target-version = "py310"
 include = ["*.py", "*.pyi"]
 
+[tool.ruff.per-file-target-version]
+# Shape stubs use Pyrefly's Python 3.13 static target.
+"torchsparsegradutils/_shape_stubs/**/*.pyi" = "py313"
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "C90"]
 ignore = ["E203", "E266", "E501", "F401", "E731", "E402"]

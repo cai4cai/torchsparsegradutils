@@ -67,6 +67,7 @@ jobs:
         python -m pip install --no-deps --target "$shape_deps" -r requirements-shapes.txt
         python -m pyrefly check -c pyrefly-shapes.toml
         python -m pyrefly check -c pyrefly-shapes.toml --expectations typing_tests/shapes/negative.py
+        PYTHONPATH=. python typing_tests/shapes/audit.py "$shape_deps/torch-stubs/__init__.pyi"
         PYTHONPATH=. python typing_tests/shapes/runtime.py
         shape_contracts="$(mktemp -d)"
         cp typing_tests/shapes/*.py "$shape_contracts/"
@@ -74,4 +75,5 @@ jobs:
         shape_stubs="$(python -c 'from pathlib import Path; import torchsparsegradutils; print(Path(torchsparsegradutils.__file__).parent / "_shape_stubs")')"
         python -m pyrefly check --preset default --python-version 3.13 --search-path "$shape_stubs" --search-path "$shape_deps" --python-interpreter-path "$(command -v python)" positive.py
         python -m pyrefly check --preset default --python-version 3.13 --search-path "$shape_stubs" --search-path "$shape_deps" --python-interpreter-path "$(command -v python)" --expectations negative.py
+        python audit.py "$shape_deps/torch-stubs/__init__.pyi"
         python runtime.py
