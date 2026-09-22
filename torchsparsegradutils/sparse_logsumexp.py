@@ -1,4 +1,4 @@
-from typing import Literal, Sequence, Union
+from typing import Literal, Sequence, Union, overload
 
 import torch
 from packaging.version import parse as parse_version
@@ -348,6 +348,24 @@ def sparse_logsumexp(
     if 0 in dims:
         raise NotImplementedError("Cannot reduce the batch dimension (0) of a batched 3-D sparse tensor.")
     return _logsumexp_batched(input, dims, keepdim, include_zeros)
+
+
+@overload
+def sparse_bidir_logsumexp(
+    input: Tensor,
+    keepdim: bool = False,
+    include_zeros: bool = True,
+    output_layout: Literal["tuple"] = "tuple",
+) -> tuple[Tensor, Tensor]: ...
+
+
+@overload
+def sparse_bidir_logsumexp(
+    input: Tensor,
+    keepdim: bool = False,
+    include_zeros: bool = True,
+    output_layout: Literal["padded", "nested"] = "padded",
+) -> Tensor: ...
 
 
 def sparse_bidir_logsumexp(
