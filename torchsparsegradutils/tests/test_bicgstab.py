@@ -167,3 +167,66 @@ def test_bicgstab_validates_arguments_before_budget_return(device, matvec_max, m
 
     with pytest.raises(RuntimeError, match=message):
         bicgstab(operator, rhs, settings=BICGSTABSettings(matvec_max=matvec_max, precon=precon))
+
+
+def test_bicgstab_accepts_warm_start_within_rhs_tolerance(device):
+    # This non-exact guess already meets the default RHS-relative tolerance.
+    diagonal = torch.tensor([2.0, 4.0], dtype=torch.float64, device=device)
+    rhs = diagonal.clone()
+    initial_guess = torch.full_like(rhs, 1.0 - 5e-7)
+    calls = []
+
+    def operator(x):
+        calls.append(1)
+        return diagonal * x
+
+    result = bicgstab(operator, rhs, initial_guess)
+
+    assert len(calls) == 1
+    torch.testing.assert_close(result, initial_guess, atol=0, rtol=0)
+    assert torch.linalg.vector_norm(rhs - diagonal * result) <= 1e-6 * torch.linalg.vector_norm(rhs)
+
+
+def test_bicgstab_poor_guess_does_not_relax_rhs_tolerance(device):
+    diagonal = torch.tensor([2.0, 4.0], dtype=torch.float64, device=device)
+    rhs = torch.ones_like(diagonal)
+    initial_guess = torch.full_like(rhs, 100.0)
+    settings = BICGSTABSettings(reltol=0.1, abstol=0, matvec_max=20)
+
+    result = bicgstab(lambda x: diagonal * x, rhs, initial_guess, settings)
+
+    assert torch.linalg.vector_norm(rhs - diagonal * result) <= 0.1 * torch.linalg.vector_norm(rhs)
+
+
+def test_bicgstab_rhs_tolerance_is_per_column(device):
+    # A large, already-acceptable column must not loosen the small column's target.
+    rhs = torch.tensor([[2e6, 2e-6], [4e6, 4e-6]], dtype=torch.float64, device=device)
+    initial_guess = rhs / 2
+    initial_guess[:, 0] *= 1.0 - 5e-7
+    initial_guess[:, 1] *= 0.5
+    calls = []
+
+    def operator(x):
+        calls.append(1)
+        return 2 * x
+
+    result = bicgstab(operator, rhs, initial_guess, BICGSTABSettings(reltol=1e-6, abstol=0, matvec_max=10))
+
+    torch.testing.assert_close(result[:, 0], initial_guess[:, 0], atol=0, rtol=0)
+    residual_norms = torch.linalg.vector_norm(rhs - 2 * result, dim=0)
+    assert torch.all(residual_norms <= 1e-6 * torch.linalg.vector_norm(rhs, dim=0))
+    assert len(calls) == 3  # One initial check per column, plus one update for the second.
+
+
+@pytest.mark.parametrize("guess_value", [0.0, 1e-9, 1.0])
+def test_bicgstab_zero_rhs_uses_absolute_tolerance(device, guess_value):
+    diagonal = torch.tensor([2.0, 4.0], dtype=torch.float64, device=device)
+    rhs = torch.zeros_like(diagonal)
+    initial_guess = torch.full_like(rhs, guess_value)
+    settings = BICGSTABSettings(reltol=0.5, abstol=1e-8, matvec_max=20)
+
+    result = bicgstab(lambda x: diagonal * x, rhs, initial_guess, settings)
+
+    assert torch.linalg.vector_norm(diagonal * result) <= settings.abstol
+    if guess_value <= 1e-9:
+        torch.testing.assert_close(result, initial_guess, atol=0, rtol=0)

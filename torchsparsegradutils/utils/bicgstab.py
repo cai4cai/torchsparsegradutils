@@ -15,7 +15,7 @@ _null_log.disabled = True
 class BICGSTABSettings(NamedTuple):
     matvec_max: Optional[int] = None  # Nonnegative max matvecs per RHS (default 2n)
     abstol: float = 1.0e-8  # Absolute stopping tolerance
-    reltol: float = 1.0e-6  # Relative stopping tolerance
+    reltol: float = 1.0e-6  # Relative stopping tolerance, scaled by the RHS 2-norm
     precon: Optional[Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]]] = None
     logger: logging.Logger = _null_log
 
@@ -63,6 +63,13 @@ def bicgstab(
 
     Notes
     -----
+    Convergence uses the residual 2-norm with threshold
+    :math:`\max(\mathrm{abstol}, \mathrm{reltol} \lVert b \rVert_2)` for each RHS
+    column, matching SciPy's BiCGSTAB tolerance convention. The threshold is
+    independent of the initial guess: a warm start already within tolerance needs
+    only its initial residual check. For a zero RHS, only ``abstol`` applies.
+    The matvec budget can terminate the solve before this tolerance is met.
+
     Per iteration (unpreconditioned) BiCGSTAB [1a]_ uses ~2 matvecs, several dot products,
     and vector updates. The algorithm can experience breakdown when certain inner
     products or denominators vanish (e.g., :math:`\langle r_0, v \rangle = 0` or :math:`\langle t, t \rangle = 0`).
@@ -176,7 +183,7 @@ def bicgstab(
     rho = alpha = omega = 1.0
     rho_next = torch.dot(r0, r0)
     residNorm = residNorm0 = torch.abs(torch.sqrt(rho_next))
-    threshold = max(settings.abstol, settings.reltol * residNorm0)
+    threshold = max(settings.abstol, settings.reltol * torch.linalg.vector_norm(rhs))
 
     finished = residNorm <= threshold or nMatvec >= matvec_max
 
