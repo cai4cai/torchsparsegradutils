@@ -17,7 +17,7 @@ from test_sparse_logsumexp import (
     layout_id,
 )
 
-from torchsparsegradutils import sparse_bidir_logsumexp, sparse_logsumexp
+from torchsparsegradutils import require_sparse_coo_csr_or_csc, sparse_bidir_logsumexp, sparse_logsumexp
 from torchsparsegradutils.sparse_logsumexp import _bidir_2d, _bidir_batched
 
 _NESTED_OK = parse_version(torch.__version__) >= parse_version("2.4")
@@ -115,14 +115,14 @@ def test_keepdim_shapes(fwd_layout, device):
 
 
 def test_keepdim_rejected_for_non_tuple_layouts(device):
-    sp = _make_dense(device, torch.float64, seed=3).to_sparse_coo()
+    sp = require_sparse_coo_csr_or_csc(_make_dense(device, torch.float64, seed=3).to_sparse_coo())
     for output_layout in ("padded", "nested"):
         with pytest.raises(ValueError, match="keepdim is only supported"):
             sparse_bidir_logsumexp(sp, keepdim=True, output_layout=output_layout)
 
 
 def test_unknown_output_layout_raises(device):
-    sp = _make_dense(device, torch.float64, seed=3).to_sparse_coo()
+    sp = require_sparse_coo_csr_or_csc(_make_dense(device, torch.float64, seed=3).to_sparse_coo())
     with pytest.raises(ValueError, match="unknown output_layout"):
         sparse_bidir_logsumexp(sp, output_layout="bogus")  # type: ignore[call-overload]
 
@@ -153,7 +153,7 @@ def test_positive_inf_value_both_axes(fwd_layout, device, include_zeros):
 
 def test_batched_matches_two_call(device, value_dtype, include_zeros):
     dense = _make_batched_dense(device, value_dtype, seed=4)  # (3, 5, 4)
-    sp = dense.to_sparse_coo()
+    sp = require_sparse_coo_csr_or_csc(dense.to_sparse_coo())
     col_lse, row_lse = sparse_bidir_logsumexp(sp, include_zeros=include_zeros)
     _assert_close(col_lse, sparse_logsumexp(sp, dim=1, include_zeros=include_zeros), value_dtype)
     _assert_close(row_lse, sparse_logsumexp(sp, dim=2, include_zeros=include_zeros), value_dtype)
@@ -161,7 +161,7 @@ def test_batched_matches_two_call(device, value_dtype, include_zeros):
 
 def test_batched_output_shapes(device):
     dense = _make_batched_dense(device, torch.float64, seed=5)  # (3, 5, 4)
-    sp = dense.to_sparse_coo()
+    sp = require_sparse_coo_csr_or_csc(dense.to_sparse_coo())
     b, nrows, ncols = dense.shape
     G = max(nrows, ncols)
     col_lse, row_lse = sparse_bidir_logsumexp(sp)
@@ -175,7 +175,7 @@ def test_batched_output_layouts_agree(device, include_zeros):
     """Batched padded/nested carry the same values as tuple (not just the right shape),
     so a col/row plane swap in the padded assembly cannot pass unnoticed."""
     dense = _make_batched_dense(device, torch.float64, seed=5)  # (3, 5, 4)
-    sp = dense.to_sparse_coo()
+    sp = require_sparse_coo_csr_or_csc(dense.to_sparse_coo())
     b, nrows, ncols = dense.shape
     G = max(nrows, ncols)
     col_lse, row_lse = sparse_bidir_logsumexp(sp, include_zeros=include_zeros)
@@ -246,7 +246,11 @@ def test_gradient_parity_with_two_call(layout, device):
 
     def _grad(bidir):
         leaf = dense.clone().requires_grad_(True)
-        sp = _to_layout(leaf, layout) if layout != torch.sparse_coo else leaf.to_sparse_coo()
+        sp = (
+            _to_layout(leaf, layout)
+            if layout != torch.sparse_coo
+            else require_sparse_coo_csr_or_csc(leaf.to_sparse_coo())
+        )
         if bidir:
             col_lse, row_lse = sparse_bidir_logsumexp(sp)
             (col_lse.sum() + row_lse.sum()).backward()
@@ -264,7 +268,7 @@ def test_batched_gradient_parity_with_two_call(device):
 
     def _grad(bidir):
         leaf = dense.clone().requires_grad_(True)
-        sp = leaf.to_sparse_coo()
+        sp = require_sparse_coo_csr_or_csc(leaf.to_sparse_coo())
         if bidir:
             col_lse, row_lse = sparse_bidir_logsumexp(sp)
             (col_lse.sum() + row_lse.sum()).backward()
@@ -280,7 +284,7 @@ def test_duplicate_coordinates_are_coalesced(device, include_zeros):
     exp (guards against a refactor to _values()/_indices() that would double-count)."""
     indices = torch.tensor([[0, 0, 1], [1, 1, 2]], device=device)  # (0,1) appears twice
     values = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64, device=device)
-    sp = torch.sparse_coo_tensor(indices, values, (2, 3), device=device)  # NOT coalesced
+    sp = require_sparse_coo_csr_or_csc(torch.sparse_coo_tensor(indices, values, (2, 3), device=device))  # NOT coalesced
     assert not sp.is_coalesced()
     dense = sp.to_dense()  # (0,1) -> 3.0 after summing
     col_lse, row_lse = sparse_bidir_logsumexp(sp, include_zeros=include_zeros)
@@ -289,11 +293,11 @@ def test_duplicate_coordinates_are_coalesced(device, include_zeros):
 
 
 def test_unsupported_rank_raises(device):
-    x = torch.randn(2, 3, 4, 5, device=device).to_sparse_coo()
+    x = require_sparse_coo_csr_or_csc(torch.randn(2, 3, 4, 5, device=device).to_sparse_coo())
     with pytest.raises(NotImplementedError):
         sparse_bidir_logsumexp(x)
 
 
 def test_dense_layout_raises(device):
     with pytest.raises(NotImplementedError):
-        sparse_bidir_logsumexp(torch.randn(3, 3, device=device))
+        sparse_bidir_logsumexp(torch.randn(3, 3, device=device))  # pyrefly: ignore [no-matching-overload]

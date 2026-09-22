@@ -41,6 +41,8 @@ __all__ = [
     "require_sparse_csc",
     "require_sparse_bsr",
     "require_sparse_bsc",
+    "require_sparse_coo_or_csr",
+    "require_sparse_coo_csr_or_csc",
 ]
 
 
@@ -102,6 +104,28 @@ def require_sparse_bsc(value: object) -> SparseBSCTensor:
     if not is_sparse_bsc(value):
         raise TypeError(f"Expected a torch.Tensor with layout torch.sparse_bsc, got {_describe(value)}")
     return SparseBSCTensor(value)
+
+
+def require_sparse_coo_or_csr(value: object) -> Union[SparseCOOTensor, SparseCSRTensor]:
+    """Validate and brand a sparse COO or CSR tensor."""
+    if is_sparse_coo(value):
+        return value
+    if is_sparse_csr(value):
+        return value
+    raise TypeError(f"Expected a torch.Tensor with sparse COO or CSR layout, got {_describe(value)}")
+
+
+def require_sparse_coo_csr_or_csc(
+    value: object,
+) -> Union[SparseCOOTensor, SparseCSRTensor, SparseCSCTensor]:
+    """Validate and brand a sparse COO, CSR, or CSC tensor."""
+    if is_sparse_coo(value):
+        return value
+    if is_sparse_csr(value):
+        return value
+    if is_sparse_csc(value):
+        return value
+    raise TypeError(f"Expected a torch.Tensor with sparse COO, CSR, or CSC layout, got {_describe(value)}")
 
 
 def _describe(value: object) -> str:

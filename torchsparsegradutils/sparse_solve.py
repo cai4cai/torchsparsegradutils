@@ -4,11 +4,12 @@ from typing import Callable, Optional, cast
 import torch
 
 from torchsparsegradutils._compat import linalg_solve_triangular_compat
+from torchsparsegradutils.sparse_types import SparseCOOTensor, SparseCSRTensor
 from torchsparsegradutils.utils import convert_coo_to_csr, sparse_block_diag, sparse_block_diag_split, stack_csr
 
 
 def sparse_triangular_solve(
-    A: torch.Tensor,
+    A: SparseCOOTensor | SparseCSRTensor,
     B: torch.Tensor,
     upper: bool = True,
     unitriangular: bool = False,
@@ -253,7 +254,7 @@ class SparseTriangularSolve(torch.autograd.Function):
 
 
 def sparse_generic_solve(
-    A: torch.Tensor,
+    A: SparseCOOTensor | SparseCSRTensor,
     B: torch.Tensor,
     solve: Optional[Callable[..., torch.Tensor]] = None,
     transpose_solve: Optional[Callable[..., torch.Tensor]] = None,

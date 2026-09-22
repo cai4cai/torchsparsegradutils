@@ -2,9 +2,11 @@ from typing import Callable, Optional, cast
 
 import torch
 
+from torchsparsegradutils.sparse_types import SparseCOOTensor, SparseCSRTensor
+
 
 def sparse_generic_lstsq(
-    A: torch.Tensor,
+    A: SparseCOOTensor | SparseCSRTensor,
     B: torch.Tensor,
     lstsq: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
     transpose_lstsq: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,

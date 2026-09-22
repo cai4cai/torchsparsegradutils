@@ -4,6 +4,8 @@ import torch
 from packaging.version import parse as parse_version
 from torch import Tensor
 
+from torchsparsegradutils.sparse_types import SparseCOOTensor, SparseCSCTensor, SparseCSRTensor
+
 __all__ = ["sparse_logsumexp", "sparse_bidir_logsumexp"]
 
 
@@ -244,7 +246,7 @@ def _bidir_batched(input: Tensor, include_zeros: bool):
 
 
 def sparse_logsumexp(
-    input: Tensor,
+    input: SparseCOOTensor | SparseCSRTensor | SparseCSCTensor,
     dim: Union[int, Sequence[int]],
     keepdim: bool = False,
     include_zeros: bool = True,
@@ -352,7 +354,7 @@ def sparse_logsumexp(
 
 @overload
 def sparse_bidir_logsumexp(
-    input: Tensor,
+    input: SparseCOOTensor | SparseCSRTensor | SparseCSCTensor,
     keepdim: bool = False,
     include_zeros: bool = True,
     output_layout: Literal["tuple"] = "tuple",
@@ -361,7 +363,7 @@ def sparse_bidir_logsumexp(
 
 @overload
 def sparse_bidir_logsumexp(
-    input: Tensor,
+    input: SparseCOOTensor | SparseCSRTensor | SparseCSCTensor,
     keepdim: bool = False,
     include_zeros: bool = True,
     output_layout: Literal["padded", "nested"] = "padded",
@@ -369,7 +371,7 @@ def sparse_bidir_logsumexp(
 
 
 def sparse_bidir_logsumexp(
-    input: Tensor,
+    input: SparseCOOTensor | SparseCSRTensor | SparseCSCTensor,
     keepdim: bool = False,
     include_zeros: bool = True,
     output_layout: Literal["tuple", "padded", "nested"] = "tuple",

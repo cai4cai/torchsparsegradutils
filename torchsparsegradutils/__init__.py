@@ -18,6 +18,8 @@ from .sparse_types import (
     require_sparse_bsc,
     require_sparse_bsr,
     require_sparse_coo,
+    require_sparse_coo_csr_or_csc,
+    require_sparse_coo_or_csr,
     require_sparse_csc,
     require_sparse_csr,
 )
@@ -47,4 +49,6 @@ __all__ = [
     "require_sparse_csc",
     "require_sparse_bsr",
     "require_sparse_bsc",
+    "require_sparse_coo_or_csr",
+    "require_sparse_coo_csr_or_csc",
 ]

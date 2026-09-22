@@ -3,6 +3,7 @@ import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
 import torchsparsegradutils.jax as tsgujax
+from torchsparsegradutils import require_sparse_coo_or_csr
 from torchsparsegradutils.utils import convert_coo_to_csr
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
@@ -94,7 +95,7 @@ def test_solve_backward_j4t(layout, device, value_dtype, index_dtype, solver, sh
     _, A_shape, B_shape, num_zero = shapes
     n = A_shape[0]
     A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
-    A_sp = A_sp.detach().clone().requires_grad_()
+    A_sp = require_sparse_coo_or_csr(A_sp.detach().clone().requires_grad_())
     Ad = A_dense.detach().clone().requires_grad_()
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
     Bd1 = B.clone().detach().requires_grad_()
@@ -155,7 +156,7 @@ def test_jax_kwargs_backward_pass(device, value_dtype, layout):
     A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
 
     # Set up tensors with gradients
-    A_sp1 = A_sp.clone().requires_grad_()
+    A_sp1 = require_sparse_coo_or_csr(A_sp.clone().requires_grad_())
     Ad2 = A_dense.detach().clone().requires_grad_()
     Bd1 = torch.rand(n, dtype=value_dtype, device=device).requires_grad_()
     Bd2 = Bd1.clone().detach().requires_grad_()

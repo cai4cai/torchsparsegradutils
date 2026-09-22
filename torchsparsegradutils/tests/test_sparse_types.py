@@ -10,6 +10,8 @@ from torchsparsegradutils import (
     require_sparse_bsc,
     require_sparse_bsr,
     require_sparse_coo,
+    require_sparse_coo_csr_or_csc,
+    require_sparse_coo_or_csr,
     require_sparse_csc,
     require_sparse_csr,
 )
@@ -51,3 +53,16 @@ def test_sparse_layout_guards_do_not_confuse_layouts():
         assert expected_predicate(tensor)
         for _, _, other_predicate, _ in examples:
             assert other_predicate(tensor) is (other_predicate is expected_predicate)
+
+
+def test_supported_layout_union_validators():
+    examples = {layout: tensor for layout, tensor, _, _ in _layout_examples()}
+    for layout in (torch.sparse_coo, torch.sparse_csr):
+        assert require_sparse_coo_or_csr(examples[layout]) is examples[layout]
+    for layout in (torch.sparse_coo, torch.sparse_csr, torch.sparse_csc):
+        assert require_sparse_coo_csr_or_csc(examples[layout]) is examples[layout]
+
+    with pytest.raises(TypeError, match="sparse COO or CSR"):
+        require_sparse_coo_or_csr(examples[torch.sparse_csc])
+    with pytest.raises(TypeError, match="sparse COO, CSR, or CSC"):
+        require_sparse_coo_csr_or_csc(examples[torch.sparse_bsr])

@@ -3,6 +3,7 @@ import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
 import torchsparsegradutils.cupy as tsgucupy
+from torchsparsegradutils import require_sparse_coo_or_csr
 
 # Skip entire module if CuPy is not available
 pytest.importorskip("cupy")
@@ -103,7 +104,7 @@ def test_solve_backward_cupy(layout, device, value_dtype, index_dtype, solver, s
 
     n = A_shape[0]
     A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, index_dtype, device, nz=num_zero)
-    A_sp = A_sp.detach().clone().requires_grad_()
+    A_sp = require_sparse_coo_or_csr(A_sp.detach().clone().requires_grad_())
     Ad = A_dense.detach().clone().requires_grad_()
     B = torch.rand(*B_shape, dtype=value_dtype, device=device)
     Bd = B.clone().detach().requires_grad_()
@@ -207,7 +208,7 @@ def test_cupy_kwargs_backward_pass(device, value_dtype, layout):
     A_sp, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
 
     # Set up tensors with gradients
-    A_sp1 = A_sp.clone().requires_grad_()
+    A_sp1 = require_sparse_coo_or_csr(A_sp.clone().requires_grad_())
     Ad2 = A_dense.detach().clone().requires_grad_()
     Bd1 = torch.rand(n, dtype=value_dtype, device=device).requires_grad_()
     Bd2 = Bd1.clone().detach().requires_grad_()

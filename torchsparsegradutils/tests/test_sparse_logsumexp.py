@@ -2,7 +2,7 @@ import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, SPARSE_LAYOUTS, VALUE_DTYPES, Tolerances
 
-from torchsparsegradutils import sparse_logsumexp
+from torchsparsegradutils import require_sparse_coo_csr_or_csc, sparse_logsumexp
 
 # dim arguments to exercise: per-row, per-column, and full reduction.
 DIMS = [0, 1, [0, 1]]
@@ -32,16 +32,22 @@ def dim_id(dim):
 def _to_layout(dense, layout, index_dtype=torch.int64):
     if layout == torch.sparse_coo:
         coo = dense.to_sparse_coo().coalesce()
-        return torch.sparse_coo_tensor(coo.indices().to(index_dtype), coo.values(), coo.shape).coalesce()
+        return require_sparse_coo_csr_or_csc(
+            torch.sparse_coo_tensor(coo.indices().to(index_dtype), coo.values(), coo.shape).coalesce()
+        )
     if layout == torch.sparse_csr:
         csr = dense.to_sparse_csr()
-        return torch.sparse_csr_tensor(
-            csr.crow_indices().to(index_dtype), csr.col_indices().to(index_dtype), csr.values(), csr.shape
+        return require_sparse_coo_csr_or_csc(
+            torch.sparse_csr_tensor(
+                csr.crow_indices().to(index_dtype), csr.col_indices().to(index_dtype), csr.values(), csr.shape
+            )
         )
     if layout == torch.sparse_csc:
         csc = dense.to_sparse_csc()
-        return torch.sparse_csc_tensor(
-            csc.ccol_indices().to(index_dtype), csc.row_indices().to(index_dtype), csc.values(), csc.shape
+        return require_sparse_coo_csr_or_csc(
+            torch.sparse_csc_tensor(
+                csc.ccol_indices().to(index_dtype), csc.row_indices().to(index_dtype), csc.values(), csc.shape
+            )
         )
     raise ValueError(layout)
 
@@ -140,9 +146,11 @@ def test_all_negative_values_stability(fwd_layout, device, dim, include_zeros):
 def test_all_negative_single_value(device):
     """Minimal case: a lone very-negative value with a structural zero returns ~0,
     not +inf (the structural zero's exp(0)=1 dominates)."""
-    x = torch.sparse_coo_tensor(
-        torch.tensor([[0], [0]], device=device), torch.tensor([-1000.0], device=device), (1, 2)
-    ).coalesce()
+    x = require_sparse_coo_csr_or_csc(
+        torch.sparse_coo_tensor(
+            torch.tensor([[0], [0]], device=device), torch.tensor([-1000.0], device=device), (1, 2)
+        ).coalesce()
+    )
     _assert_close(sparse_logsumexp(x, dim=1, include_zeros=True), torch.logsumexp(x.to_dense(), dim=1), torch.float32)
 
 
@@ -192,14 +200,16 @@ def batched_dim(request):
 
 def test_batched_matches_dense(device, value_dtype, batched_dim, include_zeros):
     dense = _make_batched_dense(device, value_dtype, seed=4)
-    out = sparse_logsumexp(dense.to_sparse_coo(), dim=batched_dim, include_zeros=include_zeros)
+    out = sparse_logsumexp(
+        require_sparse_coo_csr_or_csc(dense.to_sparse_coo()), dim=batched_dim, include_zeros=include_zeros
+    )
     ref = _dense_reference(dense, batched_dim, include_zeros)
     _assert_close(out, ref, value_dtype)
 
 
 def test_batched_keepdim_shapes(device):
     dense = _make_batched_dense(device, torch.float64, seed=5)
-    sp = dense.to_sparse_coo()
+    sp = require_sparse_coo_csr_or_csc(dense.to_sparse_coo())
     assert sparse_logsumexp(sp, dim=1, keepdim=True).shape == (3, 1, 4)
     assert sparse_logsumexp(sp, dim=2, keepdim=True).shape == (3, 5, 1)
     assert sparse_logsumexp(sp, dim=[1, 2], keepdim=True).shape == (3, 1, 1)
@@ -238,7 +248,7 @@ def test_batched_keepdim_shapes_all_layouts(batched_layout, device):
 
 
 def test_batched_cannot_reduce_batch_dim(device):
-    sp = _make_batched_dense(device, torch.float64, seed=6).to_sparse_coo()
+    sp = require_sparse_coo_csr_or_csc(_make_batched_dense(device, torch.float64, seed=6).to_sparse_coo())
     with pytest.raises(NotImplementedError):
         sparse_logsumexp(sp, dim=0)
 
@@ -251,9 +261,11 @@ def test_gradient(layout, device):
 
     # Rebuild a sparse tensor that carries grad on its values.
     if layout == torch.sparse_coo:
-        sp_grad = torch.sparse_coo_tensor(sp.indices(), vals, sp.shape)
+        sp_grad = require_sparse_coo_csr_or_csc(torch.sparse_coo_tensor(sp.indices(), vals, sp.shape))
     else:
-        sp_grad = torch.sparse_csr_tensor(sp.crow_indices(), sp.col_indices(), vals, sp.shape)
+        sp_grad = require_sparse_coo_csr_or_csc(
+            torch.sparse_csr_tensor(sp.crow_indices(), sp.col_indices(), vals, sp.shape)
+        )
 
     sparse_logsumexp(sp_grad, dim=1, include_zeros=True).sum().backward()
 
@@ -269,20 +281,20 @@ def test_gradient(layout, device):
 
 
 def test_unsupported_rank_raises():
-    x = torch.randn(2, 3, 4, 5).to_sparse_coo()  # 4-D: neither 2-D nor batched 3-D
+    x = require_sparse_coo_csr_or_csc(torch.randn(2, 3, 4, 5).to_sparse_coo())  # 4-D: neither 2-D nor batched 3-D
     with pytest.raises(NotImplementedError):
         sparse_logsumexp(x, dim=1)
 
 
 def test_dense_layout_raises():
     with pytest.raises(NotImplementedError):
-        sparse_logsumexp(torch.randn(3, 3), dim=1)
+        sparse_logsumexp(torch.randn(3, 3), dim=1)  # pyrefly: ignore [bad-argument-type]
 
 
 @pytest.mark.parametrize("bad_dim", [2, -3])
 def test_dim_out_of_range_raises(device, bad_dim):
     """Out-of-range dims raise IndexError instead of silently wrapping via modulo."""
-    sp = torch.randn(3, 4, device=device).to_sparse_coo()
+    sp = require_sparse_coo_csr_or_csc(torch.randn(3, 4, device=device).to_sparse_coo())
     with pytest.raises(IndexError):
         sparse_logsumexp(sp, dim=bad_dim)
 
@@ -290,7 +302,7 @@ def test_dim_out_of_range_raises(device, bad_dim):
 @pytest.mark.parametrize("bad_dim", [[], [0, 0], [1, 1]])
 def test_dim_empty_or_repeated_raises(device, bad_dim):
     """Empty or duplicate dims raise RuntimeError instead of being silently deduped."""
-    sp = torch.randn(3, 4, device=device).to_sparse_coo()
+    sp = require_sparse_coo_csr_or_csc(torch.randn(3, 4, device=device).to_sparse_coo())
     with pytest.raises(RuntimeError):
         sparse_logsumexp(sp, dim=bad_dim)
 
@@ -298,6 +310,6 @@ def test_dim_empty_or_repeated_raises(device, bad_dim):
 def test_negative_dims_supported(device):
     """Valid negative dims behave like torch.logsumexp."""
     dense = torch.randn(3, 4, device=device, dtype=torch.float64)
-    sp = dense.to_sparse_coo()
+    sp = require_sparse_coo_csr_or_csc(dense.to_sparse_coo())
     _assert_close(sparse_logsumexp(sp, dim=-1), torch.logsumexp(dense, dim=-1), torch.float64)
     _assert_close(sparse_logsumexp(sp, dim=[-1, -2]), torch.logsumexp(dense, dim=(-1, -2)), torch.float64)

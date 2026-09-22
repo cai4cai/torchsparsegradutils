@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union, cast
 import torch
 
 import torchsparsegradutils.cupy as tsgucupy
+from torchsparsegradutils.sparse_types import SparseCOOTensor, SparseCSRTensor
 
 # from cupyx.scipy.sparse.linalg import cg, cgs, minres, gmres, spsolve
 
@@ -94,7 +95,7 @@ def _get_solver_function(solver_name, xsp, device):
 
 
 def sparse_solve_c4t(
-    A: torch.Tensor,
+    A: SparseCOOTensor | SparseCSRTensor,
     B: torch.Tensor,
     solve: Optional[Union[str, Callable[..., Any]]] = None,
     transpose_solve: Optional[Union[str, Callable[..., Any]]] = None,
