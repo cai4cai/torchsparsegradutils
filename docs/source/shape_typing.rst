@@ -1,9 +1,9 @@
 Experimental sparse shape checking
 ==================================
 
-Pyrefly can check both sparse layouts and tensor dimensions at supported public API boundaries. This feature is opt-in. The default check continues to use the layout-only annotations and the package's Python 3.10 compatibility target.
+Pyrefly checks sparse layouts and tensor dimensions at supported public API boundaries through an opt-in stub overlay.
 
-The runtime layout types are ``NewType`` brands. They have no generic shape parameter, so wrapping them directly in a jaxtyping annotation loses the shape. The optional stub overlay describes each brand as a generic tensor type instead. It gives Pyrefly somewhere to store the shape while keeping the original tensor objects, validators, and autograd implementations at runtime.
+The overlay represents COO, CSR, CSC, BSR, and BSC layouts as generic tensor types whose parameter records the shape. Layout validators establish brands at runtime, and Pyrefly checks dimensions through the annotated interfaces.
 
 Setup in a checkout
 -------------------
@@ -17,7 +17,7 @@ Use Python 3.12 or later for the shape-checking tools. Install the regular devel
    python -m pyrefly check -c pyrefly-shapes.toml --expectations typing_tests/shapes/negative.py
    PYTHONPATH=. python typing_tests/shapes/runtime.py
 
-The checker and shape stubs are pinned to version 1.3.1. With this version, resolving ``shape_extensions`` enables shape checking, including jaxtyping; ``jaxtyping = true`` is not a recognized configuration key. The shape check uses a Python 3.13 *static* target because upstream stubs use newer typing syntax. This does not change the Python version needed to run torchsparsegradutils.
+The checker and shape stubs are pinned to version 1.3.1. Resolving ``shape_extensions`` enables shape checking, including jaxtyping; ``jaxtyping = true`` is not a recognized configuration key. The shape check uses a Python 3.13 *static* target for upstream stub syntax.
 
 What is checked
 ---------------
@@ -28,7 +28,7 @@ What is checked
 * ``sparse_triangular_solve`` checks square matrices and matching matrix right hand sides, including its supported three-dimensional batching.
 * ``sparse_generic_solve`` checks square, unbatched systems with vector or matrix right hand sides.
 * ``sparse_generic_lstsq`` checks unbatched row compatibility and infers the solution shape for vector and matrix right hand sides.
-* ``clone``, ``detach``, and the covered sparse layout conversions preserve dimensions. Conversions update the layout brand; ``to_dense`` removes it. PyTorch's runtime restrictions on which conversions are supported still apply.
+* ``clone``, ``detach``, and the covered sparse layout conversions preserve dimensions. Conversions update the layout brand; ``to_dense`` removes it. Supported conversions are subject to PyTorch's runtime restrictions.
 
 For example, the following inference requires no shape annotation at the call:
 
@@ -57,14 +57,14 @@ Use absolute paths when the consumer project is elsewhere. Keep the overlay enab
 Limits and maintenance
 ----------------------
 
-These are static contracts for supported interfaces, not a proof of every internal tensor operation. Runtime checks remain necessary for unknown shapes, layout validation, dtypes, devices, sparse index invariants, triangularity, rank conditions, and data-dependent dimensions. Sparse layouts are checked for the sparse operands; a plain ``Tensor`` annotation does not certify a dense layout. List sizes remain gradual, and unmodeled PyTorch operations can lose shape information. In particular, converting a plain PyTorch tensor to sparse layout is not covered by the upstream stubs; prefer a typed factory or a known-shape function boundary followed by a validator.
+These are static contracts for supported interfaces, not a proof of every internal tensor operation. Runtime checks are necessary for unknown shapes, layout validation, dtypes, devices, sparse index invariants, triangularity, rank conditions, and data-dependent dimensions. Sparse layouts are checked for the sparse operands; a plain ``Tensor`` annotation does not certify a dense layout. List sizes are gradual, and unmodeled PyTorch operations can lose shape information. In particular, converting a plain PyTorch tensor to sparse layout is not covered by the upstream stubs; use a typed factory or a known-shape function boundary followed by a validator.
 
-Use ``transpose`` followed by a layout validator to retain inferred dimensions. The overlay conservatively types ``.T`` as an unbranded tensor because upstream's ``Self`` annotation incorrectly preserves the original shape and sparse layout. Other tensor methods and sparse utilities are outside the initial coverage.
+Use ``transpose`` followed by a layout validator to retain inferred dimensions. The overlay conservatively types ``.T`` as an unbranded tensor because upstream's ``Self`` annotation incorrectly preserves the input shape and sparse layout. Other tensor methods and sparse utilities are outside the coverage.
 
 Within stubs, apply ``Shaped`` to each layout separately before forming a union. Pyrefly 1.3.1 does not preserve shapes through ``Shaped[COO | CSR, ...]``. Likewise, guards must be generic in the incoming shape. Do not add broad fallback overloads to consumers: they can accept calls with known incompatible dimensions.
 
 The generic classes exist only in stubs. Do not instantiate shape parameters at runtime, subclass the runtime brands, or use them in ``isinstance`` checks. The overlay does not provide jaxtyping runtime checking or runtime-evaluable generic annotations. Use postponed annotations and the provided layout validators.
 
-The positive contracts use ``assert_type`` to detect information loss. The negative contracts use Pyrefly's ``--expectations`` mode, so missing diagnostics fail the check. Runtime counterparts verify tensor identity, outputs, sparse gradients, and public stub parameter compatibility. When upgrading Pyrefly, upgrade its shape stubs together and rerun all three checks.
+The positive contracts use ``assert_type`` to detect information loss. The negative contracts use Pyrefly's ``--expectations`` mode, so missing diagnostics fail the check. Runtime counterparts verify tensor identity, outputs, sparse gradients, public exports, and stub signatures. When upgrading Pyrefly, upgrade its shape stubs together and rerun all three checks.
 
-Background: `Pyrefly tensor shapes <https://pyrefly.org/en/docs/tensor-shapes/>`_, `Pyrefly jaxtyping compatibility <https://pyrefly.org/en/docs/tensor-shapes-reference/#jaxtyping-compatibility>`_, and `the generic NewType limitation <https://github.com/microsoft/pyright/issues/6284>`_.
+Reference: `Pyrefly tensor shapes <https://pyrefly.org/en/docs/tensor-shapes/>`_ and `Pyrefly jaxtyping support <https://pyrefly.org/en/docs/tensor-shapes-reference/#jaxtyping-compatibility>`_.

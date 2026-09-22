@@ -1,4 +1,4 @@
-"""Shape inference for the public sparse factories; list sizes remain gradual."""
+"""Shape inference for public sparse factories; list sizes are gradual."""
 
 from typing import TypeVar, overload
 

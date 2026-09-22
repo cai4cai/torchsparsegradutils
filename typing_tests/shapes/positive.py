@@ -11,6 +11,7 @@ from torchsparsegradutils import (
     SparseCOOTensor,
     SparseCSCTensor,
     SparseCSRTensor,
+    gather_mm,
     is_sparse_coo,
     is_sparse_csr,
     require_sparse_coo_or_csr,
@@ -21,6 +22,7 @@ from torchsparsegradutils import (
     sparse_mm,
     sparse_triangular_solve,
 )
+from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
 from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_coo_matrix,
     generate_random_sparse_csr_matrix,
@@ -29,8 +31,6 @@ from torchsparsegradutils.utils.random_sparse import (
     generate_random_sparse_triangular_coo_matrix,
     generate_random_sparse_triangular_csr_matrix,
     make_spd_sparse,
-    rand_sparse,
-    rand_sparse_tri,
 )
 
 coo = generate_random_sparse_coo_matrix((3, 4), 5)
@@ -50,6 +50,7 @@ assert_type(csr.to_sparse_coo(), SparseCOOTensor[[3, 4]])
 assert_type(csr.to_sparse_csc(), SparseCSCTensor[[3, 4]])
 assert_type(require_sparse_csc(csr.transpose(0, 1)), SparseCSCTensor[[4, 3]])
 assert_type(csr.T, Tensor)
+assert_type(gather_mm(torch.randn(3, 4), torch.randn(2, 4, 5), torch.tensor([0, 1, 0])), Tensor)
 
 assert_type(rand_sparse((3, 4), 5), SparseCOOTensor[[3, 4]])
 assert_type(rand_sparse((3, 4), 5, layout=torch.sparse_csr), SparseCOOTensor[[3, 4]] | SparseCSRTensor[[3, 4]])

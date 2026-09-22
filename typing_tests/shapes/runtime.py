@@ -62,9 +62,16 @@ def check_stub_parameters() -> None:
 
     stub_root = Path(tsgu.__file__).parent / "_shape_stubs" / "torchsparsegradutils-stubs"
     for path in sorted(stub_root.rglob("*.pyi")):
-        module_name = "torchsparsegradutils." + ".".join(path.relative_to(stub_root).with_suffix("").parts)
+        parts = path.relative_to(stub_root).with_suffix("").parts
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+        module_name = ".".join(("torchsparsegradutils", *parts))
         module = importlib.import_module(module_name)
-        for node in ast.parse(path.read_text()).body:
+        nodes = ast.parse(path.read_text()).body
+        if path.name == "__init__.pyi":
+            exports = {alias.asname for node in nodes if isinstance(node, ast.ImportFrom) for alias in node.names}
+            assert exports == set(module.__all__), (module_name, exports, module.__all__)
+        for node in nodes:
             if not isinstance(node, ast.FunctionDef):
                 continue
             signature = inspect.signature(getattr(module, node.name))
