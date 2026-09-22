@@ -85,12 +85,10 @@ required-version = "==1.3.1"
 preset = "default"
 python-version = "3.10"
 project-includes = ["torchsparsegradutils/**/*.py"]
-project-excludes = [
-    "torchsparsegradutils/benchmarks/**",
-    "torchsparsegradutils/tests/**",
-]
+project-excludes = ["torchsparsegradutils/benchmarks/**"]
+search-path = ["torchsparsegradutils/tests"]
 use-ignore-files = false
-ignore-missing-imports = ["cupy.*", "cupyx.*", "dgl.*"]
+ignore-missing-imports = ["cupy.*", "cupyx.*", "dgl.*", "matplotlib.*"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"

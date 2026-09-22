@@ -1,7 +1,9 @@
+from typing import cast
+
 import pytest
 import torch
 
-from torchsparsegradutils.utils.linear_cg import linear_cg
+from torchsparsegradutils.utils.linear_cg import CGInfo, linear_cg
 
 
 # Test basic CG solve for vectors and matrices
@@ -38,8 +40,9 @@ def test_cg_with_tridiag():
     matrix = matrix.matmul(matrix.mT)
     matrix.div_(torch.linalg.vector_norm(matrix)).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
     rhs = torch.randn(size, 50, dtype=torch.float64)
-    solves, t_mats = linear_cg(
-        matrix.matmul, rhs=rhs, n_tridiag=5, max_tridiag_iter=10, max_iter=size, tolerance=0, eps=1e-15
+    solves, t_mats = cast(
+        tuple[torch.Tensor, torch.Tensor],
+        linear_cg(matrix.matmul, rhs=rhs, n_tridiag=5, max_tridiag_iter=10, max_iter=size, tolerance=0, eps=1e-15),
     )
     chol = torch.linalg.cholesky(matrix)
     actual = torch.cholesky_solve(rhs, chol)
@@ -75,8 +78,9 @@ def test_batch_cg_with_tridiag(batch):
     matrix.div_(torch.linalg.vector_norm(matrix)).add_(torch.eye(size, dtype=torch.float64) * 1e-1)
     b_shape = (batch, size, 10) if batch else (size, 10)
     rhs = torch.randn(*b_shape, dtype=torch.float64)
-    solves, t_mats = linear_cg(
-        matrix.matmul, rhs=rhs, n_tridiag=8, max_iter=size, max_tridiag_iter=10, tolerance=0, eps=1e-30
+    solves, t_mats = cast(
+        tuple[torch.Tensor, torch.Tensor],
+        linear_cg(matrix.matmul, rhs=rhs, n_tridiag=8, max_iter=size, max_tridiag_iter=10, tolerance=0, eps=1e-30),
     )
     chol = torch.linalg.cholesky(matrix)
     actual = torch.cholesky_solve(rhs, chol)
@@ -264,14 +268,17 @@ def test_tridiagonalization_can_return_info():
     matrix = torch.diag(torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64))
     rhs = torch.ones(3, dtype=torch.float64)
 
-    solution, tridiagonal, info = linear_cg(
-        matrix,
-        rhs,
-        n_tridiag=1,
-        tolerance=0,
-        max_iter=3,
-        max_tridiag_iter=3,
-        return_info=True,
+    solution, tridiagonal, info = cast(
+        tuple[torch.Tensor, torch.Tensor, CGInfo],
+        linear_cg(
+            matrix,
+            rhs,
+            n_tridiag=1,
+            tolerance=0,
+            max_iter=3,
+            max_tridiag_iter=3,
+            return_info=True,
+        ),
     )
 
     torch.testing.assert_close(solution, torch.linalg.solve(matrix, rhs), rtol=1e-12, atol=1e-12)

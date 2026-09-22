@@ -30,8 +30,10 @@ def test_sparse_mm_example():
     # The operation preserves sparsity in gradients
     loss = result.sum()
     loss.backward()
-    assert A.grad.is_sparse, "A gradient should be sparse"
-    assert A.grad._nnz() == 3, f"Expected 3 non-zeros, got {A.grad._nnz()}"
+    A_grad = A.grad
+    assert A_grad is not None
+    assert A_grad.is_sparse, "A gradient should be sparse"
+    assert A_grad._nnz() == 3, f"Expected 3 non-zeros, got {A_grad._nnz()}"
 
 
 def test_batched_operations():
@@ -42,8 +44,8 @@ def test_batched_operations():
     batch_size = 2
 
     # Method 1: Stack individual sparse matrices
-    A1 = torch.sparse_coo_tensor([[0, 1], [0, 1]], [1.0, 2.0], (2, 2))
-    A2 = torch.sparse_coo_tensor([[0, 1], [1, 0]], [3.0, 4.0], (2, 2))
+    A1 = torch.sparse_coo_tensor(torch.tensor([[0, 1], [0, 1]]), torch.tensor([1.0, 2.0]), (2, 2))
+    A2 = torch.sparse_coo_tensor(torch.tensor([[0, 1], [1, 0]]), torch.tensor([3.0, 4.0]), (2, 2))
     A_batch = torch.stack([A1, A2])  # Shape: (2, 2, 2)
 
     # Dense batch

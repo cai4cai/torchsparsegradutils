@@ -165,7 +165,7 @@ def create_pairwise_encoder_2d(
     layout: torch.layout,
     index_dtype: torch.dtype,
     device: torch.device,
-    parameterization: str = None,
+    parameterization: str | None = None,
 ) -> PairwiseEncoder:
     """Create a 2D PairwiseEncoder for testing."""
     name, radius, channels, height, width, _ = config
@@ -193,7 +193,7 @@ def create_pairwise_encoder_3d(
     layout: torch.layout,
     index_dtype: torch.dtype,
     device: torch.device,
-    parameterization: str = None,
+    parameterization: str | None = None,
 ) -> PairwiseEncoder:
     """Create a 3D PairwiseEncoder for testing."""
     name, radius, channels, height, depth, width, _ = config
@@ -222,7 +222,7 @@ def create_parameter_tensor_2d(
     value_dtype: torch.dtype,
     device: torch.device,
     requires_grad: bool = True,
-    parameterization: str = None,
+    parameterization: str | None = None,
 ) -> torch.Tensor:
     """Create parameter tensor for 2D configuration."""
     name, radius, channels, height, width, sparsity_factor = config
@@ -256,7 +256,7 @@ def create_parameter_tensor_3d(
     value_dtype: torch.dtype,
     device: torch.device,
     requires_grad: bool = True,
-    parameterization: str = None,
+    parameterization: str | None = None,
 ) -> torch.Tensor:
     """Create parameter tensor for 3D configuration."""
     name, radius, channels, height, depth, width, sparsity_factor = config
@@ -322,7 +322,7 @@ def check_memory_usage(device: torch.device) -> Dict[str, float]:
             "max_allocated_mb": torch.cuda.max_memory_allocated(device) / 1024**2,
         }
     else:
-        memory_stats = {"allocated_mb": 0, "reserved_mb": 0, "max_allocated_mb": 0}
+        memory_stats = {"allocated_mb": 0.0, "reserved_mb": 0.0, "max_allocated_mb": 0.0}
 
     return memory_stats
 
@@ -505,10 +505,12 @@ def test_integration_gradient_flow_consistency_2d(
         # Backward pass
         loss.backward()
 
-        gradient_norms.append(torch.linalg.vector_norm(params.grad).item())
+        params_grad = params.grad
+        assert params_grad is not None
+        gradient_norms.append(torch.linalg.vector_norm(params_grad).item())
 
         # Zero gradients
-        params.grad.zero_()
+        params_grad.zero_()
 
     # Check that gradients exist and are reasonable
     assert all(norm > 0 for norm in gradient_norms), "Some gradients are zero"
@@ -551,10 +553,12 @@ def test_integration_gradient_flow_consistency_3d(
         # Backward pass
         loss.backward()
 
-        gradient_norms.append(torch.linalg.vector_norm(params.grad).item())
+        params_grad = params.grad
+        assert params_grad is not None
+        gradient_norms.append(torch.linalg.vector_norm(params_grad).item())
 
         # Zero gradients
-        params.grad.zero_()
+        params_grad.zero_()
 
     # Check that gradients exist and are reasonable
     assert all(norm > 0 for norm in gradient_norms), "Some gradients are zero"

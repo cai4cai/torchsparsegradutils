@@ -124,7 +124,7 @@ def test_keepdim_rejected_for_non_tuple_layouts(device):
 def test_unknown_output_layout_raises(device):
     sp = _make_dense(device, torch.float64, seed=3).to_sparse_coo()
     with pytest.raises(ValueError, match="unknown output_layout"):
-        sparse_bidir_logsumexp(sp, output_layout="bogus")
+        sparse_bidir_logsumexp(sp, output_layout="bogus")  # type: ignore[call-overload]
 
 
 def test_all_negative_values_stability_both_axes(fwd_layout, device, include_zeros):
