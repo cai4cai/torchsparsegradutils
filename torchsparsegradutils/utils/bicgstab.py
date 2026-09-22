@@ -2,6 +2,7 @@
 # Modifications to fit torchsparsegradutils
 
 import logging
+import warnings
 from typing import Callable, NamedTuple, Optional, Union
 
 import torch
@@ -12,9 +13,9 @@ _null_log.disabled = True
 
 
 class BICGSTABSettings(NamedTuple):
-    matvec_max: Optional[int] = None  # Max number of matvecs (default 2n)
+    matvec_max: Optional[int] = None  # Nonnegative max matvecs per RHS (default 2n)
     abstol: float = 1.0e-8  # Absolute stopping tolerance
-    reltol: float = 1.0e-6  # Relative stopping tolerance
+    reltol: float = 1.0e-6  # Relative stopping tolerance, scaled by the RHS 2-norm
     precon: Optional[Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]]] = None
     logger: logging.Logger = _null_log
 
@@ -43,7 +44,9 @@ def bicgstab(
     initial_guess : torch.Tensor, optional, shape like ``rhs``
         Initial guess. If ``None``, zero initialization is used.
     settings : BICGSTABSettings, optional
-        Convergence tolerances, maximum matvecs, optional preconditioner and logger.
+        Convergence tolerances, maximum matvecs per RHS, optional preconditioner and logger.
+        A zero matvec budget returns the initial iterate without evaluating the operator
+        or checking convergence, and emits a warning. Negative budgets are invalid.
 
     Returns
     -------
@@ -52,12 +55,21 @@ def bicgstab(
 
     Raises
     ------
+    ValueError
+        If ``settings.matvec_max`` is negative.
     RuntimeError
         If ``matmul_closure`` is neither tensor nor callable, or if the
         ``precon`` is neither tensor nor callable.
 
     Notes
     -----
+    Convergence uses the residual 2-norm with threshold
+    :math:`\max(\mathrm{abstol}, \mathrm{reltol} \lVert b \rVert_2)` for each RHS
+    column, matching SciPy's BiCGSTAB tolerance convention. The threshold is
+    independent of the initial guess: a warm start already within tolerance needs
+    only its initial residual check. For a zero RHS, only ``abstol`` applies.
+    The matvec budget can terminate the solve before this tolerance is met.
+
     Per iteration (unpreconditioned) BiCGSTAB [1a]_ uses ~2 matvecs, several dot products,
     and vector updates. The algorithm can experience breakdown when certain inner
     products or denominators vanish (e.g., :math:`\langle r_0, v \rangle = 0` or :math:`\langle t, t \rangle = 0`).
@@ -109,6 +121,32 @@ def bicgstab(
     ... )
     >>> x = bicgstab(A.matmul, b, settings=settings_precond)
     """
+    if settings.matvec_max is not None and settings.matvec_max < 0:
+        raise ValueError("settings.matvec_max must be nonnegative or None")
+    if torch.is_tensor(matmul_closure):
+        op = matmul_closure.matmul
+    elif callable(matmul_closure):
+        op = matmul_closure
+    else:
+        raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
+
+    if settings.precon is None:
+        precon = None
+    elif torch.is_tensor(settings.precon):
+        precon = settings.precon.matmul
+    elif callable(settings.precon):
+        precon = settings.precon
+    else:
+        raise RuntimeError("settings.precon must be a tensor, or a callable object!")
+
+    if settings.matvec_max == 0:
+        warnings.warn(
+            "matvec_max=0: returning the initial iterate without evaluating the operator or checking convergence.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return torch.zeros_like(rhs) if initial_guess is None else initial_guess.clone()
+
     # support multiple right‐hand sides by solving each column separately
     if rhs.dim() > 1:
         cols = rhs.shape[1]
@@ -126,22 +164,6 @@ def bicgstab(
     n = rhs.shape[0]
     nMatvec = 0
 
-    if torch.is_tensor(matmul_closure):
-        op = matmul_closure.matmul
-    elif callable(matmul_closure):
-        op = matmul_closure
-    else:
-        raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
-
-    if settings.precon is None:
-        precon = None
-    elif torch.is_tensor(settings.precon):
-        precon = settings.precon.matmul
-    elif callable(settings.precon):
-        precon = settings.precon
-    else:
-        raise RuntimeError("settings.precon must be a tensor, or a callable object!")
-
     # Initial guess is zero unless one is supplied
     res_device = rhs.device
     res_dtype = rhs.dtype
@@ -154,16 +176,14 @@ def bicgstab(
     # matvec_max = kwargs.get('matvec_max', 2*n)
     matvec_max = 2 * n if settings.matvec_max is None else settings.matvec_max
 
-    # Initial residual is the fixed vector
-    r0 = rhs.clone()
-    if initial_guess is None:
-        r0 = rhs - op(x)
-        nMatvec += 1
+    # The fixed shadow residual must reflect the supplied initial iterate.
+    r0 = rhs - op(x)
+    nMatvec += 1
 
     rho = alpha = omega = 1.0
     rho_next = torch.dot(r0, r0)
     residNorm = residNorm0 = torch.abs(torch.sqrt(rho_next))
-    threshold = max(settings.abstol, settings.reltol * residNorm0)
+    threshold = max(settings.abstol, settings.reltol * torch.linalg.vector_norm(rhs))
 
     finished = residNorm <= threshold or nMatvec >= matvec_max
 
