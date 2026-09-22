@@ -4,7 +4,6 @@ from typing import Tuple
 import torch
 
 # Import everything from the new module for backward compatibility
-from .pairwise_encoder import calc_pariwise_coo_indices  # typo version for backward compatibility
 from .pairwise_encoder import (
     PairwiseEncoder,
     _gen_coords,
@@ -14,6 +13,7 @@ from .pairwise_encoder import (
     _trim_nd,
     calc_pairwise_coo_indices,
     calc_pairwise_coo_indices_nd,
+    calc_pariwise_coo_indices,  # typo version for backward compatibility
 )
 
 

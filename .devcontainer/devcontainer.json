@@ -26,23 +26,16 @@
                 "python.testing.pytestEnabled": true,
                 "editor.formatOnSave": true,
                 "editor.codeActionsOnSave": {
-                    "source.organizeImports": "explicit"
+                    "source.fixAll.ruff": "explicit",
+                    "source.organizeImports.ruff": "explicit"
                 },
                 "[python]": {
-                    "editor.defaultFormatter": "ms-python.black-formatter",
+                    "editor.defaultFormatter": "charliermarsh.ruff",
                     "editor.codeActionsOnSave": {
-                        "source.organizeImports": "explicit"
+                        "source.fixAll.ruff": "explicit",
+                        "source.organizeImports.ruff": "explicit"
                     }
                 },
-                "isort.args": [
-                    "--profile",
-                    "black",
-                    "--line-length",
-                    "120"
-                ],
-                "python.linting.enabled": true,
-                "python.linting.flake8Enabled": true,
-                "python.linting.pylintEnabled": false,
                 "python.languageServer": "Pylance",
                 "python.analysis.indexing": true,
                 "python.analysis.logLevel": "Trace"
@@ -56,9 +49,7 @@
                 "GitHub.vscode-github-actions",
                 "mhutchie.git-graph",
                 "waderyan.gitblame",
-                "ms-python.black-formatter",
-                "ms-python.flake8",
-                "ms-python.isort",
+                "charliermarsh.ruff",
                 "ReprEng.csv",
                 "peakchen90.open-html-in-browser",
                 "openai.chatgpt"

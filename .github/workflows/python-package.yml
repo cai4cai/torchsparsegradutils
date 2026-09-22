@@ -36,16 +36,6 @@ jobs:
           pip install torch==${{ matrix.torch-version }}
         fi
         pip install -r requirements-ci.txt
-    - name: Lint check with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --show-source --statistics
-    - name: Check import sorting with isort
-      run: |
-        isort --check-only --diff .
-    - name: Check code formatting with black
-      run: |
-        black --check .
     - name: Run pytest
       run: |
         python -m pytest --ignore=torchsparsegradutils/tests/test_doctests.py

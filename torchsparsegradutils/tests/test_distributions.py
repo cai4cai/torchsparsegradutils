@@ -210,24 +210,24 @@ def test_rsample_forward_cov(device, layout, sizes, parameterization, value_dtyp
         cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
             sample_cov.unsqueeze(0), covariance_ref.unsqueeze(0), n_samples, confidence_level=cov_conf
         )
-        assert (
-            cov_test_result.item()
-        ), f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
+        assert cov_test_result.item(), (
+            f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
+        )
     else:
         # Batched case
         mean_test_result, t2_stat, t2_threshold = mean_hotelling_t2_test(
             sample_mean, dist.loc, sample_cov, n_samples, confidence_level=mean_conf
         )
-        assert (
-            mean_test_result.all()
-        ), f"Mean test failed for some batch elements: max T²={t2_stat.max().item():.6f} > threshold={t2_threshold:.6f}"
+        assert mean_test_result.all(), (
+            f"Mean test failed for some batch elements: max T²={t2_stat.max().item():.6f} > threshold={t2_threshold:.6f}"
+        )
 
         cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
             sample_cov, covariance_ref, n_samples, confidence_level=cov_conf
         )
-        assert (
-            cov_test_result.all()
-        ), f"Covariance test failed for some batch elements: max T_N={T_N_stat.max().item():.6f} > threshold={chi2_threshold:.6f}"
+        assert cov_test_result.all(), (
+            f"Covariance test failed for some batch elements: max T_N={T_N_stat.max().item():.6f} > threshold={chi2_threshold:.6f}"
+        )
 
 
 def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dtype, index_dtype):
@@ -262,17 +262,17 @@ def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dty
             n_samples,
             confidence_level=cov_conf,
         )
-        assert (
-            cov_test_result.item()
-        ), f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
+        assert cov_test_result.item(), (
+            f"Covariance test failed: T_N={T_N_stat.item():.6f} > threshold={chi2_threshold:.6f}"
+        )
     else:
         # Batched case
         mean_test_result, t2_stat, t2_threshold = mean_hotelling_t2_test(
             sample_mean, dist.loc, sample_cov, n_samples, confidence_level=mean_conf
         )
-        assert (
-            mean_test_result.all()
-        ), f"Mean test failed for some batch elements: max T²={t2_stat.max().item():.6f} > threshold={t2_threshold:.6f}"
+        assert mean_test_result.all(), (
+            f"Mean test failed for some batch elements: max T²={t2_stat.max().item():.6f} > threshold={t2_threshold:.6f}"
+        )
 
         cov_test_result, T_N_stat, chi2_threshold = cov_nagao_test(
             sample_cov,
@@ -280,9 +280,9 @@ def test_rsample_forward_prec(device, layout, sizes, parameterization, value_dty
             n_samples,
             confidence_level=cov_conf,
         )
-        assert (
-            cov_test_result.all()
-        ), f"Covariance test failed for some batch elements: max T_N={T_N_stat.max().item():.6f} > threshold={chi2_threshold:.6f}"
+        assert cov_test_result.all(), (
+            f"Covariance test failed for some batch elements: max T_N={T_N_stat.max().item():.6f} > threshold={chi2_threshold:.6f}"
+        )
 
 
 def test_parameterization_property(device, layout, sizes, parameterization, value_dtype, index_dtype):

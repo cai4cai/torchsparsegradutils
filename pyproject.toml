@@ -43,9 +43,7 @@ docs = [
 dev = [
     "pytest",
     "pytest-cov",
-    "black",
-    "isort",
-    "flake8",
+    "ruff==0.16.6",
 ]
 
 [project.urls]
@@ -62,39 +60,21 @@ include-package-data = true
 [tool.setuptools.packages.find]
 exclude = ["tests*"]
 
-[tool.black]
+[tool.ruff]
 line-length = 120
-target-version = ['py310', 'py311', 'py312']
-include = '\.pyi?$'
-exclude = '''
-(
-  /(
-    # exclude a few common directories in the root of the project
-      \.eggs
-    | \.git
-    | \.hg
-    | \.mypy_cache
-    | \.tox
-    | \.venv
-    | \.pytype
-    | _build
-    | buck-out
-    | build
-    | dist
-  )/
-  # also separately exclude other files if needed
-  #| some_file
-)
-'''
+target-version = "py310"
+include = ["*.py", "*.pyi"]
 
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-line_length = 120
-known_first_party = ["torchsparsegradutils"]
-force_grid_wrap = 0
-combine_as_imports = true
-include_trailing_comma = true
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "C90"]
+ignore = ["E203", "E266", "E501", "F401", "E731", "E402"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.ruff.lint.isort]
+known-first-party = ["torchsparsegradutils"]
+combine-as-imports = true
 
 [tool.pytest.ini_options]
 minversion = "6.0"
