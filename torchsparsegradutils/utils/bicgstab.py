@@ -193,6 +193,9 @@ def bicgstab(
     settings.logger.info(hdr)
     settings.logger.info("-" * len(hdr))
 
+    if finished:
+        return x
+
     r = r0.clone()
     p = torch.zeros(n, dtype=res_dtype, device=res_device)
     v = torch.zeros(n, dtype=res_dtype, device=res_device)
