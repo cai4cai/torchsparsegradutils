@@ -114,11 +114,19 @@ def test_solve_backward_cupy(layout, device, value_dtype, index_dtype, solver, s
     grad_out = torch.rand_like(X1)
     X1.backward(grad_out)
     X2.backward(grad_out)
-    nz = A_sp.grad.to_dense() != 0
+    A_sp_grad = A_sp.grad
+    Ad_grad = Ad.grad
+    Bd_grad = Bd.grad
+    Bd2_grad = Bd2.grad
+    assert A_sp_grad is not None
+    assert Ad_grad is not None
+    assert Bd_grad is not None
+    assert Bd2_grad is not None
+    nz = A_sp_grad.to_dense() != 0
 
     atol, rtol = Tolerances.iterative(value_dtype)
-    assert torch.allclose(A_sp.grad.to_dense()[nz], Ad.grad[nz], atol=atol, rtol=rtol)
-    assert torch.allclose(Bd.grad, Bd2.grad, atol=atol, rtol=rtol)
+    assert torch.allclose(A_sp_grad.to_dense()[nz], Ad_grad[nz], atol=atol, rtol=rtol)
+    assert torch.allclose(Bd_grad, Bd2_grad, atol=atol, rtol=rtol)
 
 
 def test_cupy_cg_kwargs(device, value_dtype, layout):
@@ -214,10 +222,18 @@ def test_cupy_kwargs_backward_pass(device, value_dtype, layout):
     res_test.backward(grad_output)
 
     # Check gradients
-    nz_mask = A_sp1.grad.to_dense() != 0.0
+    A_sp1_grad = A_sp1.grad
+    Ad2_grad = Ad2.grad
+    Bd1_grad = Bd1.grad
+    Bd2_grad = Bd2.grad
+    assert A_sp1_grad is not None
+    assert Ad2_grad is not None
+    assert Bd1_grad is not None
+    assert Bd2_grad is not None
+    nz_mask = A_sp1_grad.to_dense() != 0.0
     atol, rtol = Tolerances.iterative(value_dtype)
-    assert torch.allclose(A_sp1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=atol, rtol=rtol)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=atol, rtol=rtol)
+    assert torch.allclose(A_sp1_grad.to_dense()[nz_mask], Ad2_grad[nz_mask], atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1_grad, Bd2_grad, atol=atol, rtol=rtol)
 
 
 def test_cupy_multiple_kwargs(device, value_dtype):

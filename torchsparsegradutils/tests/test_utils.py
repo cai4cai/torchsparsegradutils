@@ -175,8 +175,12 @@ def test_sparse_block_diag_coo_backward(device, size, nnz):
     D = torch.block_diag(*A_d)
     torch.sparse.sum(B).backward()
     D.sum().backward()
-    mask = A.grad.to_dense() != 0
-    assert torch.allclose(A.grad.to_dense()[mask], A_d.grad[mask])
+    A_grad = A.grad
+    A_d_grad = A_d.grad
+    assert A_grad is not None
+    assert A_d_grad is not None
+    mask = A_grad.to_dense() != 0
+    assert torch.allclose(A_grad.to_dense()[mask], A_d_grad[mask])
 
 
 # Test sparse_block_diag error cases
@@ -198,11 +202,11 @@ def test_sparse_block_diag_errors():
     with pytest.raises(ValueError):
         sparse_block_diag(coo)
     with pytest.raises(TypeError):
-        sparse_block_diag("not a list or tuple")
+        sparse_block_diag("not a list or tuple")  # type: ignore[arg-type]
     # generate a small sparse COO without specifying device (defaults to CPU)
     tensor1 = generate_random_sparse_coo_matrix((5, 5), 5)
     with pytest.raises(TypeError):
-        sparse_block_diag(tensor1, "bad")
+        sparse_block_diag(tensor1, "bad")  # type: ignore[arg-type]
 
 
 # Test sparse_block_diag_split

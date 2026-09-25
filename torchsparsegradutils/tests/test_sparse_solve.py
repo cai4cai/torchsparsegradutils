@@ -232,9 +232,17 @@ def test_solve_backward_routine(layout, solve, device, value_dtype, index_dtype,
     res_test.backward(grad_output)
 
     atol, rtol = Tolerances.iterative(value_dtype)
-    nz_mask = As1.grad.to_dense() != 0.0
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=atol, rtol=rtol)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=atol, rtol=rtol)
+    As1_grad = As1.grad
+    Ad2_grad = Ad2.grad
+    Bd1_grad = Bd1.grad
+    Bd2_grad = Bd2.grad
+    assert As1_grad is not None
+    assert Ad2_grad is not None
+    assert Bd1_grad is not None
+    assert Bd2_grad is not None
+    nz_mask = As1_grad.to_dense() != 0.0
+    assert torch.allclose(As1_grad.to_dense()[nz_mask], Ad2_grad[nz_mask], atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1_grad, Bd2_grad, atol=atol, rtol=rtol)
 
 
 def test_linear_cg_kwargs(device, value_dtype, layout):
@@ -321,9 +329,17 @@ def test_kwargs_backward_pass(device, value_dtype, layout):
     res_test.backward(grad_output)
 
     # Check gradients
-    nz_mask = As1.grad.to_dense() != 0.0
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=atol, rtol=rtol)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=atol, rtol=rtol)
+    As1_grad = As1.grad
+    Ad2_grad = Ad2.grad
+    Bd1_grad = Bd1.grad
+    Bd2_grad = Bd2.grad
+    assert As1_grad is not None
+    assert Ad2_grad is not None
+    assert Bd1_grad is not None
+    assert Bd2_grad is not None
+    nz_mask = As1_grad.to_dense() != 0.0
+    assert torch.allclose(As1_grad.to_dense()[nz_mask], Ad2_grad[nz_mask], atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1_grad, Bd2_grad, atol=atol, rtol=rtol)
 
 
 def test_multiple_kwargs(device, value_dtype):

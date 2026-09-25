@@ -140,7 +140,9 @@ def test_all_negative_values_stability(fwd_layout, device, dim, include_zeros):
 def test_all_negative_single_value(device):
     """Minimal case: a lone very-negative value with a structural zero returns ~0,
     not +inf (the structural zero's exp(0)=1 dominates)."""
-    x = torch.sparse_coo_tensor([[0], [0]], [-1000.0], (1, 2), device=device).coalesce()
+    x = torch.sparse_coo_tensor(
+        torch.tensor([[0], [0]], device=device), torch.tensor([-1000.0], device=device), (1, 2)
+    ).coalesce()
     _assert_close(sparse_logsumexp(x, dim=1, include_zeros=True), torch.logsumexp(x.to_dense(), dim=1), torch.float32)
 
 
@@ -258,8 +260,12 @@ def test_gradient(layout, device):
     # Reference: same reduction on the dense tensor, gradient read at the nnz.
     dense_leaf = dense.clone().requires_grad_(True)
     torch.logsumexp(dense_leaf, dim=1).sum().backward()
-    expected = dense_leaf.grad[dense != 0]
-    _assert_close(vals.grad, expected, torch.float64)
+    dense_grad = dense_leaf.grad
+    vals_grad = vals.grad
+    assert dense_grad is not None
+    assert vals_grad is not None
+    expected = dense_grad[dense != 0]
+    _assert_close(vals_grad, expected, torch.float64)
 
 
 def test_unsupported_rank_raises():

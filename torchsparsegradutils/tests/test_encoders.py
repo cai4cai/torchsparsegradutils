@@ -432,7 +432,9 @@ def test_PVE_to_device(layout, device):
     elif layout == torch.sparse_csr:
         assert encoder.crow_indices.device.type == device.type
         assert encoder.col_indices.device.type == device.type
-        assert encoder.csr_permutation.device.type == device.type
+        csr_permutation = encoder.csr_permutation
+        assert csr_permutation is not None
+        assert csr_permutation.device.type == device.type
 
 
 # Test based on expected indices in pairwise_coo_indices.yaml
@@ -599,7 +601,7 @@ def test_pariwise_coo_indices_visually():
     channel_voxel_relation_list = ["indep", "intra", "inter"]
 
     # Get the tab20 colormap
-    cmap_tab10 = plt.cm.get_cmap("tab10", 10)
+    cmap_tab10 = plt.get_cmap("tab10", 10)
 
     # Create a new colormap from the existing colormap
     cmaplist = [cmap_tab10(i) for i in range(cmap_tab10.N)] * 10

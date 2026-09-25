@@ -174,12 +174,20 @@ def test_tri_solve_backward_routine(layout, device, value_dtype, index_dtype, sh
     res_ref.backward(grad_output)
     res_test.backward(grad_output)
 
-    nz_mask = As1.grad.to_dense() != 0.0
+    As1_grad = As1.grad
+    Ad_ref_grad = Ad_ref.grad
+    Bd1_grad = Bd1.grad
+    Bd_ref_grad = Bd_ref.grad
+    assert As1_grad is not None
+    assert Ad_ref_grad is not None
+    assert Bd1_grad is not None
+    assert Bd_ref_grad is not None
+    nz_mask = As1_grad.to_dense() != 0.0
 
     atol, rtol = Tolerances.direct(value_dtype)
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad_ref.grad[nz_mask], atol=atol, rtol=rtol)
+    assert torch.allclose(As1_grad.to_dense()[nz_mask], Ad_ref_grad[nz_mask], atol=atol, rtol=rtol)
 
-    assert torch.allclose(Bd1.grad, Bd_ref.grad, atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1_grad, Bd_ref_grad, atol=atol, rtol=rtol)
 
 
 def test_sparse_triangular_solve_does_not_emit_upstream_deprecation_warning():

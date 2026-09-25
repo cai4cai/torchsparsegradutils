@@ -110,22 +110,30 @@ def test_sprase_mm_backward(layout, device, value_dtype, index_dtype, shapes, is
     res1.backward(grad_output)
     res2.backward(grad_output)
 
-    nz_mask = As1.grad.to_dense() != 0.0
+    As1_grad = As1.grad
+    Ad2_grad = Ad2.grad
+    Bd1_grad = Bd1.grad
+    Bd2_grad = Bd2.grad
+    assert As1_grad is not None
+    assert Ad2_grad is not None
+    assert Bd1_grad is not None
+    assert Bd2_grad is not None
+    nz_mask = As1_grad.to_dense() != 0.0
 
     # Check sparsity of gradientns
-    assert As1.grad.layout == layout
+    assert As1_grad.layout == layout
     # NOTE: _nnz per batch element for CSR and for whole tensor in COO
     if layout is torch.sparse_csr or len(As1.shape) == 2:
-        assert As1.grad._nnz() == A_nnz
+        assert As1_grad._nnz() == A_nnz
     elif layout is torch.sparse_coo and len(As1.shape) == 3:  # ie batched
-        assert As1.grad._nnz() == A_nnz * As1.shape[0]
+        assert As1_grad._nnz() == A_nnz * As1.shape[0]
     else:
         raise ValueError(f"Unsupported layout: {layout} or shape: {As1.shape}")
 
     # Check gradient values
     atol, rtol = Tolerances.direct(value_dtype)
-    assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], atol=atol, rtol=rtol)
-    assert torch.allclose(Bd1.grad, Bd2.grad, atol=atol, rtol=rtol)
+    assert torch.allclose(As1_grad.to_dense()[nz_mask], Ad2_grad[nz_mask], atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1_grad, Bd2_grad, atol=atol, rtol=rtol)
 
 
 ################################## Conditional Gradient Tests: #####################################
@@ -283,7 +291,9 @@ def test_sparse_mm_memory_advantage(device, value_dtype, index_dtype, mem_shapes
     # )
 
     # sanity: we still got sparse grads
-    assert A2.grad.layout == layout
+    A2_grad = A2.grad
+    assert A2_grad is not None
+    assert A2_grad.layout == layout
 
     # confirm memory saving
     assert mem_tsgu_sparse_mm < mem_torch_sparse_mm, (

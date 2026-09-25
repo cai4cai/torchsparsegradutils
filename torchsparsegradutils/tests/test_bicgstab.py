@@ -166,7 +166,14 @@ def test_bicgstab_validates_arguments_before_budget_return(device, matvec_max, m
     )
 
     with pytest.raises(RuntimeError, match=message):
-        bicgstab(operator, rhs, settings=BICGSTABSettings(matvec_max=matvec_max, precon=precon))
+        bicgstab(
+            operator,  # pyrefly: ignore [bad-argument-type]
+            rhs,
+            settings=BICGSTABSettings(
+                matvec_max=matvec_max,
+                precon=precon,  # pyrefly: ignore [bad-argument-type]
+            ),
+        )
 
 
 def test_bicgstab_accepts_warm_start_within_rhs_tolerance(device):
