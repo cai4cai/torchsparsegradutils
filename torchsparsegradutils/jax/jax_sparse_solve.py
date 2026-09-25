@@ -5,11 +5,13 @@ import jax.numpy as jnp
 import jax.scipy.sparse.linalg
 import torch
 
+from torchsparsegradutils.sparse_types import SparseCOOTensor, SparseCSRTensor
+
 from .jax_bindings import j2t as _j2t, t2j as _t2j, t2j_coo as _t2j_coo, t2j_csr as _t2j_csr
 
 
 def sparse_solve_j4t(
-    A: torch.Tensor,
+    A: SparseCOOTensor | SparseCSRTensor,
     B: torch.Tensor,
     solve: Optional[Callable[..., Tuple["jax.Array", Any]]] = None,
     transpose_solve: Optional[Callable[..., Tuple["jax.Array", Any]]] = None,

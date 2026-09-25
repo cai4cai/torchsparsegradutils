@@ -2,10 +2,11 @@ from typing import cast
 
 import torch
 
+from torchsparsegradutils.sparse_types import SparseCOOTensor, SparseCSRTensor
 from torchsparsegradutils.utils import sparse_block_diag, sparse_block_diag_split, stack_csr
 
 
-def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+def sparse_mm(A: SparseCOOTensor | SparseCSRTensor, B: torch.Tensor) -> torch.Tensor:
     r"""Sparse–dense matrix multiplication with memory-efficient gradients.
 
      Computes :math:`\mathbf{C} = \mathbf{A}\,\mathbf{B}` where

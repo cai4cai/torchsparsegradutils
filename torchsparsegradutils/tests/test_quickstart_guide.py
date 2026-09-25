@@ -8,6 +8,8 @@ It is integrated with pytest and runs as part of the CI pipeline.
 import pytest
 import torch
 
+from torchsparsegradutils import require_sparse_coo_or_csr
+
 
 def test_sparse_mm_example():
     """Test the basic sparse matrix multiplication example from quickstart guide."""
@@ -16,7 +18,7 @@ def test_sparse_mm_example():
     # Create a sparse matrix in COO format
     indices = torch.tensor([[0, 1, 1], [2, 0, 2]], dtype=torch.int64)
     values = torch.tensor([3.0, 4.0, 5.0])
-    A = torch.sparse_coo_tensor(indices, values, (2, 3))
+    A = require_sparse_coo_or_csr(torch.sparse_coo_tensor(indices, values, (2, 3)))
     A.requires_grad_(True)
 
     # Create a dense matrix
@@ -46,7 +48,7 @@ def test_batched_operations():
     # Method 1: Stack individual sparse matrices
     A1 = torch.sparse_coo_tensor(torch.tensor([[0, 1], [0, 1]]), torch.tensor([1.0, 2.0]), (2, 2))
     A2 = torch.sparse_coo_tensor(torch.tensor([[0, 1], [1, 0]]), torch.tensor([3.0, 4.0]), (2, 2))
-    A_batch = torch.stack([A1, A2])  # Shape: (2, 2, 2)
+    A_batch = require_sparse_coo_or_csr(torch.stack([A1, A2]))  # Shape: (2, 2, 2)
 
     # Dense batch
     B = torch.randn(batch_size, 2, 3)

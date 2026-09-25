@@ -4,6 +4,7 @@ import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
+from torchsparsegradutils import require_sparse_coo_or_csr
 from torchsparsegradutils.sparse_solve import sparse_generic_solve
 from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, linear_cg, minres
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
@@ -309,7 +310,7 @@ def test_kwargs_backward_pass(device, value_dtype, layout):
     A, A_dense = make_spd_sparse(n, layout, value_dtype, torch.int64, device, nz=30)
 
     # Set up tensors with gradients
-    As1 = A.clone().requires_grad_()
+    As1 = require_sparse_coo_or_csr(A.clone().requires_grad_())
     Ad2 = A_dense.detach().clone().requires_grad_()
     Bd1 = torch.rand(n, dtype=value_dtype, device=device).requires_grad_()
     Bd2 = Bd1.clone().detach().requires_grad_()
@@ -413,7 +414,9 @@ def test_sparse_generic_solve_higher_order_create_graph_no_out_error(layout, bas
     B = torch.randn(8, 2, dtype=value_dtype, device=device)
 
     kwargs = _settings_for_higher_order_solve(base_solve, value_dtype)
-    loss = sparse_generic_solve(A, B, solve=base_solve, transpose_solve=base_solve, **kwargs).sum()
+    loss = sparse_generic_solve(
+        require_sparse_coo_or_csr(A), B, solve=base_solve, transpose_solve=base_solve, **kwargs
+    ).sum()
 
     grad_theta = torch.autograd.grad(loss, theta, create_graph=True)[0]
 
@@ -439,7 +442,9 @@ def test_sparse_generic_solve_higher_order_matches_dense_reference(layout, base_
     kwargs = _settings_for_higher_order_solve(base_solve, value_dtype)
     tolerances = _higher_order_spd_tolerances(value_dtype)
 
-    out_sparse = sparse_generic_solve(A_sparse, B, solve=base_solve, transpose_solve=base_solve, **kwargs)
+    out_sparse = sparse_generic_solve(
+        require_sparse_coo_or_csr(A_sparse), B, solve=base_solve, transpose_solve=base_solve, **kwargs
+    )
     out_dense = torch.linalg.solve(A_dense, B)
 
     loss_sparse = out_sparse.square().sum()
@@ -474,7 +479,7 @@ def test_sparse_generic_solve_higher_order_nonsymmetric_bicgstab_matches_dense_r
     tolerances = _higher_order_bicgstab_tolerances(value_dtype)
 
     out_sparse = sparse_generic_solve(
-        A_sparse,
+        require_sparse_coo_or_csr(A_sparse),
         B,
         solve=bicgstab,
         transpose_solve=_bicgstab_transpose,

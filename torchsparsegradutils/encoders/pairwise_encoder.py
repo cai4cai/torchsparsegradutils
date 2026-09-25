@@ -8,6 +8,12 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 import numpy
 import torch
 
+from torchsparsegradutils.sparse_types import (
+    SparseCOOTensor,
+    SparseCSRTensor,
+    require_sparse_coo,
+    require_sparse_csr,
+)
 from torchsparsegradutils.utils import convert_coo_to_csr_indices_values
 from torchsparsegradutils.utils.utils import _sort_coo_indices
 
@@ -748,7 +754,7 @@ class PairwiseEncoder(torch.nn.Module):
 
         return torch.cat(values_out)
 
-    def __call__(self, values: torch.Tensor) -> torch.Tensor:
+    def __call__(self, values: torch.Tensor) -> SparseCOOTensor | SparseCSRTensor:
         r"""Construct sparse tensor (COO or CSR) from per-offset value blocks.
 
         Parameters
@@ -827,9 +833,11 @@ class PairwiseEncoder(torch.nn.Module):
                 values = values.flatten()
             else:
                 indices = self.indices
-            return torch.sparse_coo_tensor(
-                indices, values, size=size_any, dtype=values.dtype, device=values.device
-            ).coalesce()
+            return require_sparse_coo(
+                torch.sparse_coo_tensor(
+                    indices, values, size=size_any, dtype=values.dtype, device=values.device
+                ).coalesce()
+            )
 
         if self.layout == torch.sparse_csr:
             if self.csr_permutation is None:
@@ -842,8 +850,10 @@ class PairwiseEncoder(torch.nn.Module):
             else:
                 crow_indices = self.crow_indices
                 col_indices = self.col_indices
-            return torch.sparse_csr_tensor(
-                crow_indices, col_indices, values, size=size_any, dtype=values.dtype, device=values.device
+            return require_sparse_csr(
+                torch.sparse_csr_tensor(
+                    crow_indices, col_indices, values, size=size_any, dtype=values.dtype, device=values.device
+                )
             )
 
         raise RuntimeError("Unsupported sparse layout")

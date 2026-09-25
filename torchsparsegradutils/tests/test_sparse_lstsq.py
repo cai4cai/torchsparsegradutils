@@ -2,7 +2,7 @@ import pytest
 import torch
 from test_config import DEVICES, Tolerances
 
-from torchsparsegradutils import sparse_generic_lstsq
+from torchsparsegradutils import require_sparse_coo_or_csr, sparse_generic_lstsq
 from torchsparsegradutils.utils.random_sparse import rand_sparse
 
 
@@ -26,7 +26,7 @@ def test_generic_lstsq_default(device):
     dtype = torch.float64
 
     A = torch.randn(A_shape, dtype=dtype, device=device)
-    A_csr = A.to_sparse_csr()
+    A_csr = require_sparse_coo_or_csr(A.to_sparse_csr())
     B = torch.randn(B_shape, dtype=dtype, device=device)
 
     x_ref = torch.linalg.lstsq(A, B).solution
@@ -42,7 +42,7 @@ def test_generic_lstsq_single_rhs_1d(device):
     dtype = torch.float64
 
     A = torch.randn(A_shape, dtype=dtype, device=device)
-    A_csr = A.to_sparse_csr()
+    A_csr = require_sparse_coo_or_csr(A.to_sparse_csr())
     B = torch.randn(B_shape, dtype=dtype, device=device)
 
     x_ref = torch.linalg.lstsq(A, B).solution
@@ -59,7 +59,7 @@ def test_generic_lstsq_multiple_rhs(device):
     dtype = torch.float64
 
     A = torch.randn(A_shape, dtype=dtype, device=device)
-    A_csr = A.to_sparse_csr()
+    A_csr = require_sparse_coo_or_csr(A.to_sparse_csr())
     B = torch.randn(B_shape, dtype=dtype, device=device)
 
     x_ref = torch.linalg.lstsq(A, B).solution
@@ -100,7 +100,7 @@ def test_generic_lstsq_gradient_coo_format(device):
     B = torch.randn(B_shape, dtype=dtype, device=device)
 
     # Sparse least-squares
-    As1 = A_coo.detach().clone()
+    As1 = require_sparse_coo_or_csr(A_coo.detach().clone())
     As1.requires_grad_()
     Bd1 = B.detach().clone()
     Bd1.requires_grad_()
@@ -150,7 +150,7 @@ def test_generic_lstsq_gradient_default(device):
     B = torch.randn(B_shape, dtype=dtype, device=device)
 
     # Sparse least-squares
-    As1 = A_csr.detach().clone()
+    As1 = require_sparse_coo_or_csr(A_csr.detach().clone())
     As1.requires_grad_()
     Bd1 = B.detach().clone()
     Bd1.requires_grad_()
@@ -200,7 +200,7 @@ def test_generic_lstsq_gradient_multiple_rhs(device):
     B = torch.randn(B_shape, dtype=dtype, device=device)
 
     # Sparse least-squares
-    As1 = A_csr.detach().clone()
+    As1 = require_sparse_coo_or_csr(A_csr.detach().clone())
     As1.requires_grad_()
     Bd1 = B.detach().clone()
     Bd1.requires_grad_()

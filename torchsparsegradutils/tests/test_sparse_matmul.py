@@ -4,7 +4,7 @@ import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, SPARSE_LAYOUTS, VALUE_DTYPES, Tolerances
 
-from torchsparsegradutils import sparse_mm
+from torchsparsegradutils import require_sparse_coo_or_csr, sparse_mm
 from torchsparsegradutils.utils import rand_sparse, rand_sparse_tri
 
 # NOTE: tests pass using torch.sparse.mm for unbatched sparse COO and CSR matrices
@@ -149,7 +149,7 @@ def test_sparse_mm_conditional_gradients(layout, device, value_dtype, index_dtyp
     B = torch.randn(4, 3, dtype=value_dtype, device=device)
 
     # Case 1: only B requires grad → A.grad should be None, B.grad non-None
-    A1 = A.detach().clone()
+    A1 = require_sparse_coo_or_csr(A.detach().clone())
     B1 = B.detach().clone().requires_grad_()
     out1 = sparse_mm(A1, B1)
     out1.sum().backward()
@@ -157,7 +157,7 @@ def test_sparse_mm_conditional_gradients(layout, device, value_dtype, index_dtyp
     assert B1.grad is not None
 
     # Case 2: only A requires grad → B.grad should be None, A.grad non-None
-    A2 = A.detach().clone().requires_grad_()
+    A2 = require_sparse_coo_or_csr(A.detach().clone().requires_grad_())
     B2 = B.detach().clone()
     out2 = sparse_mm(A2, B2)
     out2.sum().backward()
@@ -267,7 +267,7 @@ def test_sparse_mm_memory_advantage(device, value_dtype, index_dtype, mem_shapes
     # 2) your sparse_mm
     # -------------------------
     torch.cuda.reset_peak_memory_stats(device)
-    A2 = A.detach().clone().requires_grad_()
+    A2 = require_sparse_coo_or_csr(A.detach().clone().requires_grad_())
     B2 = B.clone().requires_grad_()
     out2 = sparse_mm(A2, B2).sum()
     out2.backward()
@@ -317,7 +317,7 @@ def test_sparse_mm_optimize_A_multiple_steps(layout, device, value_dtype, index_
     for step in range(3):
         # forward
         # out = torch.sparse.mm(A, B)
-        out = sparse_mm(A, B)
+        out = sparse_mm(require_sparse_coo_or_csr(A), B)
         loss = out.sum()
 
         # backward

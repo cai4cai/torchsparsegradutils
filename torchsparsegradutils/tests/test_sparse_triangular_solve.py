@@ -6,7 +6,7 @@ import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
-from torchsparsegradutils import sparse_triangular_solve
+from torchsparsegradutils import require_sparse_coo_or_csr, sparse_triangular_solve
 from torchsparsegradutils._compat import linalg_solve_triangular_compat
 from torchsparsegradutils.utils import rand_sparse_tri
 
@@ -246,7 +246,7 @@ def test_sparse_triangular_solve_dispatches_sparse_to_legacy_backend(layout, tra
         [[2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [4.0, 5.0, 6.0]],
         dtype=torch.float64,
     )
-    A = A_dense.to_sparse() if layout == torch.sparse_coo else A_dense.to_sparse_csr()
+    A = require_sparse_coo_or_csr(A_dense.to_sparse() if layout == torch.sparse_coo else A_dense.to_sparse_csr())
     B = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float64)
     expected = dense_triangular_solve(
         A_dense,
@@ -299,7 +299,7 @@ def test_sparse_triangular_solve_optimize_A_multiple_steps(layout, device, value
 
     for step in range(3):
         # forward: solve A X = B
-        X = sparse_triangular_solve(A, B, upper=True, unitriangular=False, transpose=False)
+        X = sparse_triangular_solve(require_sparse_coo_or_csr(A), B, upper=True, unitriangular=False, transpose=False)
         loss = X.sum()
 
         # backward
