@@ -5,7 +5,7 @@ import math
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, overload
 
 import torch
 
@@ -145,6 +145,68 @@ def _linear_cg_updates_no_precond(
         is_zero,
         curr_conjugate_vec,
     )
+
+
+@overload
+def linear_cg(
+    matmul_closure: torch.Tensor | Callable[[torch.Tensor], torch.Tensor],
+    rhs: torch.Tensor,
+    n_tridiag: Literal[0] = 0,
+    tolerance: float | None = None,
+    eps: float | None = None,
+    stop_updating_after: float | None = None,
+    max_iter: int | None = None,
+    max_tridiag_iter: int | None = None,
+    initial_guess: torch.Tensor | None = None,
+    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    settings: LinearCGSettings = _DEFAULT_LINEAR_CG_SETTINGS,
+    convergence_reduction: Literal["all", "mean"] = "all",
+    min_iter: int = 0,
+    return_info: Literal[False] = False,
+) -> torch.Tensor: ...
+
+
+@overload
+def linear_cg(
+    matmul_closure: torch.Tensor | Callable[[torch.Tensor], torch.Tensor],
+    rhs: torch.Tensor,
+    n_tridiag: Literal[0] = 0,
+    tolerance: float | None = None,
+    eps: float | None = None,
+    stop_updating_after: float | None = None,
+    max_iter: int | None = None,
+    max_tridiag_iter: int | None = None,
+    initial_guess: torch.Tensor | None = None,
+    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    settings: LinearCGSettings = _DEFAULT_LINEAR_CG_SETTINGS,
+    convergence_reduction: Literal["all", "mean"] = "all",
+    min_iter: int = 0,
+    return_info: Literal[True] = True,
+) -> tuple[torch.Tensor, CGInfo]: ...
+
+
+@overload
+def linear_cg(
+    matmul_closure: torch.Tensor | Callable[[torch.Tensor], torch.Tensor],
+    rhs: torch.Tensor,
+    n_tridiag: int = 0,
+    tolerance: float | None = None,
+    eps: float | None = None,
+    stop_updating_after: float | None = None,
+    max_iter: int | None = None,
+    max_tridiag_iter: int | None = None,
+    initial_guess: torch.Tensor | None = None,
+    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    settings: LinearCGSettings = _DEFAULT_LINEAR_CG_SETTINGS,
+    convergence_reduction: Literal["all", "mean"] = "all",
+    min_iter: int = 0,
+    return_info: bool = False,
+) -> (
+    torch.Tensor
+    | tuple[torch.Tensor, torch.Tensor]
+    | tuple[torch.Tensor, CGInfo]
+    | tuple[torch.Tensor, torch.Tensor, CGInfo]
+): ...
 
 
 def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one recurrence

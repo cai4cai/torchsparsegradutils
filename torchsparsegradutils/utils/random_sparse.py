@@ -15,6 +15,7 @@ import random
 from typing import Optional, Tuple, Union
 
 import torch
+from torch.types import Device
 
 from torchsparsegradutils.utils.utils import convert_coo_to_csr, convert_coo_to_csr_indices_values
 
@@ -30,15 +31,17 @@ __all__ = [
     "generate_random_sparse_triangular_csr_matrix",
 ]
 
+SparseSize = Union[torch.Size, list[int], tuple[int, ...]]
+
 
 def rand_sparse(
-    size: Union[Tuple[int, int], Tuple[int, int, int]],
+    size: SparseSize,
     nnz: int,
     layout: torch.layout = torch.sparse_coo,
     *,
     indices_dtype: torch.dtype = torch.int64,
     values_dtype: torch.dtype = torch.float32,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
 ) -> torch.Tensor:
@@ -119,7 +122,7 @@ def rand_sparse(
 
 
 def rand_sparse_tri(
-    size: Union[Tuple[int, int], Tuple[int, int, int]],
+    size: SparseSize,
     nnz: int,
     layout: torch.layout = torch.sparse_coo,
     *,
@@ -127,7 +130,7 @@ def rand_sparse_tri(
     strict: bool = False,
     indices_dtype: torch.dtype = torch.int64,
     values_dtype: torch.dtype = torch.float32,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
     value_range: Tuple[float, float] = (0, 1),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
@@ -249,7 +252,7 @@ def _gen_indices_2d_coo(
     nnz: int,
     *,
     dtype: torch.dtype = torch.int64,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
 ) -> torch.Tensor:
     r"""
     Generate random COO indices for a 2D matrix.
@@ -316,12 +319,12 @@ def _gen_indices_2d_coo(
 
 
 def generate_random_sparse_coo_matrix(
-    size: Union[Tuple[int, int], Tuple[int, int, int]],
+    size: SparseSize,
     nnz: int,
     *,
     indices_dtype: torch.dtype = torch.int64,
     values_dtype: torch.dtype = torch.float32,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
 ) -> torch.Tensor:
@@ -442,12 +445,12 @@ def generate_random_sparse_coo_matrix(
 
 
 def generate_random_sparse_csr_matrix(
-    size: Union[Tuple[int, int], Tuple[int, int, int]],
+    size: SparseSize,
     nnz: int,
     *,
     indices_dtype: torch.dtype = torch.int64,
     values_dtype: torch.dtype = torch.float32,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
 ) -> torch.Tensor:
@@ -586,7 +589,7 @@ def _gen_indices_2d_coo_strictly_tri(
     *,
     upper: bool = True,
     dtype: torch.dtype = torch.int64,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
 ) -> torch.Tensor:
     """
     Generate random COO indices for a strictly triangular matrix.
@@ -652,13 +655,13 @@ def _gen_indices_2d_coo_strictly_tri(
 
 
 def generate_random_sparse_strictly_triangular_coo_matrix(
-    size: Union[Tuple[int, int], Tuple[int, int, int]],
+    size: SparseSize,
     nnz: int,
     *,
     upper: bool = True,
     indices_dtype: torch.dtype = torch.int64,
     values_dtype: torch.dtype = torch.float32,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
     value_range: Tuple[float, float] = (0.0, 1.0),
 ) -> torch.Tensor:
     """
@@ -759,13 +762,13 @@ def generate_random_sparse_strictly_triangular_coo_matrix(
 
 
 def generate_random_sparse_strictly_triangular_csr_matrix(
-    size: Union[Tuple[int, int], Tuple[int, int, int]],
+    size: SparseSize,
     nnz: int,
     *,
     upper: bool = True,
     indices_dtype: torch.dtype = torch.int64,
     values_dtype: torch.dtype = torch.float32,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
     value_range: Tuple[float, float] = (0.0, 1.0),
 ) -> torch.Tensor:
     """
@@ -874,7 +877,7 @@ def _gen_indices_2d_coo_nonstrict_tri(
     *,
     upper: bool = True,
     dtype: torch.dtype = torch.int64,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
 ) -> torch.Tensor:
     """
     Generate random COO indices for non-strict triangular matrices (with diagonal).
@@ -939,13 +942,13 @@ def _gen_indices_2d_coo_nonstrict_tri(
 
 
 def generate_random_sparse_triangular_coo_matrix(
-    size: Tuple[int, int] | Tuple[int, int, int],
+    size: SparseSize,
     nnz: int,
     *,
     upper: bool = True,
     indices_dtype: torch.dtype = torch.int64,
     values_dtype: torch.dtype = torch.float32,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
     value_range: Tuple[float, float] = (0.0, 1.0),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
@@ -1075,13 +1078,13 @@ def generate_random_sparse_triangular_coo_matrix(
 
 
 def generate_random_sparse_triangular_csr_matrix(
-    size: Tuple[int, int] | Tuple[int, int, int],
+    size: SparseSize,
     nnz: int,
     *,
     upper: bool = True,
     indices_dtype: torch.dtype = torch.int64,
     values_dtype: torch.dtype = torch.float32,
-    device: torch.device = torch.device("cpu"),
+    device: Device = torch.device("cpu"),
     value_range: Tuple[float, float] = (0.0, 1.0),
     well_conditioned: bool = False,
     min_diag_value: float = 1.0,
@@ -1231,7 +1234,7 @@ def make_spd_sparse(
     layout: torch.layout,
     value_dtype: torch.dtype,
     index_dtype: torch.dtype,
-    device: torch.device,
+    device: Device,
     sparsity_ratio: float = 0.5,
     nz: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
