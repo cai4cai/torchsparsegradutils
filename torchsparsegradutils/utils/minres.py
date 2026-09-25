@@ -13,7 +13,9 @@ class MINRESSettings(NamedTuple):
     verbose_linalg: bool = False  # Print out information whenever running an expensive linear algebra routine
 
 
-def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
+def _pad_with_singletons(
+    obj: torch.Tensor, num_singletons_before: int = 0, num_singletons_after: int = 0
+) -> torch.Tensor:
     """
     Pad obj with singleton dimensions on the left and right
     Example:
@@ -146,14 +148,17 @@ def minres(
     >>> x = minres(A.matmul, b, settings=settings)
     """
     # Default values
-    if torch.is_tensor(matmul_closure):
-        matmul_closure = matmul_closure.matmul
-    mm_ = matmul_closure
+    if isinstance(matmul_closure, torch.Tensor):
+        mm_ = matmul_closure.matmul
+    else:
+        mm_ = matmul_closure
     if preconditioner is None:
         preconditioner = lambda x: x.clone()
 
     if shifts is None:
-        shifts = torch.tensor(0.0, dtype=rhs.dtype, device=rhs.device)
+        shifts_tensor = torch.tensor(0.0, dtype=rhs.dtype, device=rhs.device)
+    else:
+        shifts_tensor = shifts
 
     # Scale the rhs
     squeeze = False
@@ -172,7 +177,7 @@ def minres(
     max_iter = min(max_iter, rhs.size(-2) + 1)
 
     # Epsilon (to prevent nans)
-    eps = torch.tensor(eps, dtype=rhs.dtype, device=rhs.device)
+    eps_tensor = torch.tensor(eps, dtype=rhs.dtype, device=rhs.device)
 
     # Create space for matmul product, solution
     prod = mm_(rhs)
@@ -180,8 +185,8 @@ def minres(
         prod.mul_(value)
 
     # Resize shifts
-    shifts = _pad_with_singletons(shifts, 0, prod.dim() - shifts.dim() + 1)
-    solution = torch.zeros(shifts.shape[:1] + prod.shape, dtype=rhs.dtype, device=rhs.device)
+    shifts_tensor = _pad_with_singletons(shifts_tensor, 0, prod.dim() - shifts_tensor.dim() + 1)
+    solution = torch.zeros(shifts_tensor.shape[:1] + prod.shape, dtype=rhs.dtype, device=rhs.device)
 
     # Variables for Lanczos terms
     zvec_prev2 = torch.zeros_like(prod)
@@ -222,7 +227,7 @@ def minres(
     # 2) The "scaling" terms of the search vectors
     # Equivalent to the terms of V^T Q^T rhs, where Q is the matrix of Lanczos vectors and
     # V is the QR orthonormal of the tridiagonal Lanczos matrix.
-    scale_prev = beta_prev.repeat(shifts.size(0), *([1] * beta_prev.dim()))
+    scale_prev = beta_prev.repeat(shifts_tensor.size(0), *([1] * beta_prev.dim()))
     scale_curr = torch.empty_like(scale_prev)
 
     # Terms for checking for convergence
@@ -255,7 +260,7 @@ def minres(
         torch.mul(zvec_curr, qvec_curr, out=tmpvec)
         torch.sum(tmpvec, -2, keepdim=True, out=beta_curr)
         beta_curr.sqrt_()
-        beta_curr.clamp_min_(eps)
+        beta_curr.clamp_min_(eps_tensor)
 
         zvec_curr.div_(beta_curr)
         qvec_curr.div_(beta_curr)
@@ -263,8 +268,8 @@ def minres(
         # Perform JIT-ted update
         conv = _jit_minres_updates(
             solution,
-            shifts,
-            eps,
+            shifts_tensor,
+            eps_tensor,
             qvec_prev1,
             alpha_curr,
             alpha_shifted_curr,
@@ -318,7 +323,7 @@ def minres(
         rhs = rhs.squeeze(-1)
         rhs_norm = rhs_norm.squeeze(-1)
 
-    if shifts.numel() == 1:
+    if shifts_tensor.numel() == 1:
         # If we weren't shifting we shouldn't return a batch output
         solution = solution.squeeze(0)
 

@@ -295,6 +295,7 @@ class SparseMultivariateNormal(Distribution):
             self._scale_tril = scale_tril
 
         else:  # precision_tril is not None
+            assert precision_tril is not None
             if precision_tril.layout == torch.sparse_coo:
                 precision_tril = precision_tril.coalesce()
             elif precision_tril.layout == torch.sparse_csr:
@@ -469,7 +470,7 @@ class SparseMultivariateNormalNative(Distribution):
 
     """
 
-    arg_constraints = {
+    arg_constraints: dict[str, constraints.Constraint] = {
         "loc": constraints.real_vector,
         # TODO: create custom sparse lower triangular constraint
         # 'scale_tril': constraints.lower_cholesky,
