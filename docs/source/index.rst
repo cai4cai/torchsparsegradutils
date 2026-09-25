@@ -62,6 +62,7 @@ Sparse Multivariate Normal Distributions
    api/index
    benchmarks
    contributing
+   shape_typing
    naming
 
 Installation

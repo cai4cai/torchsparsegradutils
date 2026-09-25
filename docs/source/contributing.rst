@@ -108,6 +108,8 @@ We use Ruff to maintain code quality:
 
    pyrefly check
 
+An opt-in experimental check combines sparse layouts with tensor shapes. See :doc:`shape_typing` for its isolated dependency setup and validation commands.
+
 **Type hints** are encouraged:
 
 .. code-block:: python
