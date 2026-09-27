@@ -229,3 +229,40 @@ def test_minres_invalid_arguments():
             preconditioner=lambda v: v.clone(),
             return_info=True,
         )
+
+
+def test_minres_non_finite_recurrence_does_not_reach_solution():
+    matrix = torch.diag(torch.linspace(1, 2, 5, dtype=torch.float64))
+    rhs = torch.randn(5, 2, dtype=torch.float64)
+    # An indefinite "preconditioner" for the second column makes its Lanczos coefficients NaN
+    sign = torch.tensor([1.0, -1.0], dtype=torch.float64)
+
+    with pytest.warns(UserWarning, match="MINRES terminated"):
+        solution, info = minres(matrix, rhs, preconditioner=lambda v: v * sign, tolerance=1e-10, return_info=True)
+
+    assert torch.isfinite(solution).all()
+    torch.testing.assert_close(solution[:, 0], torch.linalg.solve(matrix, rhs[:, 0]))
+    assert info.reason == "breakdown"
+    assert torch.equal(info.converged, torch.tensor([True, False]))
+
+
+def test_minres_update_criterion_does_not_report_recursive_convergence():
+    # The M^{-1}-norm residual estimate meets tolerance while the true residual does not
+    matrix = torch.diag(torch.tensor([1.0, 1.0, 3.0], dtype=torch.float64))
+    weights = torch.tensor([1.0, 1e-12, 1e-12], dtype=torch.float64).unsqueeze(-1)
+    rhs = torch.ones(3, dtype=torch.float64)
+    settings = MINRESSettings(minres_convergence="update")
+
+    _, info = minres(
+        matrix,
+        rhs,
+        preconditioner=lambda v: v * weights,
+        max_iter=2,
+        tolerance=1e-4,
+        settings=settings,
+        return_info=True,
+    )
+
+    assert (info.recursive_relative_residual <= 1e-4).all()
+    assert not info.converged.any()
+    assert info.reason == "max_iter"

@@ -393,15 +393,23 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
             scale_curr,
             search_update_norm,
             solution_norm,
-            active,
         )
         iterations = i + 1
 
-        # Track the residual estimate and freeze columns that converged or broke down
+        # Freeze columns whose recurrence became non-finite before their update reaches the solution
         relative_residual = scale_curr.abs().div_(beta_initial)
-        finite = torch.isfinite(relative_residual)
-        recursive_relative_residual = torch.where(active & finite, relative_residual, recursive_relative_residual)
-        broken = broken | (active & (lanczos_breakdown | ~finite))
+        finite = torch.isfinite(relative_residual) & torch.isfinite(search_update).all(dim=-2, keepdim=True)
+        broken = broken | (active & ~finite)
+        active = active & ~broken
+
+        # Update the solution of the right-hand sides that are still active
+        search_update.masked_fill_(~active, 0)
+        solution.add_(search_update)
+
+        # Track the residual estimate and freeze columns that converged or hit a Lanczos breakdown.
+        # The update of an exact (finite) Lanczos breakdown is still valid and has been applied above.
+        recursive_relative_residual = torch.where(active, relative_residual, recursive_relative_residual)
+        broken = broken | (active & lanczos_breakdown)
         active = active & ~broken
 
         # Check convergence criterion
@@ -434,7 +442,8 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
 
     recursive_converged = recursive_relative_residual.le(tolerance)
     if stop_reason is None:
-        if bool(recursive_converged.all()):
+        # The residual estimate is only a stopping criterion in "residual" mode
+        if convergence == "residual" and bool(recursive_converged.all()):
             stop_reason = "recursive_converged"
         elif not bool(active.any()):
             stop_reason = "breakdown"
@@ -523,7 +532,6 @@ def _jit_minres_updates(
     scale_curr,
     search_update_norm,
     solution_norm,
-    active,
 ):
     # Start givens rotation
     # Givens rotation from 2 steps ago
@@ -555,7 +563,5 @@ def _jit_minres_updates(
     search_curr.addcmul_(subsub_diag_term, search_prev2, value=-1)
     search_curr.div_(diag_term)
 
-    # 3) Update the solution of the right-hand sides that are still active
+    # 3) Get the solution update (applied by the caller to the right-hand sides that are still active)
     torch.mul(search_curr, scale_prev, out=search_update)
-    search_update.masked_fill_(~active, 0)
-    solution.add_(search_update)
