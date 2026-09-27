@@ -18,6 +18,8 @@ class MINRESSettings(NamedTuple):
     minres_convergence: Literal["residual", "update"] = "residual"  # "residual" stops once every right-hand side
     # has a relative (preconditioned) residual estimate below minres_tolerance. "update" retains the historical
     # criterion on the mean relative norm of the solution update.
+    minres_check_every: int = 10  # Iterations between termination checks, which synchronise with the host, and
+    # between true residual checks past n iterations. 1 checks every iteration.
 
 
 @dataclass(frozen=True)
@@ -37,7 +39,10 @@ class MINRESInfo:
     tolerance, "recursive_converged" or "update_converged" when the internal
     stopping criterion is met but the true residual is not, "breakdown" when
     every unconverged right-hand side hit a Lanczos breakdown or a non-finite
-    residual estimate, and "max_iter" when the iteration limit is reached.
+    residual estimate, "stagnated" when, past n iterations, every unconverged
+    right-hand side stopped because its true residual no longer improved or
+    diverged from the residual estimate, and "max_iter" when the iteration
+    limit is reached.
     """
 
     iterations: int
@@ -46,7 +51,7 @@ class MINRESInfo:
     recursive_relative_residual: torch.Tensor
     true_relative_residual: torch.Tensor
     tolerance: float
-    reason: Literal["converged", "recursive_converged", "update_converged", "breakdown", "max_iter"]
+    reason: Literal["converged", "recursive_converged", "update_converged", "breakdown", "stagnated", "max_iter"]
 
 
 def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
@@ -103,15 +108,28 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         Scalar multiplier ``\\alpha`` applied to the operator (solves ``(\\alpha A) x = b``)
         when provided. Default: ``None`` (no scaling).
     max_iter : int, optional
-        Maximum iterations. If ``None``, uses ``settings.max_cg_iterations``.
-        The value is not capped by the problem size: in finite precision, loss
-        of Lanczos orthogonality can require more than ``n`` iterations.
+        Maximum iterations. If ``None``, uses
+        ``min(settings.max_cg_iterations, n + 1)`` where ``n`` is the problem size.
+        An explicit value is used as given: in finite precision, loss of Lanczos
+        orthogonality can require more than ``n`` iterations. Past ``n``
+        iterations, the iterate can also drift away from the solution while the
+        residual estimate keeps decreasing, so every
+        ``settings.minres_check_every`` iterations the true residual is
+        recomputed (one operator application per shift) and the best iterate is
+        kept. A right-hand side then stops once its true residual meets the
+        tolerance, once its residual estimate meets the tolerance while its true
+        residual does not, or after 3 checks without improvement. Going past
+        ``n`` is only useful while the true residual is still decreasing.
     preconditioner : callable, optional
         Symmetric positive definite preconditioner with signature
         ``preconditioner(x) -> M^{-1} x``. If ``None``, no preconditioning is used.
+        A positive semi-definite ``M^{-1}`` is acceptable when its null space only
+        covers rows where both ``A`` and ``b`` vanish, e.g. a Jacobi preconditioner
+        that is zero on the empty rows of a singular graph Laplacian.
     settings : MINRESSettings, optional
-        Configuration object controlling iteration caps, the tolerance and the
-        convergence criterion (``minres_convergence``).
+        Configuration object controlling iteration caps, the tolerance, the
+        convergence criterion (``minres_convergence``) and how often termination
+        is checked (``minres_check_every``).
     tolerance : float, optional
         Finite, nonnegative relative tolerance. If ``None``, uses
         ``settings.minres_tolerance``. With the default ``"residual"`` criterion,
@@ -119,9 +137,12 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         ``phi_k / phi_0`` is at most ``tolerance``, and the solve terminates once all
         of them have. ``phi_k`` is the residual norm estimate provided by the MINRES
         recurrence at no extra cost; it is measured in the ``M^{-1}``-norm when a
-        preconditioner is used. With the ``"update"`` criterion, the solve
-        terminates when the mean relative norm of the latest solution update is
-        below ``tolerance`` (checked every 10 iterations).
+        preconditioner is used. The tolerance then does *not* bound
+        ``||b - A x||_2 / ||b||_2``, which can differ from the ``M^{-1}``-norm
+        relative residual by up to a factor ``sqrt(cond(M))`` either way. With the
+        ``"update"`` criterion, the solve terminates when the mean relative norm of
+        the latest solution update is below ``tolerance``. Termination is checked
+        every ``settings.minres_check_every`` iterations.
     return_info : bool, optional
         Return a ``MINRESInfo`` with iterations, matvecs, per-right-hand-side
         convergence, recursive and recomputed true relative residuals, and the
@@ -142,15 +163,17 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     Raises
     ------
     ValueError
-        If ``tolerance``, ``max_iter`` or ``settings.minres_convergence`` is
-        invalid, or if ``return_info`` is combined with a preconditioner and
-        nonzero shifts.
+        If ``tolerance``, ``max_iter``, ``settings.minres_convergence`` or
+        ``settings.minres_check_every`` is invalid, or if ``return_info`` is
+        combined with a preconditioner and nonzero shifts.
 
     Warns
     -----
     UserWarning
-        With the ``"residual"`` criterion, if some right-hand sides did not reach
-        the tolerance.
+        With the ``"residual"`` criterion and ``return_info=False``, if some
+        right-hand sides did not reach the tolerance. After more than ``n``
+        iterations, this is decided on the recomputed true residual rather than
+        on the residual estimate.
 
     Notes
     -----
@@ -240,11 +263,14 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     convergence = settings.minres_convergence
     if convergence not in ("residual", "update"):
         raise ValueError("settings.minres_convergence must be 'residual' or 'update'")
-    if max_iter is None:
-        max_iter = settings.max_cg_iterations
-    if max_iter < 0:
+    check_every = settings.minres_check_every
+    if check_every < 1:
+        raise ValueError("settings.minres_check_every must be at least 1")
+    if max_iter is not None and max_iter < 0:
         raise ValueError("max_iter must be nonnegative")
-    if return_info and has_preconditioner and bool(torch.as_tensor(shifts).ne(0).any()):
+    # With a preconditioner, the shifted recurrence solves (A + sigma M) x = b: its true residual is unavailable
+    shifted_preconditioning = has_preconditioner and bool(torch.as_tensor(shifts).ne(0).any())
+    if return_info and shifted_preconditioning:
         raise ValueError("return_info is not supported with a preconditioner and nonzero shifts")
 
     # Scale the rhs
@@ -253,6 +279,11 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         rhs = rhs.unsqueeze(-1)
         squeeze = True
     rhs_original = rhs
+    size = rhs.size(-2)
+
+    # Use the right number of iterations
+    if max_iter is None:
+        max_iter = min(settings.max_cg_iterations, size + 1)
 
     rhs_norm = torch.linalg.vector_norm(rhs, ord=2, dim=-2, keepdim=True)
     rhs_is_zero = rhs_norm.eq(0)
@@ -330,6 +361,32 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     active = ~lanczos_is_zero.expand_as(recursive_relative_residual)
     broken = torch.zeros_like(active)
     stop_reason = None
+    # Past n iterations: best iterate found so far, its true relative residual, and stagnation tracking
+    shift_values = shifts.reshape(-1)
+    best_solution = None
+    best_relative_residual = None
+    stagnation_count = torch.zeros(active.shape, dtype=torch.int32, device=active.device)
+    stagnated = torch.zeros_like(active)
+
+    def _true_residual(normalized_solution):
+        # Residual of each shifted system for the unnormalized solution
+        nonlocal matvecs
+        residuals = []
+        for shift, shift_solution in zip(shift_values, normalized_solution):
+            shift_solution = shift_solution * rhs_norm
+            residual = mm_(shift_solution)
+            if value is not None:
+                residual = residual * value
+            residuals.append(rhs_original - residual - shift * shift_solution)
+            matvecs += 1
+        return torch.stack(residuals)
+
+    def _tolerance_relative_residual(residual):
+        # Relative residual in the norm the tolerance applies to: the M^{-1}-norm with a preconditioner
+        if has_preconditioner:
+            norm = torch.stack([(r * preconditioner(r)).sum(dim=-2, keepdim=True) for r in residual])
+            return norm.clamp_min_(0).sqrt_().div_(beta_initial * rhs_norm)
+        return torch.linalg.vector_norm(residual, ord=2, dim=-2, keepdim=True).div_(rhs_norm)
 
     # Maybe log
     if settings.verbose_linalg:
@@ -412,19 +469,43 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         broken = broken | (active & lanczos_breakdown)
         active = active & ~broken
 
-        # Check convergence criterion
-        if convergence == "residual":
-            active = active & recursive_relative_residual.gt(tolerance)
-            if not bool(active.any()):
-                break
-        elif (i + 1) % 10 == 0:
-            torch.linalg.vector_norm(search_update, dim=-2, out=search_update_norm)
-            torch.linalg.vector_norm(solution, dim=-2, out=solution_norm)
-            solution_norm.clamp_min_(torch.finfo(solution.dtype).tiny)
-            conv = search_update_norm.div_(solution_norm).mean().item()
-            if conv < tolerance:
-                stop_reason = "update_converged"
-                break
+        # Check convergence criterion. Freezing columns stays on the device; only the exit tests,
+        # every check_every iterations, synchronise with the host.
+        past_size = not shifted_preconditioning and iterations > size
+        check = iterations % check_every == 0
+        recursive_ok = recursive_relative_residual.le(tolerance)
+        if convergence == "residual" and not past_size:
+            active = active & ~recursive_ok
+
+        if past_size and check:
+            # Past n iterations, loss of Lanczos orthogonality can make the iterate drift while the residual
+            # estimate keeps decreasing: monitor the true residual and keep the best iterate
+            true_relative_residual = _tolerance_relative_residual(_true_residual(solution))
+            if best_solution is None:
+                best_solution = solution.clone()
+                best_relative_residual = torch.full_like(true_relative_residual, math.inf)
+            improved = active & true_relative_residual.lt(best_relative_residual)
+            best_solution = torch.where(improved, solution, best_solution)
+            best_relative_residual = torch.where(improved, true_relative_residual, best_relative_residual)
+            stagnation_count = torch.where(improved, 0, stagnation_count + active.int())
+            true_ok = true_relative_residual.le(tolerance)
+            newly_stagnated = stagnation_count.ge(3)
+            if convergence == "residual":
+                # The residual estimate is no longer reliable when it has converged but the true residual has not
+                newly_stagnated = newly_stagnated | recursive_ok
+            newly_stagnated = active & ~true_ok & newly_stagnated
+            stagnated = stagnated | newly_stagnated
+            active = active & ~true_ok & ~newly_stagnated
+
+        if check:
+            if convergence == "update":
+                torch.linalg.vector_norm(search_update, dim=-2, out=search_update_norm)
+                torch.linalg.vector_norm(solution, dim=-2, out=solution_norm)
+                solution_norm.clamp_min_(torch.finfo(solution.dtype).tiny)
+                conv = search_update_norm.div_(solution_norm).mean().item()
+                if conv < tolerance:
+                    stop_reason = "update_converged"
+                    break
             if not bool(active.any()):
                 break
 
@@ -440,42 +521,46 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         search_prev2, search_prev1, search_curr = search_prev1, search_curr, search_prev2
         scale_prev, scale_curr = scale_curr, scale_prev
 
-    recursive_converged = recursive_relative_residual.le(tolerance)
+    # Past n iterations, trust the recomputed true residual over the residual estimate and return the best iterate
+    past_size = not shifted_preconditioning and iterations > size
+    final_relative_residual = None
+    if past_size:
+        final_relative_residual = _tolerance_relative_residual(_true_residual(solution))
+        if best_solution is not None:
+            use_best = best_relative_residual.lt(final_relative_residual)
+            solution = torch.where(use_best, best_solution, solution)
+            final_relative_residual = torch.where(use_best, best_relative_residual, final_relative_residual)
+        tolerance_converged = final_relative_residual.le(tolerance)
+    else:
+        tolerance_converged = recursive_relative_residual.le(tolerance)
+
     if stop_reason is None:
         # The residual estimate is only a stopping criterion in "residual" mode
-        if convergence == "residual" and bool(recursive_converged.all()):
+        if convergence == "residual" and bool(tolerance_converged.all()):
             stop_reason = "recursive_converged"
         elif not bool(active.any()):
-            stop_reason = "breakdown"
+            stop_reason = "breakdown" if bool((broken & ~tolerance_converged).any()) else "stagnated"
         else:
             stop_reason = "max_iter"
 
-    if convergence == "residual" and stop_reason != "recursive_converged":
-        maximum_residual = recursive_relative_residual.max().item()
-        num_unconverged = (~recursive_converged).sum().item()
+    if convergence == "residual" and not return_info and stop_reason != "recursive_converged":
+        if final_relative_residual is None:
+            residual_kind, reported_residual = "relative residual estimate", recursive_relative_residual
+        else:
+            residual_kind, reported_residual = "true relative residual", final_relative_residual
         warnings.warn(
-            f"MINRES terminated after {iterations} iterations ({stop_reason}) with maximum relative residual "
-            f"estimate {maximum_residual} which is larger than the tolerance of {tolerance}. "
-            f"{num_unconverged} of {recursive_converged.numel()} right-hand sides did not converge.",
+            f"MINRES terminated after {iterations} iterations ({stop_reason}) with maximum {residual_kind} "
+            f"{reported_residual.max().item()} which is larger than the tolerance of {tolerance}. "
+            f"{(~tolerance_converged).sum().item()} of {tolerance_converged.numel()} right-hand sides "
+            "did not converge.",
             UserWarning,
             stacklevel=2,
         )
 
-    # Set the solution of zero right-hand sides to zero and undo the rhs scaling
-    solution.masked_fill_(rhs_is_zero, 0)
-    solution.mul_(rhs_norm)
-
     if return_info:
-        # Recompute the true residual of each shifted system
-        true_residual_norms = []
-        for shift, shift_solution in zip(shifts.reshape(-1), solution):
-            true_residual = mm_(shift_solution)
-            if value is not None:
-                true_residual = true_residual * value
-            true_residual = rhs_original - true_residual - shift * shift_solution
-            true_residual_norms.append(torch.linalg.vector_norm(true_residual, ord=2, dim=-2, keepdim=True))
-            matvecs += 1
-        true_relative_residual = torch.stack(true_residual_norms).div_(rhs_norm)
+        # Recompute the Euclidean true residual of each shifted system
+        true_relative_residual = torch.linalg.vector_norm(_true_residual(solution), ord=2, dim=-2, keepdim=True)
+        true_relative_residual = true_relative_residual.div_(rhs_norm).masked_fill_(rhs_is_zero, 0)
         converged = true_relative_residual.le(tolerance)
         reason = "converged" if bool(converged.all()) else stop_reason
 
@@ -492,6 +577,9 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
             tolerance=tolerance,
             reason=reason,
         )
+
+    # Set the solution of zero right-hand sides to zero and undo the rhs scaling
+    solution = solution.masked_fill(rhs_is_zero, 0).mul_(rhs_norm)
 
     if squeeze:
         solution = solution.squeeze(-1)
