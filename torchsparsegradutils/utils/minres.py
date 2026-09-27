@@ -448,8 +448,8 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         zvec_curr.div_(beta_curr)
         qvec_curr.div_(beta_curr)
 
-        # Perform JIT-ted update
-        _jit_minres_updates(
+        # Perform the Givens rotation and search vector update
+        _minres_updates(
             solution,
             shifts,
             eps,
@@ -619,7 +619,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     return solution
 
 
-def _jit_minres_updates(
+def _minres_updates(
     solution,
     shifts,
     eps,
