@@ -152,7 +152,7 @@ def _settings_for_higher_order_solve(solve, value_dtype):
         from torchsparsegradutils.utils.minres import MINRESSettings
 
         tolerance = 1e-6 if value_dtype == torch.float32 else 1e-10
-        return {"settings": MINRESSettings(minres_tolerance=tolerance, max_cg_iterations=1000)}
+        return {"settings": MINRESSettings(minres_tolerance=tolerance, max_minres_iterations=1000)}
     return {}
 
 
@@ -285,7 +285,7 @@ def test_minres_kwargs(device, value_dtype, layout):
 
     atol, rtol = Tolerances.iterative(value_dtype)
     # Test with custom MINRESSettings
-    settings = MINRESSettings(minres_tolerance=atol, max_cg_iterations=500, verbose_linalg=False)
+    settings = MINRESSettings(minres_tolerance=atol, max_minres_iterations=500, verbose_linalg=False)
 
     X_ref = torch.linalg.solve(A_dense, B)
     X_test = sparse_generic_solve(A, B, solve=minres, transpose_solve=minres, settings=settings)
@@ -375,7 +375,7 @@ def test_kwargs_with_different_solvers_same_matrix():
     X_bicgstab = sparse_generic_solve(A, B, solve=bicgstab, transpose_solve=bicgstab, settings=bicgstab_settings)
 
     # Test minres with settings
-    minres_settings = MINRESSettings(minres_tolerance=1e-8, max_cg_iterations=1000)
+    minres_settings = MINRESSettings(minres_tolerance=1e-8, max_minres_iterations=1000)
     X_minres = sparse_generic_solve(A, B, solve=minres, transpose_solve=minres, settings=minres_settings)
 
     # All solutions should be close to reference
