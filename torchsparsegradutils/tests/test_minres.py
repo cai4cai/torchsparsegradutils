@@ -411,3 +411,33 @@ def test_minres_drift_guard_keeps_the_iterate_at_problem_size():
 
     assert long_run.iterations == 5 * size
     assert float(long_run.true_relative_residual) <= float(at_size.true_relative_residual) * (1 + 1e-5)
+
+
+def test_minres_drift_guard_prefers_saved_iterate_over_nan_final_residual():
+    matrix, rhs = _ill_conditioned_spd_float32()
+    size = matrix.shape[0]
+    settings = MINRESSettings(minres_check_every=10 * size)
+    kwargs = dict(tolerance=1e-6, max_iter=5 * size, settings=settings)
+
+    calls = []
+
+    def counting_matmul(x):
+        calls.append(None)
+        return matrix @ x
+
+    with pytest.warns(UserWarning):
+        minres(counting_matmul, rhs, **kwargs)
+    final_call = len(calls)
+
+    def nan_on_final_residual(x):
+        calls.append(None)
+        result = matrix @ x
+        return torch.full_like(result, math.nan) if len(calls) == final_call else result
+
+    calls.clear()
+    with pytest.warns(UserWarning):
+        solution = minres(nan_on_final_residual, rhs, **kwargs)
+
+    _, at_size = minres(matrix, rhs, tolerance=1e-6, max_iter=size, settings=settings, return_info=True)
+    true_relative_residual = torch.linalg.vector_norm(rhs - matrix @ solution) / torch.linalg.vector_norm(rhs)
+    assert float(true_relative_residual) <= float(at_size.true_relative_residual) * (1 + 1e-5)

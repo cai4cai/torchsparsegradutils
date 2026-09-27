@@ -577,7 +577,8 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     if past_size:
         final_relative_residual = _tolerance_relative_residual(_true_residual(solution))
         if best_solution is not None:
-            use_best = best_relative_residual.lt(final_relative_residual)
+            # The saved residual is always finite, so a NaN final residual also selects the saved iterate
+            use_best = ~final_relative_residual.le(best_relative_residual)
             solution = torch.where(use_best, best_solution, solution)
             final_relative_residual = torch.where(use_best, best_relative_residual, final_relative_residual)
         tolerance_converged = final_relative_residual.le(tolerance)
