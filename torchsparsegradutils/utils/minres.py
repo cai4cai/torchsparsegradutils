@@ -201,10 +201,13 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
       minimizes the Euclidean residual norm rather than the A-norm (as in CG).
     - For symmetric positive definite systems, Conjugate Gradient (CG) typically
       converges faster; prefer CG unless indefiniteness/robustness suggests MINRES.
-    - For singular systems with a consistent right-hand side, MINRES started from
-      zero converges to a least-squares solution, which is the minimum-norm
-      solution in exact arithmetic. It is not guaranteed to return the
-      minimum-norm solution when rounding makes the system slightly inconsistent.
+    - For singular systems with a consistent right-hand side and no
+      preconditioner, MINRES started from zero converges to a least-squares
+      solution, which is the minimum-norm solution in exact arithmetic. It is
+      not guaranteed to return the minimum-norm solution when rounding makes the
+      system slightly inconsistent. With a preconditioner, the Krylov space can
+      contain components in the null space of ``A``, so the returned solution
+      need not have minimum Euclidean norm even in exact arithmetic.
     - When multiple shifts are provided, the solver reuses Lanczos information and
       returns one solution per shift value.
     - All inputs should share device and dtype; the implementation normalizes
@@ -522,9 +525,6 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
             # Past n iterations, loss of Lanczos orthogonality can make the iterate drift while the residual
             # estimate keeps decreasing: monitor the true residual and keep the best iterate
             true_relative_residual = _tolerance_relative_residual(_true_residual(solution))
-            if best_solution is None:
-                best_solution = solution.clone()
-                best_relative_residual = torch.full_like(true_relative_residual, math.inf)
             improved = active & true_relative_residual.lt(best_relative_residual)
             best_solution = torch.where(improved, solution, best_solution)
             best_relative_residual = torch.where(improved, true_relative_residual, best_relative_residual)
@@ -549,6 +549,14 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
                     break
             if not bool(active.any()):
                 break
+
+        if not shifted_preconditioning and iterations == size and max_iter > size:
+            # Seed the drift guard with the iterate at n, or with the zero initial guess (relative residual 1)
+            # where that iterate is already worse, so that drift before the first check past n is never returned
+            true_relative_residual = _tolerance_relative_residual(_true_residual(solution))
+            use_zero = ~true_relative_residual.le(1)
+            best_solution = solution.masked_fill(use_zero, 0)
+            best_relative_residual = true_relative_residual.masked_fill(use_zero, 1)
 
         # Update terms for next iteration
         # Lanczos terms

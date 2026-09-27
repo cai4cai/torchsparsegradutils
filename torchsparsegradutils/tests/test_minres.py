@@ -398,3 +398,16 @@ def test_minres_tiny_float32_rhs_is_not_treated_as_zero(scale):
     if scale > 1e-38:
         # The true residual is measured relative to the tiny rhs, not reported as trivially zero
         assert info.true_relative_residual[0] > 0
+
+
+def test_minres_drift_guard_keeps_the_iterate_at_problem_size():
+    # With no true residual check past n before max_iter, the result must still not be worse than the iterate at n
+    matrix, rhs = _ill_conditioned_spd_float32()
+    size = matrix.shape[0]
+    settings = MINRESSettings(minres_check_every=10 * size)
+
+    _, at_size = minres(matrix, rhs, tolerance=1e-6, max_iter=size, settings=settings, return_info=True)
+    _, long_run = minres(matrix, rhs, tolerance=1e-6, max_iter=5 * size, settings=settings, return_info=True)
+
+    assert long_run.iterations == 5 * size
+    assert float(long_run.true_relative_residual) <= float(at_size.true_relative_residual) * (1 + 1e-5)
