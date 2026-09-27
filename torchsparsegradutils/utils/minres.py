@@ -10,10 +10,10 @@ from typing import Literal, NamedTuple
 import torch
 
 
-class MINRESSettings(NamedTuple):
+class _MINRESSettingsFields(NamedTuple):
     max_cg_iterations: int | None = None  # Deprecated alias of max_minres_iterations, kept in first position for
     # positional construction. When set, it takes precedence over max_minres_iterations and a DeprecationWarning is
-    # emitted.
+    # emitted. Reading it returns the effective iteration cap (see MINRESSettings.max_cg_iterations).
     minres_tolerance: float = 1e-4  # Relative tolerance used for terminating MINRES (see minres_convergence).
     verbose_linalg: bool = False  # Print out information whenever running an expensive linear algebra routine
     minres_convergence: Literal["residual", "update"] = "residual"  # "residual" stops once every right-hand side
@@ -23,6 +23,34 @@ class MINRESSettings(NamedTuple):
     # between true residual checks past n iterations. 1 checks every iteration.
     max_minres_iterations: int = 1000  # The maximum number of MINRES iterations to perform (when computing
     # matrix solves). A higher value rarely results in more accurate solves -- instead, lower the MINRES tolerance.
+
+
+_DEPRECATED_MAX_CG_ITERATIONS = _MINRESSettingsFields.max_cg_iterations
+
+
+class MINRESSettings(_MINRESSettingsFields):
+    """Settings for minres (see the field comments of the underlying named tuple)."""
+
+    __slots__ = ()
+
+    @property
+    def max_cg_iterations(self) -> int:
+        """Deprecated alias of ``max_minres_iterations``: the effective maximum number of MINRES iterations."""
+        warnings.warn(
+            "MINRESSettings.max_cg_iterations is deprecated, use MINRESSettings.max_minres_iterations instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._effective_max_minres_iterations
+
+    @property
+    def _uses_deprecated_max_cg_iterations(self) -> bool:
+        return _DEPRECATED_MAX_CG_ITERATIONS.__get__(self) is not None
+
+    @property
+    def _effective_max_minres_iterations(self) -> int:
+        deprecated = _DEPRECATED_MAX_CG_ITERATIONS.__get__(self)
+        return self.max_minres_iterations if deprecated is None else deprecated
 
 
 @dataclass(frozen=True)
@@ -181,8 +209,9 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     Raises
     ------
     ValueError
-        If ``tolerance``, ``max_iter``, ``settings.minres_convergence`` or
-        ``settings.minres_check_every`` is invalid, or if ``return_info`` is
+        If ``tolerance``, ``max_iter``, ``settings.max_minres_iterations``,
+        ``settings.minres_convergence`` or ``settings.minres_check_every`` is
+        invalid, or if ``return_info`` is
         combined with a preconditioner and nonzero shifts.
 
     Warns
@@ -287,14 +316,15 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     convergence = settings.minres_convergence
     if convergence not in ("residual", "update"):
         raise ValueError("settings.minres_convergence must be 'residual' or 'update'")
-    max_minres_iterations = settings.max_minres_iterations
-    if settings.max_cg_iterations is not None:
+    if settings._uses_deprecated_max_cg_iterations:
         warnings.warn(
             "MINRESSettings.max_cg_iterations is deprecated, use MINRESSettings.max_minres_iterations instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        max_minres_iterations = settings.max_cg_iterations
+    max_minres_iterations = settings._effective_max_minres_iterations
+    if max_minres_iterations < 0:
+        raise ValueError("settings.max_minres_iterations (or the deprecated max_cg_iterations) must be nonnegative")
     check_every = settings.minres_check_every
     if check_every < 1:
         raise ValueError("settings.minres_check_every must be at least 1")

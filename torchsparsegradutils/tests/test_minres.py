@@ -248,6 +248,10 @@ def test_minres_invalid_arguments():
         minres(matrix, rhs, settings=MINRESSettings(minres_convergence="bogus"))
     with pytest.raises(ValueError, match="minres_check_every"):
         minres(matrix, rhs, settings=MINRESSettings(minres_check_every=0))
+    with pytest.raises(ValueError, match="max_minres_iterations"):
+        minres(matrix, rhs, settings=MINRESSettings(max_minres_iterations=-1))
+    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="max_minres_iterations"):
+        minres(matrix, rhs, settings=MINRESSettings(max_cg_iterations=-1))
     with pytest.raises(ValueError, match="preconditioner and nonzero shifts"):
         minres(
             matrix,
@@ -441,3 +445,16 @@ def test_minres_drift_guard_prefers_saved_iterate_over_nan_final_residual():
     _, at_size = minres(matrix, rhs, tolerance=1e-6, max_iter=size, settings=settings, return_info=True)
     true_relative_residual = torch.linalg.vector_norm(rhs - matrix @ solution) / torch.linalg.vector_norm(rhs)
     assert float(true_relative_residual) <= float(at_size.true_relative_residual) * (1 + 1e-5)
+
+
+def test_minres_max_cg_iterations_attribute_returns_effective_cap():
+    cases = [(MINRESSettings(), 1000), (MINRESSettings(max_minres_iterations=5), 5), (MINRESSettings(7), 7)]
+    for settings, expected in cases:
+        with pytest.warns(DeprecationWarning, match="max_minres_iterations"):
+            assert settings.max_cg_iterations == expected
+
+    # The named tuple API still works on the underlying fields
+    settings = MINRESSettings(max_minres_iterations=5)._replace(minres_tolerance=1e-6)
+    assert isinstance(settings, MINRESSettings)
+    assert settings._asdict()["max_cg_iterations"] is None
+    assert settings.max_minres_iterations == 5
