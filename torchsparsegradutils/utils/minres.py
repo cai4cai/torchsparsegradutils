@@ -40,12 +40,13 @@ class MINRESInfo:
 
     The reason is "converged" when the recomputed true residual meets
     tolerance, "recursive_converged" or "update_converged" when the internal
-    stopping criterion is met but the true residual is not, "breakdown" when
-    every unconverged right-hand side hit a Lanczos breakdown or a non-finite
-    residual estimate, "stagnated" when, past n iterations, every unconverged
-    right-hand side stopped because its true residual no longer improved or
-    diverged from the residual estimate, and "max_iter" when the iteration
-    limit is reached.
+    stopping criterion is met but the true residual is not, and "max_iter"
+    when the iteration limit is reached. When every unconverged right-hand
+    side stopped early instead, the reason is "breakdown" if at least one of
+    them hit a Lanczos breakdown or a non-finite residual estimate (this takes
+    precedence), and "stagnated" otherwise, i.e. when, past n iterations, they
+    stopped because their true residual no longer improved or diverged from
+    the residual estimate.
     """
 
     iterations: int
