@@ -458,3 +458,21 @@ def test_minres_max_cg_iterations_attribute_returns_effective_cap():
     assert isinstance(settings, MINRESSettings)
     assert settings._asdict()["max_cg_iterations"] is None
     assert settings.max_minres_iterations == 5
+
+
+def test_minres_update_criterion_reports_breakdown_not_convergence():
+    matrix = torch.diag(torch.linspace(1, 2, 20, dtype=torch.float64))
+    rhs = torch.randn(20, 2, dtype=torch.float64)
+    settings = MINRESSettings(minres_convergence="update")
+
+    # An indefinite "preconditioner" breaks down one column, then every column
+    sign = torch.tensor([1.0, -1.0], dtype=torch.float64)
+    _, partial = minres(
+        matrix, rhs, preconditioner=lambda v: v * sign, max_iter=200, settings=settings, return_info=True
+    )
+    _, full = minres(matrix, rhs, preconditioner=lambda v: -v, max_iter=200, settings=settings, return_info=True)
+
+    assert partial.converged[0] and not partial.converged[1]
+    assert partial.reason == "breakdown"
+    assert full.reason == "breakdown"
+    assert not full.converged.any()

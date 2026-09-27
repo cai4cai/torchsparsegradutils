@@ -71,10 +71,10 @@ class MINRESInfo:
     stopping criterion is met but the true residual is not, and "max_iter"
     when the iteration limit is reached. When every unconverged right-hand
     side stopped early instead, the reason is "breakdown" if at least one of
-    them hit a Lanczos breakdown or a non-finite residual estimate (this takes
-    precedence), and "stagnated" otherwise, i.e. when, past n iterations, they
-    stopped because their true residual no longer improved or diverged from
-    the residual estimate.
+    them hit a Lanczos breakdown or a non-finite residual estimate, and
+    "stagnated" otherwise, i.e. when, past n iterations, they stopped because
+    their true residual no longer improved or diverged from the residual
+    estimate. "breakdown" takes precedence, also over "update_converged".
     """
 
     iterations: int
@@ -570,16 +570,18 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
             active = active & ~true_ok & ~newly_stagnated
 
         if check:
+            if not bool(active.any()):
+                break
             if convergence == "update":
+                # Frozen columns have zero updates: average the relative update over the active columns only
                 torch.linalg.vector_norm(search_update, dim=-2, out=search_update_norm)
                 torch.linalg.vector_norm(solution, dim=-2, out=solution_norm)
                 solution_norm.clamp_min_(torch.finfo(solution.dtype).tiny)
-                conv = search_update_norm.div_(solution_norm).mean().item()
+                conv = search_update_norm.div_(solution_norm)[active.squeeze(-2)].mean().item()
                 if conv < tolerance:
-                    stop_reason = "update_converged"
+                    # A column that broke down did not converge, whatever the other columns did
+                    stop_reason = "breakdown" if bool(broken.any()) else "update_converged"
                     break
-            if not bool(active.any()):
-                break
 
         if not shifted_preconditioning and iterations == size and max_iter > size:
             # Seed the drift guard with the iterate at n, or with the zero initial guess (relative residual 1)
