@@ -379,3 +379,22 @@ def test_minres_max_cg_iterations_is_a_deprecated_alias():
             matrix, rhs, tolerance=1e-10, settings=MINRESSettings(max_minres_iterations=5), return_info=True
         )
     assert info.iterations == 5
+
+
+@pytest.mark.parametrize("scale", [1e-30, 1e-40], ids=["tiny", "subnormal"])
+def test_minres_tiny_float32_rhs_is_not_treated_as_zero(scale):
+    # The squared entries underflow in float32, so a plain vector norm of this rhs would be zero
+    matrix = torch.diag(torch.linspace(1, 2, 5))
+    rhs = torch.full((5, 2), scale)
+    rhs[:, 1] = 0
+
+    solution, info = minres(matrix, rhs, tolerance=1e-5, return_info=True)
+
+    expected = rhs[:, 0] / matrix.diagonal()
+    torch.testing.assert_close(solution[:, 0], expected, atol=0, rtol=1e-3 if scale < 1e-38 else 1e-5)
+    assert torch.equal(solution[:, 1], torch.zeros(5))
+    assert info.converged.all()
+    assert info.true_relative_residual[0] <= 1e-5
+    if scale > 1e-38:
+        # The true residual is measured relative to the tiny rhs, not reported as trivially zero
+        assert info.true_relative_residual[0] > 0

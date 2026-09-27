@@ -57,6 +57,18 @@ class MINRESInfo:
     reason: Literal["converged", "recursive_converged", "update_converged", "breakdown", "stagnated", "max_iter"]
 
 
+def _column_scale(x):
+    """Largest absolute entry of each column (over dim -2), with 1 for all-zero columns."""
+    scale = x.abs().amax(dim=-2, keepdim=True)
+    return scale.masked_fill_(scale.eq(0), 1)
+
+
+def _column_norm(x):
+    """Euclidean norm of each column (over dim -2), scaled so that tiny or huge entries do not under/overflow."""
+    scale = _column_scale(x)
+    return torch.linalg.vector_norm(x / scale, ord=2, dim=-2, keepdim=True).mul_(scale)
+
+
 def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
     """
     Pad obj with singleton dimensions on the left and right
@@ -311,9 +323,9 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         )
         max_iter = size + 1
 
-    rhs_norm = torch.linalg.vector_norm(rhs, ord=2, dim=-2, keepdim=True)
-    rhs_is_zero = rhs_norm.eq(0)
-    rhs_norm = rhs_norm.masked_fill(rhs_is_zero, 1)
+    # Detect zero right-hand sides from their entries: the norm of a tiny nonzero rhs can underflow
+    rhs_is_zero = rhs.eq(0).all(dim=-2, keepdim=True)
+    rhs_norm = _column_norm(rhs).masked_fill_(rhs_is_zero, 1)
     rhs = rhs.div(rhs_norm)
 
     # Epsilon (to prevent nans)
@@ -409,10 +421,13 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
 
     def _tolerance_relative_residual(residual):
         # Relative residual in the norm the tolerance applies to: the M^{-1}-norm with a preconditioner
+        # (columns are scaled by their largest entry first so that tiny residuals do not underflow)
         if has_preconditioner:
-            norm = torch.stack([(r * preconditioner(r)).sum(dim=-2, keepdim=True) for r in residual])
-            return norm.clamp_min_(0).sqrt_().div_(beta_initial * rhs_norm)
-        return torch.linalg.vector_norm(residual, ord=2, dim=-2, keepdim=True).div_(rhs_norm)
+            scale = _column_scale(residual)
+            scaled = residual / scale
+            norm = torch.stack([(r * preconditioner(r)).sum(dim=-2, keepdim=True) for r in scaled])
+            return norm.clamp_min_(0).sqrt_().mul_(scale).div_(beta_initial * rhs_norm)
+        return _column_norm(residual).div_(rhs_norm)
 
     # Maybe log
     if settings.verbose_linalg:
@@ -585,7 +600,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
 
     if return_info:
         # Recompute the Euclidean true residual of each shifted system
-        true_relative_residual = torch.linalg.vector_norm(_true_residual(solution), ord=2, dim=-2, keepdim=True)
+        true_relative_residual = _column_norm(_true_residual(solution))
         true_relative_residual = true_relative_residual.div_(rhs_norm).masked_fill_(rhs_is_zero, 0)
         converged = true_relative_residual.le(tolerance)
         reason = "converged" if bool(converged.all()) else stop_reason
