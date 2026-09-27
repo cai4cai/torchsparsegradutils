@@ -341,3 +341,19 @@ def test_minres_ill_conditioned_float32_does_not_drift(jacobi, max_iter_factor):
 
     with pytest.warns(UserWarning, match="MINRES terminated"):
         minres(matrix, rhs, tolerance=1e-6, max_iter=max_iter, preconditioner=preconditioner)
+
+
+def test_minres_shifted_preconditioned_max_iter_is_capped_at_problem_size():
+    size = 20
+    matrix = _ill_conditioned_spd(size, -1)
+    rhs = torch.randn(size, 2, dtype=torch.float64)
+    shifts = torch.tensor([0.0, 1.0], dtype=torch.float64)
+    preconditioner = lambda v: v.clone()  # noqa: E731
+
+    with pytest.warns(UserWarning, match="MINRES terminated after 21 iterations"):
+        with pytest.warns(UserWarning, match="capped at n \\+ 1 = 21"):
+            capped = minres(matrix, rhs, shifts=shifts, preconditioner=preconditioner, tolerance=0.0, max_iter=500)
+    with pytest.warns(UserWarning, match="MINRES terminated after 21 iterations"):
+        reference = minres(matrix, rhs, shifts=shifts, preconditioner=preconditioner, tolerance=0.0, max_iter=21)
+
+    torch.testing.assert_close(capped, reference)

@@ -119,7 +119,9 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         kept. A right-hand side then stops once its true residual meets the
         tolerance, once its residual estimate meets the tolerance while its true
         residual does not, or after 3 checks without improvement. Going past
-        ``n`` is only useful while the true residual is still decreasing.
+        ``n`` is only useful while the true residual is still decreasing. With a
+        preconditioner and nonzero shifts, this true residual is unavailable, so
+        ``max_iter`` is capped at ``n + 1`` with a warning.
     preconditioner : callable, optional
         Symmetric positive definite preconditioner with signature
         ``preconditioner(x) -> M^{-1} x``. If ``None``, no preconditioning is used.
@@ -169,6 +171,9 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
 
     Warns
     -----
+    UserWarning
+        If an explicit ``max_iter`` above ``n + 1`` is capped because a
+        preconditioner is combined with nonzero shifts.
     UserWarning
         With the ``"residual"`` criterion and ``return_info=False``, if some
         right-hand sides did not reach the tolerance. After more than ``n``
@@ -284,6 +289,16 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     # Use the right number of iterations
     if max_iter is None:
         max_iter = min(settings.max_cg_iterations, size + 1)
+    elif shifted_preconditioning and max_iter > size + 1:
+        # Past n iterations the true residual guards against drift, but (A + sigma M) x cannot be checked
+        # from M^{-1} alone: do not run unguarded past n
+        warnings.warn(
+            f"max_iter={max_iter} is capped at n + 1 = {size + 1} for MINRES with a preconditioner and nonzero "
+            "shifts, since the true residual needed to guard iterations past n cannot be computed.",
+            UserWarning,
+            stacklevel=2,
+        )
+        max_iter = size + 1
 
     rhs_norm = torch.linalg.vector_norm(rhs, ord=2, dim=-2, keepdim=True)
     rhs_is_zero = rhs_norm.eq(0)
