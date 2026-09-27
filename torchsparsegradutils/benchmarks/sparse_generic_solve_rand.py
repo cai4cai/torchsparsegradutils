@@ -99,7 +99,7 @@ def make_generic_solver_with_tol(solver_func):
         from torchsparsegradutils.utils.minres import MINRESSettings
 
         settings = MINRESSettings(
-            minres_tolerance=SOLVER_TOL, max_cg_iterations=SOLVER_MAXITER, verbose_linalg=SOLVER_VERBOSE
+            minres_tolerance=SOLVER_TOL, max_minres_iterations=SOLVER_MAXITER, verbose_linalg=SOLVER_VERBOSE
         )
         return lambda A, B: sparse_generic_solve(
             A, B, solve=solver_func, transpose_solve=solver_func, settings=settings

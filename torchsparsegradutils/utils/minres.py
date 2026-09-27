@@ -11,8 +11,9 @@ import torch
 
 
 class MINRESSettings(NamedTuple):
-    max_cg_iterations: int = 1000  # The maximum number of MINRES iterations to perform (when computing
-    # matrix solves). A higher value rarely results in more accurate solves -- instead, lower the MINRES tolerance.
+    max_cg_iterations: int | None = None  # Deprecated alias of max_minres_iterations, kept in first position for
+    # positional construction. When set, it takes precedence over max_minres_iterations and a DeprecationWarning is
+    # emitted.
     minres_tolerance: float = 1e-4  # Relative tolerance used for terminating MINRES (see minres_convergence).
     verbose_linalg: bool = False  # Print out information whenever running an expensive linear algebra routine
     minres_convergence: Literal["residual", "update"] = "residual"  # "residual" stops once every right-hand side
@@ -20,6 +21,8 @@ class MINRESSettings(NamedTuple):
     # criterion on the mean relative norm of the solution update.
     minres_check_every: int = 10  # Iterations between termination checks, which synchronise with the host, and
     # between true residual checks past n iterations. 1 checks every iteration.
+    max_minres_iterations: int = 1000  # The maximum number of MINRES iterations to perform (when computing
+    # matrix solves). A higher value rarely results in more accurate solves -- instead, lower the MINRES tolerance.
 
 
 @dataclass(frozen=True)
@@ -109,7 +112,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         when provided. Default: ``None`` (no scaling).
     max_iter : int, optional
         Maximum iterations. If ``None``, uses
-        ``min(settings.max_cg_iterations, n + 1)`` where ``n`` is the problem size.
+        ``min(settings.max_minres_iterations, n + 1)`` where ``n`` is the problem size.
         An explicit value is used as given: in finite precision, loss of Lanczos
         orthogonality can require more than ``n`` iterations. Past ``n``
         iterations, the iterate can also drift away from the solution while the
@@ -241,7 +244,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
 
     Custom iteration cap/tolerance:
 
-    >>> settings = MINRESSettings(max_cg_iterations=200, minres_tolerance=1e-5)
+    >>> settings = MINRESSettings(max_minres_iterations=200, minres_tolerance=1e-5)
     >>> x = minres(A.matmul, b, settings=settings)
 
     Convergence information:
@@ -268,6 +271,14 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     convergence = settings.minres_convergence
     if convergence not in ("residual", "update"):
         raise ValueError("settings.minres_convergence must be 'residual' or 'update'")
+    max_minres_iterations = settings.max_minres_iterations
+    if settings.max_cg_iterations is not None:
+        warnings.warn(
+            "MINRESSettings.max_cg_iterations is deprecated, use MINRESSettings.max_minres_iterations instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        max_minres_iterations = settings.max_cg_iterations
     check_every = settings.minres_check_every
     if check_every < 1:
         raise ValueError("settings.minres_check_every must be at least 1")
@@ -288,7 +299,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
 
     # Use the right number of iterations
     if max_iter is None:
-        max_iter = min(settings.max_cg_iterations, size + 1)
+        max_iter = min(max_minres_iterations, size + 1)
     elif shifted_preconditioning and max_iter > size + 1:
         # Past n iterations the true residual guards against drift, but (A + sigma M) x cannot be checked
         # from M^{-1} alone: do not run unguarded past n

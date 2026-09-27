@@ -357,3 +357,25 @@ def test_minres_shifted_preconditioned_max_iter_is_capped_at_problem_size():
         reference = minres(matrix, rhs, shifts=shifts, preconditioner=preconditioner, tolerance=0.0, max_iter=21)
 
     torch.testing.assert_close(capped, reference)
+
+
+def test_minres_max_cg_iterations_is_a_deprecated_alias():
+    size = 30
+    matrix = _ill_conditioned_spd(size, -6)
+    rhs = torch.randn(size, 2, dtype=torch.float64)
+
+    with pytest.warns(DeprecationWarning, match="max_minres_iterations"):
+        _, info = minres(matrix, rhs, tolerance=1e-10, settings=MINRESSettings(max_cg_iterations=5), return_info=True)
+    assert info.iterations == 5
+
+    # Positional construction still sets the deprecated first field
+    with pytest.warns(DeprecationWarning, match="max_minres_iterations"):
+        _, info = minres(matrix, rhs, tolerance=1e-10, settings=MINRESSettings(7), return_info=True)
+    assert info.iterations == 7
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _, info = minres(
+            matrix, rhs, tolerance=1e-10, settings=MINRESSettings(max_minres_iterations=5), return_info=True
+        )
+    assert info.iterations == 5
