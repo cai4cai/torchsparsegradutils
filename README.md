@@ -73,7 +73,7 @@ A comprehensive collection of utility functions to work with PyTorch sparse tens
 - `segment_mm`: Segmented matrix multiplication compatible with DGL/PyG
 - `gather_mm`: Gather-based matrix multiplication for graph operations
 - Pure PyTorch implementations as alternatives to [`dgl.ops.segment_mm`](https://docs.dgl.ai/generated/dgl.ops.segment_mm.html), [`pyg_lib.ops.segment_matmul`](https://pyg-lib.readthedocs.io/en/latest/modules/ops.html#pyg_lib.ops.segment_matmul), and [`dgl.ops.gather_mm`](https://docs.dgl.ai/generated/dgl.ops.gather_mm.html)
-- Supports PyTorch >= 2.4 with nested tensor operations
+- Uses DGL when installed, otherwise a pure PyTorch padded (`"pad"`) or per-row (`"expand"`) implementation picked by memory footprint; override with `strategy=...`
 
 
 
@@ -353,6 +353,9 @@ result = segment_mm(a, b, seglen_a)
 indices = torch.tensor([0, 0, 1, 1, 2])
 a_gathered = torch.randn(5, 10, requires_grad=True)
 result = gather_mm(a_gathered, b, indices)
+
+# Force a specific implementation: "auto" (default), "dgl", "pad" or "expand"
+result = segment_mm(a, b, seglen_a, strategy="pad")
 ```
 
 ### Statistical Distribution Validation

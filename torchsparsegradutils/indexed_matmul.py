@@ -1,5 +1,6 @@
+from typing import Literal
+
 import torch
-from packaging.version import parse as parse_version
 
 try:
     import dgl.ops as dglops
@@ -9,7 +10,44 @@ except ImportError:
     dgl_installed = False
 
 
-def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torch.Tensor:
+Strategy = Literal["auto", "dgl", "pad", "expand"]
+_STRATEGIES = ("auto", "dgl", "pad", "expand")
+
+
+_DGL_DEVICE_TYPES = ("cpu", "cuda")
+
+
+def _use_dgl(strategy: str, device: torch.device) -> bool:
+    if strategy not in _STRATEGIES:
+        raise ValueError(f"Unknown strategy {strategy!r}, expected one of {_STRATEGIES}")
+    if strategy == "dgl" and not dgl_installed:
+        raise ImportError("strategy='dgl' requires DGL to be installed")
+    # "auto" only picks DGL on devices it supports (e.g. not MPS)
+    return strategy == "dgl" or (strategy == "auto" and dgl_installed and device.type in _DGL_DEVICE_TYPES)
+
+
+def _prefer_pad(N: int, R: int, L: int, D1: int, D2: int) -> bool:
+    # Compare the extra memory of each pure PyTorch variant:
+    # "pad" allocates (R, L, D1) and (R, L, D2) blocks, "expand" gathers an (N, D1, D2) copy of b
+    return R * L * (D1 + D2) < N * D1 * D2
+
+
+def _segment_mm_pad(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor, L: int) -> torch.Tensor:
+    # Scatter each segment of a into a zero-padded (R, L, D1) block and run a single dense bmm
+    R = b.shape[0]
+    starts = torch.cumsum(seglen_a, dim=0) - seglen_a
+    seg = torch.repeat_interleave(torch.arange(R, device=a.device), seglen_a, output_size=a.shape[0])
+    pos = torch.arange(a.shape[0], device=a.device) - starts[seg]
+    a_pad = a.new_zeros((R, L, a.shape[1])).index_put((seg, pos), a)
+    return torch.bmm(a_pad, b)[seg, pos]
+
+
+def _gather_mm_expand(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Tensor:
+    # Materialise one (D1, D2) matrix per row and run a batched matrix-vector product
+    return torch.bmm(a.unsqueeze(1), b[idx_b]).squeeze(1)
+
+
+def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor, strategy: Strategy = "auto") -> torch.Tensor:
     r"""
     Segmented matrix multiplication with variable-length segments.
 
@@ -28,6 +66,8 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torc
         Right operand containing one ``(D1, D2)`` matrix per segment.
     seglen_a : torch.Tensor, shape ``(R,)``, integer dtype
         Length of each segment in ``a``. ``seglen_a.sum()`` must equal ``N``.
+    strategy : {"auto", "dgl", "pad", "expand"}, optional
+        Implementation to use (default ``"auto"``). See Notes.
 
     Returns
     -------
@@ -36,16 +76,26 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torc
 
     Raises
     ------
-    NotImplementedError
-        If the fallback path is used on a PyTorch version lacking nested
-        tensor matmul support (requires PyTorch >= 2.4).
     ValueError
-        If input ranks or sizes are incompatible.
+        If input ranks or sizes are incompatible, or ``strategy`` is unknown.
+    ImportError
+        If ``strategy="dgl"`` and DGL is not installed.
 
     Notes
     -----
-    If DGL is available, this uses :func:`dgl.ops.segment_mm` [1c]_ (typically faster).
-    Otherwise it falls back to a PyTorch nested-tensor implementation.
+    Available strategies:
+
+    - ``"dgl"``: :func:`dgl.ops.segment_mm` [1c]_ (typically fastest).
+    - ``"pad"``: scatters ``a`` into a zero-padded ``(R, max(seglen_a), D1)`` block
+      and runs a single :func:`torch.bmm`. Extra memory is
+      :math:`O(R \cdot \max(\text{seglen}_a) \cdot (D_1 + D_2))`, which grows when
+      segment lengths are unbalanced. Requires one device-to-host synchronisation.
+    - ``"expand"``: gathers one copy of ``b`` per row of ``a`` and runs a batched
+      matrix-vector product. Extra memory is :math:`O(N \cdot D_1 \cdot D_2)`.
+      Does not synchronise with the host.
+    - ``"auto"``: uses ``"dgl"`` if DGL is installed and supports the device of
+      ``a`` (CPU or CUDA), otherwise whichever of ``"pad"`` and ``"expand"``
+      needs less extra memory.
 
     See Also
     --------
@@ -74,12 +124,7 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torc
         >>> segment_mm(a, b, seglen_a).shape
         torch.Size([18, 2])
     """
-    if parse_version(torch.__version__) < parse_version("2.4"):
-        raise NotImplementedError("PyTorch version is too old for nested tensors")
-
-    if dgl_installed:
-        # DGL is probably more computationally efficient
-        # See https://github.com/pytorch/pytorch/issues/136747
+    if _use_dgl(strategy, a.device):
         return dglops.segment_mm(a, b, seglen_a)
 
     if not a.dim() == 2 or not b.dim() == 3 or not seglen_a.dim() == 1:
@@ -92,21 +137,15 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor) -> torc
     if not a.shape[1] == D1 or not seglen_a.shape[0] == R:
         raise ValueError("Incompatible size for inputs")
 
-    segidx_a = torch.cumsum(seglen_a[:-1], dim=0).cpu()
+    L = int(seglen_a.max()) if strategy != "expand" and R > 0 else 0
+    if strategy == "pad" or (strategy == "auto" and _prefer_pad(N, R, L, D1, D2)):
+        return _segment_mm_pad(a, b, seglen_a, L)
 
-    # Ideally the conversions below to nested tensor would be handled natively
-    nested_a = torch.nested.as_nested_tensor(torch.tensor_split(a, segidx_a, dim=0))
-    nested_b = torch.nested.as_nested_tensor(torch.split(b, 1, dim=0)).reshape((R, D1, D2))
-
-    # The actual gather matmul computation
-    nested_ab = torch.matmul(nested_a, nested_b)
-
-    # Convert back to tensors, again ideally this would be handled natively
-    ab = torch.cat(nested_ab.unbind(), dim=0)
-    return ab
+    idx_b = torch.repeat_interleave(torch.arange(R, device=a.device), seglen_a, output_size=N)
+    return _gather_mm_expand(a, b, idx_b)
 
 
-def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Tensor:
+def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor, strategy: Strategy = "auto") -> torch.Tensor:
     r"""
     Per-row indexed matrix multiplication.
 
@@ -122,6 +161,8 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Te
     idx_b : torch.Tensor, shape ``(N,)``, integer dtype
         Indices selecting which matrix in ``b`` to use for each row. Values
         must satisfy ``0 <= idx_b[i] < R``.
+    strategy : {"auto", "dgl", "pad", "expand"}, optional
+        Implementation to use (default ``"auto"``). See Notes.
 
     Returns
     -------
@@ -130,16 +171,28 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Te
 
     Raises
     ------
-    NotImplementedError
-        If the fallback path is used on a PyTorch version lacking nested
-        tensor matmul support (requires PyTorch >= 2.4).
     ValueError
-        If inputs are not tensors, ranks are incorrect, or sizes are incompatible.
+        If inputs are not tensors, ranks are incorrect, sizes are incompatible,
+        or ``strategy`` is unknown.
+    ImportError
+        If ``strategy="dgl"`` and DGL is not installed.
 
     Notes
     -----
-    If DGL is available, this uses :func:`dgl.ops.gather_mm` [1b]_. Otherwise it uses
-    a dependency-free PyTorch nested-tensor fallback.
+    Available strategies:
+
+    - ``"dgl"``: :func:`dgl.ops.gather_mm` [1b]_ (typically fastest).
+    - ``"pad"``: sorts the rows of ``a`` by ``idx_b`` and runs the ``"pad"``
+      strategy of :func:`segment_mm`. Extra memory is
+      :math:`O(R \cdot c_{\max} \cdot (D_1 + D_2))` where :math:`c_{\max}` is the
+      largest number of rows sharing the same index. Requires one device-to-host
+      synchronisation.
+    - ``"expand"``: gathers ``b[idx_b]`` and runs a batched matrix-vector product.
+      Extra memory is :math:`O(N \cdot D_1 \cdot D_2)`. Does not synchronise with
+      the host.
+    - ``"auto"``: uses ``"dgl"`` if DGL is installed and supports the device of
+      ``a`` (CPU or CUDA), otherwise whichever of ``"pad"`` and ``"expand"``
+      needs less extra memory.
 
     See Also
     --------
@@ -178,17 +231,11 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Te
         tensor([[1., 2.],
                 [6., 8.]])
     """
-    if parse_version(torch.__version__) < parse_version("2.4"):
-        raise NotImplementedError("PyTorch version is too old for nested tensors")
-
-    if dgl_installed:
-        # DGL is more computationally efficient
-        # See https://github.com/pytorch/pytorch/issues/136747
-        return dglops.gather_mm(a, b, idx_b)
-
-    # Dependency free fallback
     if not isinstance(a, torch.Tensor) or not isinstance(b, torch.Tensor) or not isinstance(idx_b, torch.Tensor):
         raise ValueError("Inputs should be instances of torch.Tensor")
+
+    if _use_dgl(strategy, a.device):
+        return dglops.gather_mm(a, b, idx_b)
 
     if not a.dim() == 2 or not b.dim() == 3 or not idx_b.dim() == 1:
         raise ValueError("Input tensors have unexpected dimensions")
@@ -200,19 +247,16 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor) -> torch.Te
     if not a.shape[0] == N or not a.shape[1] == D1:
         raise ValueError("Incompatible size for inputs")
 
-    torchdevice = a.device
-    src_idx = torch.arange(N, device=torchdevice)
+    if strategy == "expand":
+        return _gather_mm_expand(a, b, idx_b)
 
-    # Ideally the conversions below to nested tensor would be handled without for loops and without copy
-    nested_a = torch.nested.as_nested_tensor([a[idx_b == i, :] for i in range(R)])
-    src_idx_reshuffled = torch.cat([src_idx[idx_b == i] for i in range(R)])
-    nested_b = torch.nested.as_nested_tensor(torch.split(b, 1, dim=0)).reshape((R, D1, D2))
+    seglen = torch.bincount(idx_b, minlength=R)
+    L = int(seglen.max()) if R > 0 else 0
+    if strategy == "pad" or _prefer_pad(N, R, L, D1, D2):
+        # Group rows by index so that the "pad" segment_mm can be used, then undo the permutation
+        perm = torch.argsort(idx_b, stable=True)
+        ab = a.new_empty((N, D2))
+        ab[perm] = _segment_mm_pad(a[perm], b, seglen, L)
+        return ab
 
-    # The actual gather matmul computation
-    nested_ab = torch.matmul(nested_a, nested_b)
-
-    # Convert back to tensors, again, ideally this would be handled natively with no copy
-    ab_segmented = torch.cat(nested_ab.unbind(), dim=0)
-    ab = torch.empty((N, D2), device=torchdevice)
-    ab[src_idx_reshuffled] = ab_segmented
-    return ab
+    return _gather_mm_expand(a, b, idx_b)
