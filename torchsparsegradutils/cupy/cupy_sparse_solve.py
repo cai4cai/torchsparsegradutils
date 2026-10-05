@@ -1,6 +1,6 @@
 import inspect
 import warnings
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union, cast
 
 import torch
 
@@ -263,7 +263,7 @@ def sparse_solve_c4t(
     solve_func = _get_solver_function(solve, xsp, A.device)
     transpose_solve_func = _get_solver_function(transpose_solve, xsp, A.device)
 
-    return SparseSolveC4T.apply(A, B, solve_func, transpose_solve_func, kwargs)
+    return cast(torch.Tensor, SparseSolveC4T.apply(A, B, solve_func, transpose_solve_func, kwargs))
 
 
 class SparseSolveC4T(torch.autograd.Function):
@@ -341,7 +341,9 @@ class SparseSolveC4T(torch.autograd.Function):
         return x
 
     @staticmethod
-    def backward(ctx, grad: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, None, None, None]:
+    def backward(  # type: ignore[override]
+        ctx, grad: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, None, None, None]:
         A, x = ctx.saved_tensors
         xp, xsp = tsgucupy._get_array_modules(A.data)
 
@@ -385,6 +387,7 @@ class SparseSolveC4T(torch.autograd.Function):
         # gradA[i,j] = - dotprod(gradB[i,:], x[j,:])
 
         # We start by getting the i and j indices:
+        A_crow_idx = None
         if A.layout == torch.sparse_coo:
             A_row_idx = A.indices()[0, :]
             A_col_idx = A.indices()[1, :]
@@ -410,6 +413,7 @@ class SparseSolveC4T(torch.autograd.Function):
         if A.layout == torch.sparse_coo:
             gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
         else:
+            assert A_crow_idx is not None
             gradA = torch.sparse_csr_tensor(A_crow_idx, A_col_idx, gradA, A.shape)
 
         # Squeeze gradB back to original shape if it was a vector

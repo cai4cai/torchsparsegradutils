@@ -174,7 +174,7 @@ def lsmr(
     if b.dim() > 1:
         b = b.squeeze()
     eps = torch.finfo(sdtype).eps
-    damp = torch.as_tensor(damp, dtype=sdtype, device=b.device)
+    damp_tensor = torch.as_tensor(damp, dtype=sdtype, device=b.device)
     ctol = 1 / conlim if conlim > 0 else 0.0
     m = b.shape[0]
     if maxiter is None:
@@ -281,7 +281,7 @@ def lsmr(
 
         # At this point, beta = beta_{k+1}, alpha = alpha_{k+1}.
 
-        _sym_ortho(alphabar, damp, out=(chat, shat, alphahat))
+        _sym_ortho(alphabar, damp_tensor, out=(chat, shat, alphahat))
 
         # Use a plane rotation (Q_i) to turn B_i to R_i
 

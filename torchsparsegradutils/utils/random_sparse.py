@@ -415,7 +415,8 @@ def generate_random_sparse_coo_matrix(
             diagonal_mask = coo_indices[0] == coo_indices[1]
             if diagonal_mask.any():
                 values[diagonal_mask] = (
-                    torch.rand(diagonal_mask.sum(), dtype=values_dtype, device=device) * 0.5 + min_diag_value
+                    torch.rand(int(diagonal_mask.sum().item()), dtype=values_dtype, device=device) * 0.5
+                    + min_diag_value
                 )
     else:
         sparse_dim_indices = torch.cat(
@@ -433,7 +434,8 @@ def generate_random_sparse_coo_matrix(
             diagonal_mask = coo_indices[1] == coo_indices[2]  # For batched case, check row vs col indices
             if diagonal_mask.any():
                 values[diagonal_mask] = (
-                    torch.rand(diagonal_mask.sum(), dtype=values_dtype, device=device) * 0.5 + min_diag_value
+                    torch.rand(int(diagonal_mask.sum().item()), dtype=values_dtype, device=device) * 0.5
+                    + min_diag_value
                 )
 
     return torch.sparse_coo_tensor(coo_indices, values, size, device=device).coalesce()
@@ -538,7 +540,8 @@ def generate_random_sparse_csr_matrix(
             diagonal_mask = coo_indices[0] == coo_indices[1]
             if diagonal_mask.any():
                 values[diagonal_mask] = (
-                    torch.rand(diagonal_mask.sum(), dtype=values_dtype, device=device) * 0.5 + min_diag_value
+                    torch.rand(int(diagonal_mask.sum().item()), dtype=values_dtype, device=device) * 0.5
+                    + min_diag_value
                 )
 
         crow_indices, col_indices, values = convert_coo_to_csr_indices_values(coo_indices, size[-2], values=values)
@@ -562,7 +565,8 @@ def generate_random_sparse_csr_matrix(
                 flat_diagonal_mask = diagonal_mask.repeat(size[0])
                 values_flat = values.view(-1)
                 values_flat[flat_diagonal_mask] = (
-                    torch.rand(flat_diagonal_mask.sum(), dtype=values_dtype, device=device) * 0.5 + min_diag_value
+                    torch.rand(int(flat_diagonal_mask.sum().item()), dtype=values_dtype, device=device) * 0.5
+                    + min_diag_value
                 )
                 values = values_flat.view(size[0], nnz)
 
@@ -1035,9 +1039,9 @@ def generate_random_sparse_triangular_coo_matrix(
             # Ensure diagonal elements are sufficiently large for well-conditioning
             diagonal_mask = coo_idx[0] == coo_idx[1]
             if diagonal_mask.any():
-                values[diagonal_mask] = torch.rand(diagonal_mask.sum(), dtype=values_dtype, device=device) * (
-                    value_range[1] - value_range[0]
-                ) + max(min_diag_value, value_range[0])
+                values[diagonal_mask] = torch.rand(
+                    int(diagonal_mask.sum().item()), dtype=values_dtype, device=device
+                ) * (value_range[1] - value_range[0]) + max(min_diag_value, value_range[0])
     else:
         coo_idx = torch.cat(
             [
@@ -1055,7 +1059,8 @@ def generate_random_sparse_triangular_coo_matrix(
             diagonal_mask = coo_idx[1] == coo_idx[2]  # For batched case, check row vs col indices
             if diagonal_mask.any():
                 diagonal_values = (
-                    torch.rand(diagonal_mask.sum(), dtype=values_dtype, device=device) * 0.5 + min_diag_value
+                    torch.rand(int(diagonal_mask.sum().item()), dtype=values_dtype, device=device) * 0.5
+                    + min_diag_value
                 )
                 # Apply value_range to non-diagonal values only
                 values = values * (value_range[1] - value_range[0]) + value_range[0]
@@ -1170,7 +1175,8 @@ def generate_random_sparse_triangular_csr_matrix(
             diagonal_mask = coo_idx[0] == coo_idx[1]
             if diagonal_mask.any():
                 diagonal_values = (
-                    torch.rand(diagonal_mask.sum(), dtype=values_dtype, device=device) * 0.5 + min_diag_value
+                    torch.rand(int(diagonal_mask.sum().item()), dtype=values_dtype, device=device) * 0.5
+                    + min_diag_value
                 )
                 # Apply value_range to all values first
                 values = values * (value_range[1] - value_range[0]) + value_range[0]
@@ -1201,7 +1207,8 @@ def generate_random_sparse_triangular_csr_matrix(
                 # The diagonal_mask already has the correct shape [batch_size * nnz]
                 # since coo_idx was created by concatenating batch_size matrices each with nnz elements
                 diagonal_values = (
-                    torch.rand(diagonal_mask.sum(), dtype=values_dtype, device=device) * 0.5 + min_diag_value
+                    torch.rand(int(diagonal_mask.sum().item()), dtype=values_dtype, device=device) * 0.5
+                    + min_diag_value
                 )
                 # Apply value_range to all values first
                 values = values * (value_range[1] - value_range[0]) + value_range[0]

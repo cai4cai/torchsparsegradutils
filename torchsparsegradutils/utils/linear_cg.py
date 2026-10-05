@@ -391,6 +391,14 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     has_converged = torch.le(residual_norm, stop_updating_after)
     stopped_before_iteration = False
 
+    precond_residual: torch.Tensor | None = None
+    curr_conjugate_vec: torch.Tensor | None = None
+    residual_inner_prod: torch.Tensor | None = None
+    mul_storage: torch.Tensor | None = None
+    alpha: torch.Tensor | None = None
+    beta: torch.Tensor | None = None
+    is_zero: torch.Tensor | None = None
+
     if has_converged.all() and not n_tridiag and min_iter == 0:
         n_iter = 0  # Skip the iteration!
         stopped_before_iteration = True
@@ -418,7 +426,13 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
         is_zero = torch.empty(*batch_shape, 1, rhs.size(-1), dtype=torch.bool, device=residual.device)
 
     # Define tridiagonal matrices, if applicable
+    t_mat: torch.Tensor | None = None
+    alpha_tridiag_is_zero: torch.Tensor | None = None
+    alpha_reciprocal: torch.Tensor | None = None
+    prev_alpha_reciprocal: torch.Tensor | None = None
+    prev_beta: torch.Tensor | None = None
     if n_tridiag:
+        assert alpha is not None
         t_mat = torch.zeros(
             n_tridiag_iter, n_tridiag_iter, *batch_shape, n_tridiag, dtype=alpha.dtype, device=alpha.device
         )
@@ -436,6 +450,14 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
 
     # Start the iteration
     for k in range(n_iter):
+        assert precond_residual is not None
+        assert curr_conjugate_vec is not None
+        assert residual_inner_prod is not None
+        assert mul_storage is not None
+        assert alpha is not None
+        assert beta is not None
+        assert is_zero is not None
+
         # Get next alpha
         # alpha_{k} = (residual_{k-1}^T precon_residual{k-1}) / (p_vec_{k-1}^T mat p_vec_{k-1})
         mvms = matmul_closure(curr_conjugate_vec)
@@ -514,6 +536,11 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
 
         # Update tridiagonal matrices, if applicable
         if n_tridiag and k < n_tridiag_iter and update_tridiag:
+            assert t_mat is not None
+            assert alpha_tridiag_is_zero is not None
+            assert alpha_reciprocal is not None
+            assert prev_alpha_reciprocal is not None
+            assert prev_beta is not None
             alpha_tridiag = alpha.squeeze(-2).narrow(-1, 0, n_tridiag)
             beta_tridiag = beta.squeeze(-2).narrow(-1, 0, n_tridiag)
             torch.eq(alpha_tridiag, 0, out=alpha_tridiag_is_zero)
@@ -568,6 +595,7 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
             stacklevel=2,
         )
 
+    info: CGInfo | None = None
     if return_info:
         info = CGInfo(
             iterations=iterations,
@@ -583,11 +611,14 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
         result = result.squeeze(-1)
 
     if n_tridiag:
+        assert t_mat is not None
         t_mat = t_mat[: last_tridiag_iter + 1, : last_tridiag_iter + 1]
         tridiagonal = t_mat.permute(-1, *range(2, 2 + len(batch_shape)), 0, 1).contiguous()
         if return_info:
+            assert info is not None
             return result, tridiagonal, info
         return result, tridiagonal
     if return_info:
+        assert info is not None
         return result, info
     return result

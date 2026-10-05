@@ -47,7 +47,7 @@ To switch configurations, modify the ``dockerfile`` field in ``.devcontainer/dev
 - **CUDA 12.8**: Full GPU development support with NVIDIA drivers
 - **Pre-installed Dependencies**: PyTorch, CuPy, JAX, SciPy, and all development tools
 - **VS Code Extensions**: Python, Pylance, Jupyter, GitHub Copilot, and code formatting tools
-- **Development Tools**: pytest, Ruff, pre-commit hooks
+- **Development Tools**: pytest, Ruff, Pyrefly, pre-commit hooks
 - **Python Environment**: Python 3.10+ with all optional dependencies
 
 **Benefits:**
@@ -101,6 +101,12 @@ We use Ruff to maintain code quality:
 
    ruff check .
    ruff format --check .
+
+**Pyrefly** for static type checking:
+
+.. code-block:: bash
+
+   pyrefly check
 
 **Type hints** are encouraged:
 
@@ -316,7 +322,7 @@ Continuous Integration
 Our CI pipeline runs:
 
 1. **Linting and code formatting** checks (Ruff)
-2. **Type checking** (mypy, when available)
+2. **Type checking** (Pyrefly)
 3. **Unit tests** on multiple Python versions
 4. **Integration tests** with different PyTorch versions
 5. **Documentation** building
