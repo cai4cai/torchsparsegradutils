@@ -208,6 +208,43 @@ def test_auto_prefers_dgl_when_installed(monkeypatch, op):
     assert op(a, b, x, strategy="expand") != "dgl"
 
 
+@pytest.mark.parametrize(
+    "strategy, device_type, expected",
+    [
+        ("auto", "cpu", True),
+        ("auto", "cuda", True),
+        ("auto", "mps", False),  # DGL does not support MPS: fall back to pure PyTorch
+        ("dgl", "mps", True),  # explicit request is honoured
+        ("pad", "cpu", False),
+        ("expand", "cuda", False),
+    ],
+)
+def test_use_dgl_is_device_aware(monkeypatch, strategy, device_type, expected):
+    monkeypatch.setattr(indexed_matmul, "dgl_installed", True)
+    assert indexed_matmul._use_dgl(strategy, torch.device(device_type)) == expected
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS not available")
+@pytest.mark.parametrize("op", [segment_mm, gather_mm])
+def test_auto_on_mps_skips_dgl(monkeypatch, op):
+    class FailingDGLOps:
+        @staticmethod
+        def segment_mm(a, b, x):
+            raise AssertionError("DGL should not be called for MPS tensors")
+
+        gather_mm = segment_mm
+
+    monkeypatch.setattr(indexed_matmul, "dgl_installed", True)
+    monkeypatch.setattr(indexed_matmul, "dglops", FailingDGLOps, raising=False)
+
+    device = torch.device("mps")
+    a = torch.randn(4, 3, device=device)
+    b = torch.randn(2, 3, 2, device=device)
+    x = torch.tensor([2, 2], device=device) if op is segment_mm else torch.tensor([0, 1, 1, 0], device=device)
+    expected = op(a.cpu(), b.cpu(), x.cpu(), strategy="pad")
+    assert torch.allclose(op(a, b, x).cpu(), expected, atol=ATOL, rtol=RTOL)
+
+
 @pytest.mark.parametrize("op", [segment_mm, gather_mm])
 def test_dgl_strategy_requires_dgl(monkeypatch, op):
     monkeypatch.setattr(indexed_matmul, "dgl_installed", False)

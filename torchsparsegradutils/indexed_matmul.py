@@ -14,12 +14,16 @@ Strategy = Literal["auto", "dgl", "pad", "expand"]
 _STRATEGIES = ("auto", "dgl", "pad", "expand")
 
 
-def _use_dgl(strategy: str) -> bool:
+_DGL_DEVICE_TYPES = ("cpu", "cuda")
+
+
+def _use_dgl(strategy: str, device: torch.device) -> bool:
     if strategy not in _STRATEGIES:
         raise ValueError(f"Unknown strategy {strategy!r}, expected one of {_STRATEGIES}")
     if strategy == "dgl" and not dgl_installed:
         raise ImportError("strategy='dgl' requires DGL to be installed")
-    return strategy == "dgl" or (strategy == "auto" and dgl_installed)
+    # "auto" only picks DGL on devices it supports (e.g. not MPS)
+    return strategy == "dgl" or (strategy == "auto" and dgl_installed and device.type in _DGL_DEVICE_TYPES)
 
 
 def _prefer_pad(N: int, R: int, L: int, D1: int, D2: int) -> bool:
@@ -89,8 +93,9 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor, strateg
     - ``"expand"``: gathers one copy of ``b`` per row of ``a`` and runs a batched
       matrix-vector product. Extra memory is :math:`O(N \cdot D_1 \cdot D_2)`.
       Does not synchronise with the host.
-    - ``"auto"``: uses ``"dgl"`` if DGL is installed, otherwise whichever of
-      ``"pad"`` and ``"expand"`` needs less extra memory.
+    - ``"auto"``: uses ``"dgl"`` if DGL is installed and supports the device of
+      ``a`` (CPU or CUDA), otherwise whichever of ``"pad"`` and ``"expand"``
+      needs less extra memory.
 
     See Also
     --------
@@ -119,7 +124,7 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen_a: torch.Tensor, strateg
         >>> segment_mm(a, b, seglen_a).shape
         torch.Size([18, 2])
     """
-    if _use_dgl(strategy):
+    if _use_dgl(strategy, a.device):
         return dglops.segment_mm(a, b, seglen_a)
 
     if not a.dim() == 2 or not b.dim() == 3 or not seglen_a.dim() == 1:
@@ -185,8 +190,9 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor, strategy: S
     - ``"expand"``: gathers ``b[idx_b]`` and runs a batched matrix-vector product.
       Extra memory is :math:`O(N \cdot D_1 \cdot D_2)`. Does not synchronise with
       the host.
-    - ``"auto"``: uses ``"dgl"`` if DGL is installed, otherwise whichever of
-      ``"pad"`` and ``"expand"`` needs less extra memory.
+    - ``"auto"``: uses ``"dgl"`` if DGL is installed and supports the device of
+      ``a`` (CPU or CUDA), otherwise whichever of ``"pad"`` and ``"expand"``
+      needs less extra memory.
 
     See Also
     --------
@@ -225,11 +231,11 @@ def gather_mm(a: torch.Tensor, b: torch.Tensor, idx_b: torch.Tensor, strategy: S
         tensor([[1., 2.],
                 [6., 8.]])
     """
-    if _use_dgl(strategy):
-        return dglops.gather_mm(a, b, idx_b)
-
     if not isinstance(a, torch.Tensor) or not isinstance(b, torch.Tensor) or not isinstance(idx_b, torch.Tensor):
         raise ValueError("Inputs should be instances of torch.Tensor")
+
+    if _use_dgl(strategy, a.device):
+        return dglops.gather_mm(a, b, idx_b)
 
     if not a.dim() == 2 or not b.dim() == 3 or not idx_b.dim() == 1:
         raise ValueError("Input tensors have unexpected dimensions")
