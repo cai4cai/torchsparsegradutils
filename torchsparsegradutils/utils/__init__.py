@@ -2,7 +2,7 @@ from .bicgstab import BICGSTABSettings, bicgstab
 from .dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
 from .linear_cg import CGInfo, LinearCGSettings, linear_cg
 from .lsmr import lsmr
-from .minres import MINRESSettings, minres
+from .minres import MINRESInfo, MINRESSettings, minres
 from .random_sparse import rand_sparse, rand_sparse_tri
 from .utils import (
     convert_coo_to_csr,
@@ -19,6 +19,7 @@ __all__ = [
     "CGInfo",
     "minres",
     "MINRESSettings",
+    "MINRESInfo",
     "bicgstab",
     "BICGSTABSettings",
     "lsmr",

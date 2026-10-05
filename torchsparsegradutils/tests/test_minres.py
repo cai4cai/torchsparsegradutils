@@ -1,12 +1,15 @@
 # MIT-licensed code imported from https://github.com/cornellius-gp/linear_operator
 # Minor modifications for torchsparsegradutils to remove dependencies
 
+import math
+import warnings
+
 import pytest
 import torch
 from test_config import Tolerances
 
 import torchsparsegradutils
-from torchsparsegradutils.utils import MINRESSettings
+from torchsparsegradutils.utils import MINRESInfo, MINRESSettings
 from torchsparsegradutils.utils.minres import minres
 
 ATOL, RTOL = Tolerances.iterative(torch.float64)
@@ -62,3 +65,414 @@ def test_minres_mat_multiple_shifts():
     _run_minres(torch.Size([3, 20, 5]), shifts=shifts)
     _run_minres(torch.Size([3, 20, 5]), matrix_batch_shape=torch.Size([3]), shifts=shifts)
     _run_minres(torch.Size([20, 5]), matrix_batch_shape=torch.Size([3]), shifts=shifts)
+
+
+def _ill_conditioned_spd(size, log10_min_eigenvalue, dtype=torch.float64):
+    generator = torch.Generator().manual_seed(0)
+    q, _ = torch.linalg.qr(torch.randn(size, size, dtype=dtype, generator=generator))
+    eigenvalues = torch.logspace(log10_min_eigenvalue, 0, size, dtype=dtype)
+    return q @ torch.diag(eigenvalues) @ q.mT
+
+
+def _true_relative_residual(matrix, solution, rhs):
+    return torch.linalg.vector_norm(rhs - matrix @ solution, dim=-2) / torch.linalg.vector_norm(rhs, dim=-2)
+
+
+def test_minres_residual_criterion_converges_every_rhs():
+    matrix = _ill_conditioned_spd(30, -3)
+    rhs = torch.randn(30, 4, dtype=torch.float64)
+    # Scale the right-hand sides differently: each one must converge, not their mean
+    rhs = rhs * torch.tensor([1.0, 1e3, 1e-3, 1.0], dtype=torch.float64)
+
+    solution, info = minres(matrix, rhs, tolerance=1e-8, max_iter=500, return_info=True)
+
+    assert isinstance(info, MINRESInfo)
+    assert info.reason in ("converged", "recursive_converged")
+    assert info.tolerance == 1e-8
+    assert info.matvecs >= info.iterations + 2
+    assert info.recursive_relative_residual.shape == (4,)
+    assert (info.recursive_relative_residual <= 1e-8).all()
+    torch.testing.assert_close(info.true_relative_residual, _true_relative_residual(matrix, solution, rhs))
+    assert torch.equal(info.converged, info.true_relative_residual <= 1e-8)
+
+
+def test_minres_max_iter_is_not_capped_by_problem_size():
+    size = 30
+    matrix = _ill_conditioned_spd(size, -6)
+    rhs = torch.randn(size, 2, dtype=torch.float64)
+
+    _, info = minres(matrix, rhs, tolerance=1e-7, max_iter=1000, return_info=True)
+
+    assert info.iterations > size + 1
+    assert info.reason == "converged"
+
+
+def test_minres_default_max_iter_is_problem_size_plus_one():
+    size = 30
+    matrix = _ill_conditioned_spd(size, -6)
+    rhs = torch.randn(size, 2, dtype=torch.float64)
+
+    _, info = minres(matrix, rhs, tolerance=1e-10, return_info=True)
+
+    assert info.iterations == size + 1
+    assert info.reason == "max_iter"
+
+
+def test_minres_explicit_max_iter_is_honored_and_reported():
+    matrix = _ill_conditioned_spd(30, -6)
+    rhs = torch.randn(30, 2, dtype=torch.float64)
+
+    with pytest.warns(UserWarning, match="MINRES terminated after 3 iterations"):
+        minres(matrix, rhs, tolerance=1e-10, max_iter=3)
+
+    # Callers asking for convergence information handle it themselves: no warning
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _, info = minres(matrix, rhs, tolerance=1e-10, max_iter=3, return_info=True)
+
+    assert info.iterations == 3
+    assert info.reason == "max_iter"
+    assert not info.converged.any()
+
+
+def test_minres_tiny_and_zero_rhs():
+    matrix = _ill_conditioned_spd(20, -2)
+    rhs = torch.randn(20, 3, dtype=torch.float64)
+    rhs[:, 1] = 0
+    rhs[:, 2] *= 1e-20
+
+    solution, info = minres(matrix, rhs, tolerance=1e-10, max_iter=200, return_info=True)
+
+    assert torch.isfinite(solution).all()
+    assert torch.equal(solution[:, 1], torch.zeros(20, dtype=torch.float64))
+    expected = torch.linalg.solve(matrix, rhs[:, 2])
+    torch.testing.assert_close(solution[:, 2], expected, atol=0, rtol=1e-8)
+    assert info.recursive_relative_residual[1] == 0
+    assert info.true_relative_residual[1] == 0
+    assert info.converged[1]
+
+
+def test_minres_singular_consistent_system_returns_minimum_norm_solution():
+    # Graph Laplacian of a connected graph: PSD with a one-dimensional null space
+    size = 12
+    generator = torch.Generator().manual_seed(0)
+    weights = torch.rand(size, size, dtype=torch.float64, generator=generator)
+    weights = weights + weights.mT + torch.diag_embed(torch.ones(size - 1, dtype=torch.float64), offset=1)
+    weights = (weights + weights.mT).fill_diagonal_(0)
+    laplacian = torch.diag(weights.sum(-1)) - weights
+    rhs = torch.randn(size, 2, dtype=torch.float64, generator=generator)
+    rhs = rhs - rhs.mean(-2, keepdim=True)
+
+    solution, info = minres(laplacian, rhs, tolerance=1e-12, return_info=True)
+
+    assert info.reason == "converged"
+    torch.testing.assert_close(solution, torch.linalg.pinv(laplacian) @ rhs, atol=1e-10, rtol=1e-8)
+
+
+def test_minres_preconditioned_residual_criterion():
+    size = 30
+    scaling = torch.linspace(1, 100, size, dtype=torch.float64)
+    matrix = scaling.sqrt()[:, None] * _ill_conditioned_spd(size, -2) * scaling.sqrt()[None, :]
+    rhs = torch.randn(size, 2, dtype=torch.float64)
+
+    solution, info = minres(
+        matrix,
+        rhs,
+        tolerance=1e-8,
+        max_iter=500,
+        preconditioner=lambda v: v / scaling.unsqueeze(-1),
+        return_info=True,
+    )
+
+    assert (info.recursive_relative_residual <= 1e-8).all()
+    torch.testing.assert_close(info.true_relative_residual, _true_relative_residual(matrix, solution, rhs))
+    assert (info.true_relative_residual <= 1e-6).all()
+
+
+@pytest.mark.parametrize(
+    "rhs_shape, shifts, info_shape",
+    [
+        ((20,), None, (1,)),
+        ((20, 5), None, (5,)),
+        ((3, 20, 5), None, (3, 5)),
+        ((20, 5), torch.tensor([0.0, 2.0, 5.0]), (3, 5)),
+        ((3, 20, 5), torch.tensor([0.0, 2.0, 5.0]), (3, 3, 5)),
+    ],
+)
+def test_minres_info_shapes_and_shifted_true_residual(rhs_shape, shifts, info_shape):
+    size = 20
+    matrix = _ill_conditioned_spd(size, -1)
+    rhs = torch.randn(rhs_shape, dtype=torch.float64)
+    if shifts is not None:
+        shifts = shifts.to(torch.float64)
+
+    solution, info = minres(matrix, rhs, shifts=shifts, value=-1, tolerance=1e-10, return_info=True)
+
+    for tensor in (info.converged, info.recursive_relative_residual, info.true_relative_residual):
+        assert tensor.shape == info_shape
+    assert info.converged.all()
+
+    rhs_mat = rhs.unsqueeze(-1) if rhs.dim() == 1 else rhs
+    solutions = solution.unsqueeze(-1) if rhs.dim() == 1 else solution
+    shift_values = torch.zeros(1, dtype=torch.float64) if shifts is None else shifts
+    if shifts is None:
+        solutions = solutions.unsqueeze(0)
+    for shift, shift_solution, shift_info in zip(
+        shift_values, solutions, info.true_relative_residual.reshape(len(shift_values), -1)
+    ):
+        shifted = -matrix + shift * torch.eye(size, dtype=torch.float64)
+        expected = _true_relative_residual(shifted, shift_solution, rhs_mat)
+        torch.testing.assert_close(shift_info, expected.reshape(-1))
+
+
+def test_minres_update_criterion_is_still_available():
+    matrix = _ill_conditioned_spd(20, -1)
+    rhs = torch.randn(20, 3, dtype=torch.float64)
+    settings = MINRESSettings(minres_tolerance=1e-8, minres_convergence="update")
+
+    solution, info = minres(matrix, rhs, max_iter=200, settings=settings, return_info=True)
+
+    assert info.reason in ("converged", "update_converged")
+    assert info.iterations % 10 == 0
+    torch.testing.assert_close(solution, torch.linalg.solve(matrix, rhs), atol=1e-6, rtol=1e-6)
+
+
+def test_minres_invalid_arguments():
+    matrix = _ill_conditioned_spd(5, -1)
+    rhs = torch.randn(5, dtype=torch.float64)
+    with pytest.raises(ValueError, match="tolerance"):
+        minres(matrix, rhs, tolerance=-1.0)
+    with pytest.raises(ValueError, match="max_iter"):
+        minres(matrix, rhs, max_iter=-1)
+    with pytest.raises(ValueError, match="minres_convergence"):
+        minres(matrix, rhs, settings=MINRESSettings(minres_convergence="bogus"))
+    with pytest.raises(ValueError, match="minres_check_every"):
+        minres(matrix, rhs, settings=MINRESSettings(minres_check_every=0))
+    with pytest.raises(ValueError, match="max_minres_iterations"):
+        minres(matrix, rhs, settings=MINRESSettings(max_minres_iterations=-1))
+    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="max_minres_iterations"):
+        minres(matrix, rhs, settings=MINRESSettings(max_cg_iterations=-1))
+    with pytest.raises(ValueError, match="preconditioner and nonzero shifts"):
+        minres(
+            matrix,
+            rhs,
+            shifts=torch.tensor([0.0, 1.0], dtype=torch.float64),
+            preconditioner=lambda v: v.clone(),
+            return_info=True,
+        )
+
+
+def test_minres_non_finite_recurrence_does_not_reach_solution():
+    matrix = torch.diag(torch.linspace(1, 2, 5, dtype=torch.float64))
+    rhs = torch.randn(5, 2, dtype=torch.float64)
+    # An indefinite "preconditioner" for the second column makes its Lanczos coefficients NaN
+    sign = torch.tensor([1.0, -1.0], dtype=torch.float64)
+
+    solution, info = minres(matrix, rhs, preconditioner=lambda v: v * sign, tolerance=1e-10, return_info=True)
+
+    assert torch.isfinite(solution).all()
+    torch.testing.assert_close(solution[:, 0], torch.linalg.solve(matrix, rhs[:, 0]))
+    assert info.reason == "breakdown"
+    assert torch.equal(info.converged, torch.tensor([True, False]))
+
+
+def test_minres_update_criterion_does_not_report_recursive_convergence():
+    # The M^{-1}-norm residual estimate meets tolerance while the true residual does not
+    matrix = torch.diag(torch.tensor([1.0, 1.0, 3.0], dtype=torch.float64))
+    weights = torch.tensor([1.0, 1e-12, 1e-12], dtype=torch.float64).unsqueeze(-1)
+    rhs = torch.ones(3, dtype=torch.float64)
+    settings = MINRESSettings(minres_convergence="update")
+
+    _, info = minres(
+        matrix,
+        rhs,
+        preconditioner=lambda v: v * weights,
+        max_iter=2,
+        tolerance=1e-4,
+        settings=settings,
+        return_info=True,
+    )
+
+    assert (info.recursive_relative_residual <= 1e-4).all()
+    assert not info.converged.any()
+    assert info.reason == "max_iter"
+
+
+@pytest.mark.parametrize("check_every", [1, 7])
+def test_minres_check_every_controls_termination_checks(check_every):
+    matrix = _ill_conditioned_spd(30, -1)
+    rhs = torch.randn(30, 2, dtype=torch.float64)
+    settings = MINRESSettings(minres_check_every=check_every)
+
+    _, info = minres(matrix, rhs, tolerance=1e-8, settings=settings, return_info=True)
+    _, reference = minres(matrix, rhs, tolerance=1e-8, settings=MINRESSettings(minres_check_every=1), return_info=True)
+
+    assert info.converged.all()
+    # Termination is only tested every check_every iterations, at most check_every - 1 iterations late
+    assert info.iterations % check_every == 0 or info.iterations == 31
+    assert reference.iterations <= info.iterations < reference.iterations + check_every
+
+
+def _ill_conditioned_spd_float32(size=200, cond=1e6, seed=0):
+    generator = torch.Generator().manual_seed(seed)
+    q, _ = torch.linalg.qr(torch.randn(size, size, dtype=torch.float64, generator=generator))
+    eigenvalues = torch.logspace(0, -math.log10(cond), size, dtype=torch.float64)
+    matrix = (q * eigenvalues) @ q.mT
+    rhs = torch.randn(size, dtype=torch.float64, generator=generator)
+    return matrix.to(torch.float32), rhs.to(torch.float32)
+
+
+@pytest.mark.parametrize("max_iter_factor", [None, 100], ids=["default_max_iter", "long_run"])
+@pytest.mark.parametrize("jacobi", [False, True], ids=["plain", "jacobi"])
+def test_minres_ill_conditioned_float32_does_not_drift(jacobi, max_iter_factor):
+    matrix, rhs = _ill_conditioned_spd_float32()
+    size = matrix.shape[0]
+    inverse_diagonal = 1 / matrix.diagonal()
+    preconditioner = (lambda z: z * inverse_diagonal.unsqueeze(-1)) if jacobi else None
+    max_iter = None if max_iter_factor is None else max_iter_factor * size
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _, info = minres(
+            matrix, rhs, tolerance=1e-6, max_iter=max_iter, preconditioner=preconditioner, return_info=True
+        )
+
+    # 1e-6 is out of reach in float32 at cond 1e6: it must be flagged, not reported as converged
+    assert info.reason != "converged"
+    assert len(caught) > 0 or info.reason != "recursive_converged"
+    # and the returned iterate must not be worse than the zero initial guess
+    assert float(info.true_relative_residual) <= 1.0
+
+    with pytest.warns(UserWarning, match="MINRES terminated"):
+        minres(matrix, rhs, tolerance=1e-6, max_iter=max_iter, preconditioner=preconditioner)
+
+
+def test_minres_shifted_preconditioned_max_iter_is_capped_at_problem_size():
+    size = 20
+    matrix = _ill_conditioned_spd(size, -1)
+    rhs = torch.randn(size, 2, dtype=torch.float64)
+    shifts = torch.tensor([0.0, 1.0], dtype=torch.float64)
+    preconditioner = lambda v: v.clone()  # noqa: E731
+
+    with pytest.warns(UserWarning, match="MINRES terminated after 21 iterations"):
+        with pytest.warns(UserWarning, match="capped at n \\+ 1 = 21"):
+            capped = minres(matrix, rhs, shifts=shifts, preconditioner=preconditioner, tolerance=0.0, max_iter=500)
+    with pytest.warns(UserWarning, match="MINRES terminated after 21 iterations"):
+        reference = minres(matrix, rhs, shifts=shifts, preconditioner=preconditioner, tolerance=0.0, max_iter=21)
+
+    torch.testing.assert_close(capped, reference)
+
+
+def test_minres_max_cg_iterations_is_a_deprecated_alias():
+    size = 30
+    matrix = _ill_conditioned_spd(size, -6)
+    rhs = torch.randn(size, 2, dtype=torch.float64)
+
+    with pytest.warns(DeprecationWarning, match="max_minres_iterations"):
+        _, info = minres(matrix, rhs, tolerance=1e-10, settings=MINRESSettings(max_cg_iterations=5), return_info=True)
+    assert info.iterations == 5
+
+    # Positional construction still sets the deprecated first field
+    with pytest.warns(DeprecationWarning, match="max_minres_iterations"):
+        _, info = minres(matrix, rhs, tolerance=1e-10, settings=MINRESSettings(7), return_info=True)
+    assert info.iterations == 7
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _, info = minres(
+            matrix, rhs, tolerance=1e-10, settings=MINRESSettings(max_minres_iterations=5), return_info=True
+        )
+    assert info.iterations == 5
+
+
+@pytest.mark.parametrize("scale", [1e-30, 1e-40], ids=["tiny", "subnormal"])
+def test_minres_tiny_float32_rhs_is_not_treated_as_zero(scale):
+    # The squared entries underflow in float32, so a plain vector norm of this rhs would be zero
+    matrix = torch.diag(torch.linspace(1, 2, 5))
+    rhs = torch.full((5, 2), scale)
+    rhs[:, 1] = 0
+
+    solution, info = minres(matrix, rhs, tolerance=1e-5, return_info=True)
+
+    expected = rhs[:, 0] / matrix.diagonal()
+    torch.testing.assert_close(solution[:, 0], expected, atol=0, rtol=1e-3 if scale < 1e-38 else 1e-5)
+    assert torch.equal(solution[:, 1], torch.zeros(5))
+    assert info.converged.all()
+    assert info.true_relative_residual[0] <= 1e-5
+    if scale > 1e-38:
+        # The true residual is measured relative to the tiny rhs, not reported as trivially zero
+        assert info.true_relative_residual[0] > 0
+
+
+def test_minres_drift_guard_keeps_the_iterate_at_problem_size():
+    # With no true residual check past n before max_iter, the result must still not be worse than the iterate at n
+    matrix, rhs = _ill_conditioned_spd_float32()
+    size = matrix.shape[0]
+    settings = MINRESSettings(minres_check_every=10 * size)
+
+    _, at_size = minres(matrix, rhs, tolerance=1e-6, max_iter=size, settings=settings, return_info=True)
+    _, long_run = minres(matrix, rhs, tolerance=1e-6, max_iter=5 * size, settings=settings, return_info=True)
+
+    assert long_run.iterations == 5 * size
+    assert float(long_run.true_relative_residual) <= float(at_size.true_relative_residual) * (1 + 1e-5)
+
+
+def test_minres_drift_guard_prefers_saved_iterate_over_nan_final_residual():
+    matrix, rhs = _ill_conditioned_spd_float32()
+    size = matrix.shape[0]
+    settings = MINRESSettings(minres_check_every=10 * size)
+    kwargs = dict(tolerance=1e-6, max_iter=5 * size, settings=settings)
+
+    calls = []
+
+    def counting_matmul(x):
+        calls.append(None)
+        return matrix @ x
+
+    with pytest.warns(UserWarning):
+        minres(counting_matmul, rhs, **kwargs)
+    final_call = len(calls)
+
+    def nan_on_final_residual(x):
+        calls.append(None)
+        result = matrix @ x
+        return torch.full_like(result, math.nan) if len(calls) == final_call else result
+
+    calls.clear()
+    with pytest.warns(UserWarning):
+        solution = minres(nan_on_final_residual, rhs, **kwargs)
+
+    _, at_size = minres(matrix, rhs, tolerance=1e-6, max_iter=size, settings=settings, return_info=True)
+    true_relative_residual = torch.linalg.vector_norm(rhs - matrix @ solution) / torch.linalg.vector_norm(rhs)
+    assert float(true_relative_residual) <= float(at_size.true_relative_residual) * (1 + 1e-5)
+
+
+def test_minres_max_cg_iterations_attribute_returns_effective_cap():
+    cases = [(MINRESSettings(), 1000), (MINRESSettings(max_minres_iterations=5), 5), (MINRESSettings(7), 7)]
+    for settings, expected in cases:
+        with pytest.warns(DeprecationWarning, match="max_minres_iterations"):
+            assert settings.max_cg_iterations == expected
+
+    # The named tuple API still works on the underlying fields
+    settings = MINRESSettings(max_minres_iterations=5)._replace(minres_tolerance=1e-6)
+    assert isinstance(settings, MINRESSettings)
+    assert settings._asdict()["max_cg_iterations"] is None
+    assert settings.max_minres_iterations == 5
+
+
+def test_minres_update_criterion_reports_breakdown_not_convergence():
+    matrix = torch.diag(torch.linspace(1, 2, 20, dtype=torch.float64))
+    rhs = torch.randn(20, 2, dtype=torch.float64)
+    settings = MINRESSettings(minres_convergence="update")
+
+    # An indefinite "preconditioner" breaks down one column, then every column
+    sign = torch.tensor([1.0, -1.0], dtype=torch.float64)
+    _, partial = minres(
+        matrix, rhs, preconditioner=lambda v: v * sign, max_iter=200, settings=settings, return_info=True
+    )
+    _, full = minres(matrix, rhs, preconditioner=lambda v: -v, max_iter=200, settings=settings, return_info=True)
+
+    assert partial.converged[0] and not partial.converged[1]
+    assert partial.reason == "breakdown"
+    assert full.reason == "breakdown"
+    assert not full.converged.any()
