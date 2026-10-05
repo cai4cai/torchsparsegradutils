@@ -4,7 +4,7 @@ import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
-from torchsparsegradutils.sparse_solve import sparse_generic_solve
+from torchsparsegradutils.sparse_solve import sparse_generic_solve, sparse_generic_symmetric_solve
 from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, linear_cg, minres
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
@@ -482,3 +482,41 @@ def test_sparse_generic_solve_higher_order_nonsymmetric_bicgstab_matches_dense_r
     assert torch.allclose(out_sparse, out_dense, atol=output_atol, rtol=output_rtol)
     assert torch.allclose(grad_sparse, grad_dense, atol=grad_atol, rtol=grad_rtol)
     assert torch.allclose(hess_vec_sparse, hess_vec_dense, atol=hess_atol, rtol=hess_rtol)
+
+
+def test_sparse_generic_solve_default_is_bicgstab_nonsymmetric(layout, device, value_dtype):
+    torch.manual_seed(3)
+    n = 6
+    theta = torch.randn(3 * n - 2, dtype=value_dtype, device=device).abs() + 1.0
+    A, A_dense = _make_differentiable_nonsymmetric_tridiag(theta, layout)
+    assert not torch.allclose(A_dense, A_dense.T)
+    B = torch.randn(n, 2, dtype=value_dtype, device=device)
+
+    X_default = sparse_generic_solve(A, B)
+    X_bicgstab = sparse_generic_solve(A, B, solve=bicgstab, transpose_solve=bicgstab)
+    atol, rtol = Tolerances.iterative(value_dtype)
+    assert torch.allclose(X_default, X_bicgstab)
+    assert torch.allclose(X_default, torch.linalg.solve(A_dense, B), atol=atol, rtol=rtol)
+
+
+def test_sparse_generic_symmetric_solve_defaults_to_minres(layout, device, value_dtype, index_dtype):
+    A, A_dense = make_spd_sparse(8, layout, value_dtype, index_dtype, device, nz=0)
+    A.requires_grad_()
+    B = torch.rand(8, 2, dtype=value_dtype, device=device, requires_grad=True)
+
+    X = sparse_generic_symmetric_solve(A, B)
+    X_minres = sparse_generic_solve(A, B, solve=minres, transpose_solve=minres)
+    assert torch.allclose(X, X_minres)
+    atol, rtol = Tolerances.iterative(value_dtype)
+    assert torch.allclose(X, torch.linalg.solve(A_dense, B.detach()), atol=atol, rtol=rtol)
+
+    X.sum().backward()
+    assert A.grad is not None and B.grad is not None
+
+
+def test_sparse_generic_symmetric_solve_custom_solver(layout, device, value_dtype, index_dtype):
+    A, A_dense = make_spd_sparse(8, layout, value_dtype, index_dtype, device, nz=0)
+    B = torch.rand(8, dtype=value_dtype, device=device)
+    X = sparse_generic_symmetric_solve(A, B, solve=linear_cg)
+    atol, rtol = Tolerances.iterative(value_dtype)
+    assert torch.allclose(X, torch.linalg.solve(A_dense, B), atol=atol, rtol=rtol)

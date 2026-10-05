@@ -26,7 +26,8 @@ A comprehensive collection of utility functions to work with PyTorch sparse tens
 **Sparse Linear System Solvers**
 - `sparse_triangular_solve`: Sparse triangular solver with batch support
   -  Discussion reference: [PyTorch issue #87358](https://github.com/pytorch/pytorch/issues/87358)
-- `sparse_generic_solve`: Generic sparse linear solver with pluggable backends
+- `sparse_generic_solve`: Generic sparse linear solver with pluggable backends (BiCGSTAB by default)
+- `sparse_generic_symmetric_solve`: Same, for symmetric matrices (MINRES by default)
   - Tested and benchmarked with CG, BICGSTAB, LSMR and MINRES solvers
 
 - `sparse_solve_c4t`: Wrappers around [cupy sparse solvers](https://docs.cupy.dev/en/stable/reference/scipy_sparse_linalg.html#solving-linear-problems)
