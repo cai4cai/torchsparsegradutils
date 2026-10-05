@@ -37,6 +37,7 @@
                     }
                 },
                 "python.languageServer": "Pylance",
+                "python.pyrefly.disableLanguageServices": true,
                 "python.analysis.indexing": true,
                 "python.analysis.logLevel": "Trace"
             },
@@ -50,6 +51,7 @@
                 "mhutchie.git-graph",
                 "waderyan.gitblame",
                 "charliermarsh.ruff",
+                "meta.pyrefly",
                 "ReprEng.csv",
                 "peakchen90.open-html-in-browser",
                 "openai.chatgpt"

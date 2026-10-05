@@ -293,7 +293,7 @@ def _gen_offsets_nd(
     coords = _gen_coords_nd(radius, spatial_dims)
 
     # Add channel offsets based on channel_voxel_relation:
-    offsets = [(0,) + s for s in coords]  # channel independent offsets
+    offsets: list[tuple[int, ...]] = [(0,) + tuple(s) for s in coords]  # channel independent offsets
 
     if channel_voxel_relation != "indep":
         # Add intra-voxel channel offsets (no spatial offset):

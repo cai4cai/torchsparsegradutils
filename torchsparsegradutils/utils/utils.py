@@ -623,6 +623,7 @@ def sparse_block_diag(*sparse_tensors: torch.Tensor) -> torch.Tensor:
             crow_acc = crow
         else:
             # shift crow by last value of previous crow
+            assert crow_running_last is not None
             crow_acc = crow[1:] + crow_running_last
 
         # shift columns by cumulative column offset
@@ -636,7 +637,7 @@ def sparse_block_diag(*sparse_tensors: torch.Tensor) -> torch.Tensor:
         total_rows += n_i
         total_cols += m_i
         col_offset += m_i
-        crow_running_last = (crow_parts[-1][-1] if idx == 0 else crow_parts[-1][-1]).clone()
+        crow_running_last = crow_acc[-1].clone()
 
     crow_all = torch.cat(crow_parts, dim=0)
     col_all = torch.cat(col_parts, dim=0)

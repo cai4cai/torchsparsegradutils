@@ -530,7 +530,7 @@ To switch configurations, modify the `dockerfile` field in `.devcontainer/devcon
 - **CUDA 13.0**: Full GPU development support with NVIDIA drivers
 - **Pre-installed Dependencies**: PyTorch, CuPy, JAX, SciPy, and all development tools
 - **VS Code Extensions**: Python, Pylance, Jupyter, GitHub Copilot, and code formatting tools
-- **Development Tools**: pytest, Ruff, pre-commit hooks
+- **Development Tools**: pytest, Ruff, Pyrefly, pre-commit hooks
 - **Python Environment**: Python 3.10+ with all optional dependencies
 
 **Benefits:**

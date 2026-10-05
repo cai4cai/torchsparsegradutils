@@ -5,7 +5,7 @@ import math
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, overload
 
 import torch
 
@@ -25,16 +25,13 @@ class _MINRESSettingsFields(NamedTuple):
     # matrix solves). A higher value rarely results in more accurate solves -- instead, lower the MINRES tolerance.
 
 
-_DEPRECATED_MAX_CG_ITERATIONS = _MINRESSettingsFields.max_cg_iterations
-
-
 class MINRESSettings(_MINRESSettingsFields):
     """Settings for minres (see the field comments of the underlying named tuple)."""
 
     __slots__ = ()
 
     @property
-    def max_cg_iterations(self) -> int:
+    def max_cg_iterations(self) -> int:  # type: ignore[override]
         """Deprecated alias of ``max_minres_iterations``: the effective maximum number of MINRES iterations."""
         warnings.warn(
             "MINRESSettings.max_cg_iterations is deprecated, use MINRESSettings.max_minres_iterations instead.",
@@ -45,11 +42,11 @@ class MINRESSettings(_MINRESSettingsFields):
 
     @property
     def _uses_deprecated_max_cg_iterations(self) -> bool:
-        return _DEPRECATED_MAX_CG_ITERATIONS.__get__(self) is not None
+        return super().max_cg_iterations is not None
 
     @property
     def _effective_max_minres_iterations(self) -> int:
-        deprecated = _DEPRECATED_MAX_CG_ITERATIONS.__get__(self)
+        deprecated = super().max_cg_iterations
         return self.max_minres_iterations if deprecated is None else deprecated
 
 
@@ -98,7 +95,9 @@ def _column_norm(x):
     return torch.linalg.vector_norm(x / scale, ord=2, dim=-2, keepdim=True).mul_(scale)
 
 
-def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
+def _pad_with_singletons(
+    obj: torch.Tensor, num_singletons_before: int = 0, num_singletons_after: int = 0
+) -> torch.Tensor:
     """
     Pad obj with singleton dimensions on the left and right
     Example:
@@ -108,6 +107,52 @@ def _pad_with_singletons(obj, num_singletons_before=0, num_singletons_after=0):
     """
     new_shape = [1] * num_singletons_before + list(obj.shape) + [1] * num_singletons_after
     return obj.view(*new_shape)
+
+
+@overload
+def minres(
+    matmul_closure: torch.Tensor | Callable[[torch.Tensor], torch.Tensor],
+    rhs: torch.Tensor,
+    eps: float = 1e-25,
+    shifts: torch.Tensor | None = None,
+    value: float | None = None,
+    max_iter: int | None = None,
+    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    settings: MINRESSettings = MINRESSettings(),
+    tolerance: float | None = None,
+    return_info: Literal[False] = False,
+) -> torch.Tensor: ...
+
+
+@overload
+def minres(
+    matmul_closure: torch.Tensor | Callable[[torch.Tensor], torch.Tensor],
+    rhs: torch.Tensor,
+    eps: float = 1e-25,
+    shifts: torch.Tensor | None = None,
+    value: float | None = None,
+    max_iter: int | None = None,
+    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    settings: MINRESSettings = MINRESSettings(),
+    tolerance: float | None = None,
+    *,
+    return_info: Literal[True],
+) -> tuple[torch.Tensor, MINRESInfo]: ...
+
+
+@overload
+def minres(
+    matmul_closure: torch.Tensor | Callable[[torch.Tensor], torch.Tensor],
+    rhs: torch.Tensor,
+    eps: float = 1e-25,
+    shifts: torch.Tensor | None = None,
+    value: float | None = None,
+    max_iter: int | None = None,
+    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    settings: MINRESSettings = MINRESSettings(),
+    tolerance: float | None = None,
+    return_info: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, MINRESInfo]: ...
 
 
 def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurrence
@@ -299,15 +344,18 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     'converged'
     """
     # Default values
-    if torch.is_tensor(matmul_closure):
-        matmul_closure = matmul_closure.matmul
-    mm_ = matmul_closure
+    if isinstance(matmul_closure, torch.Tensor):
+        mm_ = matmul_closure.matmul
+    else:
+        mm_ = matmul_closure
     has_preconditioner = preconditioner is not None
     if preconditioner is None:
         preconditioner = lambda x: x.clone()
 
     if shifts is None:
-        shifts = torch.tensor(0.0, dtype=rhs.dtype, device=rhs.device)
+        shifts_tensor = torch.tensor(0.0, dtype=rhs.dtype, device=rhs.device)
+    else:
+        shifts_tensor = shifts
 
     if tolerance is None:
         tolerance = settings.minres_tolerance
@@ -331,7 +379,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     if max_iter is not None and max_iter < 0:
         raise ValueError("max_iter must be nonnegative")
     # With a preconditioner, the shifted recurrence solves (A + sigma M) x = b: its true residual is unavailable
-    shifted_preconditioning = has_preconditioner and bool(torch.as_tensor(shifts).ne(0).any())
+    shifted_preconditioning = has_preconditioner and bool(torch.as_tensor(shifts_tensor).ne(0).any())
     if return_info and shifted_preconditioning:
         raise ValueError("return_info is not supported with a preconditioner and nonzero shifts")
 
@@ -363,7 +411,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     rhs = rhs.div(rhs_norm)
 
     # Epsilon (to prevent nans)
-    eps = torch.tensor(eps, dtype=rhs.dtype, device=rhs.device)
+    eps_tensor = torch.tensor(eps, dtype=rhs.dtype, device=rhs.device)
 
     # Create space for matmul product, solution
     prod = mm_(rhs)
@@ -372,8 +420,8 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     matvecs = 1
 
     # Resize shifts
-    shifts = _pad_with_singletons(shifts, 0, prod.dim() - shifts.dim() + 1)
-    solution = torch.zeros(shifts.shape[:1] + prod.shape, dtype=rhs.dtype, device=rhs.device)
+    shifts_tensor = _pad_with_singletons(shifts_tensor, 0, prod.dim() - shifts_tensor.dim() + 1)
+    solution = torch.zeros(shifts_tensor.shape[:1] + prod.shape, dtype=rhs.dtype, device=rhs.device)
 
     # Variables for Lanczos terms
     zvec_prev2 = torch.zeros_like(prod)
@@ -421,7 +469,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     # Equivalent to the terms of V^T Q^T rhs, where Q is the matrix of Lanczos vectors and
     # V is the QR orthonormal of the tridiagonal Lanczos matrix.
     # The magnitude of the latest scaling term is the residual norm estimate phi_k.
-    scale_prev = beta_prev.repeat(shifts.size(0), *([1] * beta_prev.dim()))
+    scale_prev = beta_prev.repeat(shifts_tensor.size(0), *([1] * beta_prev.dim()))
     scale_curr = torch.empty_like(scale_prev)
 
     # Terms for checking for convergence
@@ -434,7 +482,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     broken = torch.zeros_like(active)
     stop_reason = None
     # Past n iterations: best iterate found so far, its true relative residual, and stagnation tracking
-    shift_values = shifts.reshape(-1)
+    shift_values = shifts_tensor.reshape(-1)
     best_solution = None
     best_relative_residual = None
     stagnation_count = torch.zeros(active.shape, dtype=torch.int32, device=active.device)
@@ -491,8 +539,8 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         torch.mul(zvec_curr, qvec_curr, out=tmpvec)
         torch.sum(tmpvec, -2, keepdim=True, out=beta_curr)
         beta_curr.sqrt_()
-        lanczos_breakdown = ~beta_curr.gt(eps)
-        beta_curr.clamp_min_(eps)
+        lanczos_breakdown = ~beta_curr.gt(eps_tensor)
+        beta_curr.clamp_min_(eps_tensor)
 
         zvec_curr.div_(beta_curr)
         qvec_curr.div_(beta_curr)
@@ -500,8 +548,8 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         # Perform the Givens rotation and search vector update
         _minres_updates(
             solution,
-            shifts,
-            eps,
+            shifts_tensor,
+            eps_tensor,
             qvec_prev1,
             alpha_curr,
             alpha_shifted_curr,
@@ -552,8 +600,8 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         if convergence == "residual" and not past_size:
             active = active & ~recursive_ok
 
-        if past_size and check:
-            # Past n iterations, loss of Lanczos orthogonality can make the iterate drift while the residual
+        if past_size and check and best_solution is not None and best_relative_residual is not None:
+            # Seeded at iteration n. Past n iterations, loss of Lanczos orthogonality can make the iterate drift while the residual
             # estimate keeps decreasing: monitor the true residual and keep the best iterate
             true_relative_residual = _tolerance_relative_residual(_true_residual(solution))
             improved = active & true_relative_residual.lt(best_relative_residual)
@@ -608,7 +656,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     final_relative_residual = None
     if past_size:
         final_relative_residual = _tolerance_relative_residual(_true_residual(solution))
-        if best_solution is not None:
+        if best_solution is not None and best_relative_residual is not None:
             # The saved residual is always finite, so a NaN final residual also selects the saved iterate
             use_best = ~final_relative_residual.le(best_relative_residual)
             solution = torch.where(use_best, best_solution, solution)
@@ -640,6 +688,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
             stacklevel=2,
         )
 
+    info: MINRESInfo | None = None
     if return_info:
         # Recompute the Euclidean true residual of each shifted system
         true_relative_residual = _column_norm(_true_residual(solution))
@@ -649,7 +698,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
 
         def _info_shape(t):
             t = t.squeeze(-2).detach()
-            return t.squeeze(0) if shifts.numel() == 1 else t
+            return t.squeeze(0) if shifts_tensor.numel() == 1 else t
 
         info = MINRESInfo(
             iterations=iterations,
@@ -667,11 +716,11 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     if squeeze:
         solution = solution.squeeze(-1)
 
-    if shifts.numel() == 1:
+    if shifts_tensor.numel() == 1:
         # If we weren't shifting we shouldn't return a batch output
         solution = solution.squeeze(0)
 
-    if return_info:
+    if info is not None:
         return solution, info
     return solution
 
