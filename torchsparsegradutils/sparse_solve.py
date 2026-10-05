@@ -252,14 +252,24 @@ class SparseTriangularSolve(torch.autograd.Function):
         return gradA, gradB, None, None, None
 
 
-def _bicgstab_transpose_solve(A: torch.Tensor, B: torch.Tensor, **kwargs) -> torch.Tensor:
-    """Solve ``A.T X = B`` with BiCGSTAB; the default transpose solver of ``sparse_generic_solve``."""
-    from .utils import bicgstab
+def _generic_transpose_solve(solve: Callable[..., torch.Tensor]) -> Callable[..., torch.Tensor]:
+    """Wrap ``solve`` so that the returned callable solves ``A.T X = B`` instead of ``A X = B``.
 
-    if A.layout == torch.sparse_csr:
-        # A.T on sparse CSR triggers aten::as_strided; transpose(...) returns CSC, so convert back.
-        return bicgstab(A.transpose(0, 1).to_sparse_csr(), B, **kwargs)
-    return bicgstab(A.T, B, **kwargs)
+    Used to derive the missing member of the (``solve``, ``transpose_solve``) pair in
+    ``sparse_generic_solve``: ``transpose_solve(A, B) = solve(A.T, B)`` and, symmetrically,
+    ``solve(A, B) = transpose_solve(A.T, B)``.
+    """
+
+    def transposed_solve(A: torch.Tensor, B: torch.Tensor, **kwargs) -> torch.Tensor:
+        if A.layout == torch.sparse_csr:
+            # A.T on sparse CSR triggers aten::as_strided; transpose(...) returns CSC, so convert back.
+            At = A.transpose(0, 1).to_sparse_csr()
+        else:
+            At = A.T
+        return solve(At, B, **kwargs)
+
+    transposed_solve.__name__ = f"transposed_{getattr(solve, '__name__', 'solve')}"
+    return transposed_solve
 
 
 def sparse_generic_solve(
@@ -316,9 +326,8 @@ def sparse_generic_solve(
     transpose_solve : callable, optional
         Solver for the transpose system used in backprop, with signature
         ``transpose_solve(A, G, **kwargs) -> Y`` that solves :math:`A^\top Y = G` in the
-        least-squares / iterative sense. If ``None``, defaults to ``solve`` (so ``solve`` must then
-        handle the transpose system itself, e.g. for symmetric ``A``), except when both ``solve``
-        and ``transpose_solve`` are ``None``, where BiCGSTAB on ``A.T`` is used.
+        least-squares / iterative sense. If ``None``, it is derived from ``solve`` by applying it to
+        ``A.T``. If only ``transpose_solve`` is given, ``solve`` is derived from it the same way.
     **kwargs : dict
         Extra keyword arguments forwarded to the solvers (e.g., tolerances,
         iteration caps, or solver-specific settings objects).
@@ -419,11 +428,11 @@ def sparse_generic_solve(
         from .utils import bicgstab
 
         solve = bicgstab
-        transpose_solve = _bicgstab_transpose_solve
+        transpose_solve = _generic_transpose_solve(solve=bicgstab)
     elif solve is None:
-        solve = transpose_solve
+        solve = _generic_transpose_solve(solve=transpose_solve)
     elif transpose_solve is None:
-        transpose_solve = solve
+        transpose_solve = _generic_transpose_solve(solve=solve)
 
     X = cast(torch.Tensor, SparseGenericSolve.apply(A, B, solve, transpose_solve, kwargs))
 

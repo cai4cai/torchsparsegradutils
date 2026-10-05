@@ -531,3 +531,31 @@ def test_sparse_generic_symmetric_solve_custom_solver(layout, device, value_dtyp
     X = sparse_generic_symmetric_solve(A, B, solve=linear_cg)
     atol, rtol = Tolerances.iterative(value_dtype)
     assert torch.allclose(X, torch.linalg.solve(A_dense, B), atol=atol, rtol=rtol)
+
+
+@pytest.mark.parametrize("given", ["solve_only", "transpose_solve_only"])
+def test_sparse_generic_solve_single_solver_nonsymmetric_gradients(layout, device, value_dtype, given):
+    torch.manual_seed(4)
+    n = 6
+    theta = torch.randn(3 * n - 2, dtype=value_dtype, device=device, requires_grad=True)
+    theta_dense = theta.detach().clone().requires_grad_()
+    A, _ = _make_differentiable_nonsymmetric_tridiag(theta, layout)
+    _, A_dense = _make_differentiable_nonsymmetric_tridiag(theta_dense, torch.sparse_coo)
+    B = torch.randn(n, 2, dtype=value_dtype, device=device, requires_grad=True)
+    B_dense = B.detach().clone().requires_grad_()
+
+    if given == "solve_only":
+        X = sparse_generic_solve(A, B, solve=bicgstab)
+    else:
+        # transpose_solve(A, G) must solve A.T Y = G
+        X = sparse_generic_solve(A, B, transpose_solve=_bicgstab_transpose)
+    X_ref = torch.linalg.solve(A_dense, B_dense)
+
+    grad_output = torch.randn_like(X)
+    X.backward(grad_output)
+    X_ref.backward(grad_output)
+
+    atol, rtol = Tolerances.iterative(value_dtype)
+    assert torch.allclose(X, X_ref, atol=atol, rtol=rtol)
+    assert torch.allclose(B.grad, B_dense.grad, atol=atol, rtol=rtol)
+    assert torch.allclose(theta.grad, theta_dense.grad, atol=atol, rtol=rtol)
