@@ -147,6 +147,9 @@ class SparseMatMul(torch.autograd.Function):
         grad_flag = A.requires_grad or B.requires_grad
 
         A, B = A.detach(), B.detach()
+        # Return one gradient per coordinate; COO construction distributes it to duplicates.
+        if A.layout == torch.sparse_coo:
+            A = A.coalesce()
 
         if ctx.batch_size is not None:
             A = sparse_block_diag(*A)
