@@ -429,6 +429,7 @@ def sparse_generic_solve(
         solve = bicgstab
         transpose_solve = _generic_transpose_solve(solve=bicgstab)
     elif solve is None:
+        assert transpose_solve is not None  # narrowed by the first branch
         solve = _generic_transpose_solve(solve=transpose_solve)
     elif transpose_solve is None:
         transpose_solve = _generic_transpose_solve(solve=solve)
