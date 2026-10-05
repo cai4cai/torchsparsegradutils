@@ -487,16 +487,27 @@ def test_sparse_generic_solve_higher_order_nonsymmetric_bicgstab_matches_dense_r
 def test_sparse_generic_solve_default_is_bicgstab_nonsymmetric(layout, device, value_dtype):
     torch.manual_seed(3)
     n = 6
-    theta = torch.randn(3 * n - 2, dtype=value_dtype, device=device).abs() + 1.0
-    A, A_dense = _make_differentiable_nonsymmetric_tridiag(theta, layout)
+    theta = torch.randn(3 * n - 2, dtype=value_dtype, device=device, requires_grad=True)
+    theta_dense = theta.detach().clone().requires_grad_()
+    A, _ = _make_differentiable_nonsymmetric_tridiag(theta, layout)
+    _, A_dense = _make_differentiable_nonsymmetric_tridiag(theta_dense, torch.sparse_coo)
     assert not torch.allclose(A_dense, A_dense.T)
-    B = torch.randn(n, 2, dtype=value_dtype, device=device)
+    B = torch.randn(n, 2, dtype=value_dtype, device=device, requires_grad=True)
+    B_dense = B.detach().clone().requires_grad_()
 
     X_default = sparse_generic_solve(A, B)
-    X_bicgstab = sparse_generic_solve(A, B, solve=bicgstab, transpose_solve=bicgstab)
+    X_explicit = sparse_generic_solve(A, B, solve=bicgstab, transpose_solve=_bicgstab_transpose)
+    X_ref = torch.linalg.solve(A_dense, B_dense)
     atol, rtol = Tolerances.iterative(value_dtype)
-    assert torch.allclose(X_default, X_bicgstab)
-    assert torch.allclose(X_default, torch.linalg.solve(A_dense, B), atol=atol, rtol=rtol)
+    assert torch.allclose(X_default, X_explicit)
+    assert torch.allclose(X_default, X_ref, atol=atol, rtol=rtol)
+
+    # Backward must solve with A.T, not A, for non-symmetric matrices
+    grad_output = torch.randn_like(X_default)
+    X_default.backward(grad_output)
+    X_ref.backward(grad_output)
+    assert torch.allclose(B.grad, B_dense.grad, atol=atol, rtol=rtol)
+    assert torch.allclose(theta.grad, theta_dense.grad, atol=atol, rtol=rtol)
 
 
 def test_sparse_generic_symmetric_solve_defaults_to_minres(layout, device, value_dtype, index_dtype):
