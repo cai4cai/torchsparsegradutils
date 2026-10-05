@@ -155,7 +155,9 @@ class SparseMatMul(torch.autograd.Function):
             A = sparse_block_diag(*A)
             B = B.reshape(-1, B.size(-1))
 
-        x = torch.sparse.mm(A, B)
+        # CUDA CSR kernels can misread strided single-column operands.
+        # Copy only at the kernel boundary, retaining the saved input tensor.
+        x = torch.sparse.mm(A, B.contiguous())
 
         ctx.save_for_backward(A, B)
 
@@ -229,7 +231,7 @@ class SparseMatMul(torch.autograd.Function):
                 grad_for_B = grad
 
             # Now compute the dense gradient with respect to B
-            gradB = torch.sparse.mm(A.t(), grad_for_B)
+            gradB = torch.sparse.mm(A.t(), grad_for_B.contiguous())
 
             if ctx.batch_size is not None:
                 gradB = gradB.view(ctx.B_shape)
