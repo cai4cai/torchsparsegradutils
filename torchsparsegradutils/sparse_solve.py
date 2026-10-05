@@ -252,6 +252,25 @@ class SparseTriangularSolve(torch.autograd.Function):
         return gradA, gradB, None, None, None
 
 
+def _generic_transpose_solve(solve: Callable[..., torch.Tensor]) -> Callable[..., torch.Tensor]:
+    """Wrap ``solve`` so that the returned callable solves ``A.T X = B`` instead of ``A X = B``.
+
+    Used to derive the missing member of the (``solve``, ``transpose_solve``) pair in
+    ``sparse_generic_solve``: ``transpose_solve(A, B) = solve(A.T, B)`` and, symmetrically,
+    ``solve(A, B) = transpose_solve(A.T, B)``.
+    """
+
+    def transposed_solve(A: torch.Tensor, B: torch.Tensor, **kwargs) -> torch.Tensor:
+        if A.layout == torch.sparse_csr:
+            # A.T on sparse CSR triggers aten::as_strided; transpose(...) returns CSC, so convert back.
+            At = A.transpose(0, 1).to_sparse_csr()
+        else:
+            At = A.T
+        return solve(At, B, **kwargs)
+
+    return transposed_solve
+
+
 def sparse_generic_solve(
     A: torch.Tensor,
     B: torch.Tensor,
@@ -298,16 +317,16 @@ def sparse_generic_solve(
         Right-hand side(s). ``B.shape[0]`` must equal ``A.shape[0]``.
     solve : callable, optional
         Forward solver with signature ``solve(A, B, **kwargs) -> X``.
-        If ``None``, uses ``minres`` (recommended for symmetric indefinite).
-        Other typical choices include:
+        If ``None``, uses ``bicgstab`` (general non-symmetric). Other typical choices include:
 
         * ``linear_cg`` (SPD matrices)
-        * ``bicgstab`` (general non-symmetric)
+        * ``minres`` (symmetric, possibly indefinite; see :func:`sparse_generic_symmetric_solve`)
 
     transpose_solve : callable, optional
         Solver for the transpose system used in backprop, with signature
         ``transpose_solve(A, G, **kwargs) -> Y`` that solves :math:`A^\top Y = G` in the
-        least-squares / iterative sense. If ``None``, defaults to ``solve``.
+        least-squares / iterative sense. If ``None``, it is derived from ``solve`` by applying it to
+        ``A.T``. If only ``transpose_solve`` is given, ``solve`` is derived from it the same way.
     **kwargs : dict
         Extra keyword arguments forwarded to the solvers (e.g., tolerances,
         iteration caps, or solver-specific settings objects).
@@ -334,6 +353,7 @@ def sparse_generic_solve(
     See Also
     --------
     sparse_triangular_solve : Triangular systems with sparse-aware gradients.
+    sparse_generic_symmetric_solve : Same, defaulting to MINRES for symmetric matrices.
     sparse_generic_lstsq : Overdetermined least-squares with sparse-aware gradients.
 
     Examples
@@ -351,12 +371,12 @@ def sparse_generic_solve(
     >>> x.shape
     torch.Size([3])
 
-    >>> # Multiple RHS with BiCGSTAB
-    >>> X = sparse_generic_solve(A, torch.randn(3, 5), solve=bicgstab)
+    >>> # Multiple RHS with MINRES
+    >>> X = sparse_generic_solve(A, torch.randn(3, 5), solve=minres)
     >>> X.shape
     torch.Size([3, 5])
 
-    >>> # Default solver (MINRES)
+    >>> # Default solver (BiCGSTAB)
     >>> x = sparse_generic_solve(A, B)
 
     >>> # With custom solver settings:
@@ -404,14 +424,15 @@ def sparse_generic_solve(
 
     # ---------- default solvers ----------
     if solve is None and transpose_solve is None:
-        from .utils import minres
+        from .utils import bicgstab
 
-        solve = minres
-        transpose_solve = minres
+        solve = bicgstab
+        transpose_solve = _generic_transpose_solve(solve=bicgstab)
     elif solve is None:
-        solve = transpose_solve
+        assert transpose_solve is not None  # narrowed by the first branch
+        solve = _generic_transpose_solve(solve=transpose_solve)
     elif transpose_solve is None:
-        transpose_solve = solve
+        transpose_solve = _generic_transpose_solve(solve=solve)
 
     X = cast(torch.Tensor, SparseGenericSolve.apply(A, B, solve, transpose_solve, kwargs))
 
@@ -422,6 +443,58 @@ def sparse_generic_solve(
         X = X.unsqueeze(-1)
 
     return X
+
+
+def sparse_generic_symmetric_solve(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    solve: Optional[Callable[..., torch.Tensor]] = None,
+    **kwargs,
+) -> torch.Tensor:
+    r"""Sparse linear solve for symmetric :math:`\mathbf{A}`, defaulting to MINRES.
+
+    Thin wrapper around :func:`sparse_generic_solve` for symmetric (possibly indefinite)
+    matrices. Since :math:`\mathbf{A}^\top = \mathbf{A}`, the same solver is used for the
+    forward and the backward (transpose) system.
+
+    Parameters
+    ----------
+    A : torch.Tensor, sparse COO or CSR, shape ``(n, n)``
+        Sparse symmetric square coefficient matrix. Symmetry is not checked.
+    B : torch.Tensor, dense (strided), shape ``(n,)`` or ``(n, k)``
+        Right-hand side(s).
+    solve : callable, optional
+        Solver with signature ``solve(A, B, **kwargs) -> X``, used for both the forward and
+        backward systems. If ``None``, uses ``minres``.
+    **kwargs : dict
+        Extra keyword arguments forwarded to the solver.
+
+    Returns
+    -------
+    torch.Tensor
+        Solution tensor ``X`` with the same shape as ``B``.
+
+    See Also
+    --------
+    sparse_generic_solve : General solver, defaulting to BiCGSTAB.
+
+    Examples
+    --------
+    >>> import torch
+    >>> from torchsparsegradutils import sparse_generic_symmetric_solve
+    >>> indices = torch.tensor([[0, 0, 1, 1, 2],
+    ...                         [0, 1, 0, 1, 2]])
+    >>> values = torch.tensor([4.0, -1.0, -1.0, 4.0, 2.0])
+    >>> A = torch.sparse_coo_tensor(indices, values, (3, 3))
+    >>> x = sparse_generic_symmetric_solve(A, torch.tensor([1.0, 2.0, 3.0]))
+    >>> x.shape
+    torch.Size([3])
+    """
+    if solve is None:
+        from .utils import minres
+
+        solve = minres
+    return sparse_generic_solve(A, B, solve=solve, transpose_solve=solve, **kwargs)
 
 
 class SparseGenericSolve(torch.autograd.Function):

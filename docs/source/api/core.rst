@@ -49,6 +49,8 @@ Sparse Linear Solvers
 
 .. autofunction:: sparse_generic_solve
 
+.. autofunction:: sparse_generic_symmetric_solve
+
 .. autoclass:: SparseGenericSolve
    :members:
    :undoc-members:
