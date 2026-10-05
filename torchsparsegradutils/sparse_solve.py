@@ -268,7 +268,6 @@ def _generic_transpose_solve(solve: Callable[..., torch.Tensor]) -> Callable[...
             At = A.T
         return solve(At, B, **kwargs)
 
-    transposed_solve.__name__ = f"transposed_{getattr(solve, '__name__', 'solve')}"
     return transposed_solve
 
 
