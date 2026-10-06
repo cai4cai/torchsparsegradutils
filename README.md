@@ -28,7 +28,7 @@ A comprehensive collection of utility functions to work with PyTorch sparse tens
   -  Discussion reference: [PyTorch issue #87358](https://github.com/pytorch/pytorch/issues/87358)
 - `sparse_generic_solve`: Generic sparse linear solver with pluggable backends (BiCGSTAB by default)
 - `sparse_generic_symmetric_solve`: Same, for symmetric matrices (MINRES by default)
-  - Tested and benchmarked with CG, BICGSTAB, LSMR and MINRES solvers
+  - Tested and benchmarked with CG, BICGSTAB, GMRES, LSMR and MINRES solvers
 
 - `sparse_solve_c4t`: Wrappers around [cupy sparse solvers](https://docs.cupy.dev/en/stable/reference/scipy_sparse_linalg.html#solving-linear-problems)
   -  Discussion reference: [Pytorch issue #69538](https://github.com/pytorch/pytorch/issues/69538)
@@ -42,6 +42,7 @@ A comprehensive collection of utility functions to work with PyTorch sparse tens
 **Pure PyTorch Implementations**
 - **BICGSTAB**: Biconjugate Gradient Stabilized method (ported from [pykrylov](https://github.com/PythonOptimizers/pykrylov))
 - **CG**: Conjugate Gradient method (ported from [cornellius-gp/linear_operator](https://github.com/cornellius-gp/linear_operator))
+- **GMRES**: Restarted Generalized Minimal Residual method (ported from [SciPy](https://github.com/scipy/scipy)), with per-RHS convergence monitoring and GPU-friendly orthogonalisation
 - **LSMR**: Least Squares Minimal Residual method (ported from [pytorch-minimize](https://github.com/rfeinman/pytorch-minimize))
 - **MINRES**: Minimal Residual method (ported from [cornellius-gp/linear_operator](https://github.com/cornellius-gp/linear_operator))
 
@@ -556,6 +557,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 - **Open Source Libraries**: We port and adapt algorithms from:
   - [pykrylov](https://github.com/PythonOptimizers/pykrylov) (BICGSTAB)
   - [cornellius-gp/linear_operator](https://github.com/cornellius-gp/linear_operator) (CG, MINRES)
+  - [SciPy](https://github.com/scipy/scipy) (GMRES)
   - [pytorch-minimize](https://github.com/rfeinman/pytorch-minimize) (LSMR)
 
 ## 📚 Citation

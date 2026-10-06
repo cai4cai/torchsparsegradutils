@@ -17,6 +17,7 @@ DOCTEST_MODULES = [
     "torchsparsegradutils.sparse_matmul",
     "torchsparsegradutils.sparse_solve",
     "torchsparsegradutils.utils.bicgstab",
+    "torchsparsegradutils.utils.gmres",
     "torchsparsegradutils.utils.linear_cg",
     "torchsparsegradutils.utils.minres",
     "torchsparsegradutils.utils.random_sparse",

@@ -13,6 +13,11 @@ Iterative Solvers
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: torchsparsegradutils.utils.gmres
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: torchsparsegradutils.utils.linear_cg
    :members:
    :undoc-members:

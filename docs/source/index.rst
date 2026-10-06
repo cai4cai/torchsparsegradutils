@@ -44,6 +44,7 @@ Built-in Iterative Solvers (No External Dependencies)
 
 - **BICGSTAB**: Biconjugate Gradient Stabilized method
 - **CG**: Conjugate Gradient method
+- **GMRES**: Restarted Generalized Minimal Residual method
 - **LSMR**: Least Squares Minimal Residual method
 - **MINRES**: Minimal Residual method
 
