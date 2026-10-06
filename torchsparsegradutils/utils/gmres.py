@@ -111,6 +111,28 @@ def _givens(f: torch.Tensor, g: torch.Tensor) -> tuple[torch.Tensor, torch.Tenso
     return c, s, r
 
 
+def _scaled_norm(z: torch.Tensor) -> torch.Tensor:
+    """Euclidean norm over the last dimension, scaled by the largest entry so that squares do not under/overflow.
+
+    The norm of a finite vector is accurate whenever it is representable (e.g. ``1e-25`` or ``1e20`` entries in
+    float32), exact-zero vectors have a zero norm, and vectors with non-finite entries have a non-finite norm.
+    """
+    scale = z.abs().amax(dim=-1, keepdim=True)
+    scale = scale.masked_fill(~(scale.gt(0) & torch.isfinite(scale)), 1)
+    return torch.linalg.vector_norm(z / scale, dim=-1).mul_(scale.squeeze(-1))
+
+
+def _krylov_workspace(
+    batch: torch.Size, restart: int, n: int, dtype: torch.dtype, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Krylov basis ``V`` and, for the Givens rotations, ``QT`` (transpose of their product) and ``R`` (rotated
+    Hessenberg matrix) of one restart cycle, for every right-hand side."""
+    V = torch.zeros(*batch, restart + 1, n, dtype=dtype, device=device)
+    QT = torch.empty(*batch, restart + 1, restart + 1, dtype=dtype, device=device)
+    R = torch.empty(*batch, restart, restart, dtype=dtype, device=device)
+    return V, QT, R
+
+
 def _project_on_full_basis(device: torch.device) -> bool:
     """Whether Gram-Schmidt projects on the full, zero-padded Krylov basis rather than on its filled rows.
 
@@ -342,11 +364,10 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
     n = b.shape[-1]
     dtype, device = b.dtype, b.device
     eps = torch.finfo(dtype).eps
-    restart = min(restart, n)
     max_iter = 10 * n if settings.max_iter is None else settings.max_iter
-
-    def norm(z: torch.Tensor) -> torch.Tensor:
-        return torch.linalg.vector_norm(z, dim=-1)
+    # A cycle never needs more Arnoldi vectors than the problem size or the iteration budget
+    restart = min(restart, n, max_iter)
+    norm = _scaled_norm
 
     b_is_zero = b.eq(0).all(dim=-1)
     b_norm = norm(b)
@@ -385,10 +406,11 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
     safe_Mb_norm = Mb_norm.masked_fill(Mb_norm.eq(0), 1)
 
     batch = b.shape[:-1]
-    V = torch.zeros(*batch, restart + 1, n, dtype=dtype, device=device)
-    # Transpose of the product of the Givens rotations of the cycle, and the rotated (upper triangular) Hessenberg
-    QT = torch.empty(*batch, restart + 1, restart + 1, dtype=dtype, device=device)
-    R = torch.empty(*batch, restart, restart, dtype=dtype, device=device)
+    if not bool(running.any()):
+        # Zero budget, zero right-hand sides or an initial guess that already converged: nothing iterates, so do not
+        # allocate a restart-sized Krylov workspace for nothing (the loop below does not run)
+        restart = 0
+    V, QT, R = _krylov_workspace(batch, restart, n, dtype, device)
     eye = torch.eye(restart, dtype=dtype, device=device)
     steps = torch.arange(restart, device=device)
     full_basis = _project_on_full_basis(device)

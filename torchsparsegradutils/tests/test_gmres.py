@@ -415,3 +415,93 @@ def test_gmres_recursive_residual_without_iterations(with_guess, with_preconditi
     torch.testing.assert_close(info.recursive_relative_residual[0], expected)
     assert info.recursive_relative_residual[1] == 0
     assert info.converged.tolist() == [False, True]
+
+
+SCALES = [(torch.float32, 1e-25), (torch.float32, 1e20), (torch.float64, 1e-200), (torch.float64, 1e200)]
+
+
+@pytest.mark.parametrize("dtype, scale", SCALES, ids=[f"{str(d).split('.')[-1]}-{s:g}" for d, s in SCALES])
+def test_gmres_extreme_rhs_scale(device, dtype, scale):
+    """Norms are scaled: tiny or huge (but representable) right-hand sides do not under/overflow to false results."""
+    A = torch.eye(4, device=device, dtype=dtype)
+    b = torch.full((4,), scale, device=device, dtype=dtype)
+    x, info = gmres(A, b, return_info=True)
+    # Scale before taking the reference norm, so that it stays accurate (and a zero solution fails)
+    assert torch.linalg.vector_norm((x - b) / scale) / 2 <= 1e-5
+    assert info.converged.tolist() == [True] and info.reason == "converged"
+    assert torch.isfinite(info.true_relative_residual).all() and torch.isfinite(info.recursive_relative_residual).all()
+
+
+@pytest.mark.parametrize("dtype, scale", SCALES, ids=[f"{str(d).split('.')[-1]}-{s:g}" for d, s in SCALES])
+def test_gmres_extreme_operator_scale(device, dtype, scale):
+    A = scale * _convection_diffusion(12, dtype, device, diagonal=4.0)
+    b = torch.randn(12, dtype=dtype, device=device)
+    x, info = gmres(A, b, settings=GMRESSettings(rtol=1e-5), return_info=True)
+    assert info.reason == "converged"
+    expected = torch.linalg.solve(A.double() / scale, b.double())
+    assert torch.linalg.vector_norm(x.double() * scale - expected) / torch.linalg.vector_norm(expected) <= 1e-4
+
+
+def test_gmres_mixed_scale_columns():
+    """Zero, ordinary, tiny, huge and non-finite columns in one solve: each gets its own outcome."""
+    A = _convection_diffusion(16, torch.float32, diagonal=4.0)
+    B = torch.randn(16, 5, dtype=torch.float32, generator=torch.Generator().manual_seed(0))
+    B[:, 0] = 0
+    B[:, 2] *= 1e-25
+    B[:, 3] *= 1e20
+    B[3, 4] = float("inf")
+    X, info = gmres(A, B, settings=GMRESSettings(rtol=1e-5), return_info=True)
+    assert info.converged.tolist() == [True, True, True, True, False]
+    assert info.reason == "breakdown"
+    assert torch.equal(X[:, 0], torch.zeros(16))
+    expected = torch.linalg.solve(A.double(), B[:, 1:4].double())
+    scale = expected.abs().amax(dim=0)
+    error = torch.linalg.vector_norm((X[:, 1:4].double() - expected) / scale, dim=0)
+    assert (error / torch.linalg.vector_norm(expected / scale, dim=0)).max() <= 1e-4
+
+
+@pytest.mark.parametrize("case", ["zero_budget", "exact_guess", "zero_rhs", "short_budget"])
+def test_gmres_workspace_not_allocated_without_iterations(monkeypatch, case):
+    """No restart-sized Krylov workspace when nothing iterates, and none larger than a short budget."""
+    gmres_module = sys.modules["torchsparsegradutils.utils.gmres"]
+    allocated = []
+    workspace = gmres_module._krylov_workspace
+
+    def recording_workspace(batch, restart, n, dtype, device):
+        allocated.append(restart)
+        return workspace(batch, restart, n, dtype, device)
+
+    monkeypatch.setattr(gmres_module, "_krylov_workspace", recording_workspace)
+    A = _convection_diffusion(40)
+    B = torch.randn(40, 3, dtype=torch.float64)
+    expected = torch.linalg.solve(A, B)
+    rhs = torch.zeros_like(B) if case == "zero_rhs" else B
+    guess = expected if case == "exact_guess" else None
+    max_iter = {"zero_budget": 0, "short_budget": 3}.get(case)
+    settings = GMRESSettings(rtol=1e-8, restart=20, max_iter=max_iter)
+    X, info = gmres(A, rhs, initial_guess=guess, settings=settings, return_info=True)
+
+    if case == "short_budget":
+        assert allocated == [3] and info.iterations == 3 and info.reason == "max_iter"
+        return
+    assert allocated == [0] and info.iterations == 0 and info.restarts == 0
+    if case == "zero_budget":
+        assert info.reason == "max_iter" and torch.equal(X, torch.zeros_like(B)) and info.matvecs == 0
+        torch.testing.assert_close(info.true_relative_residual, torch.ones(3, dtype=torch.float64))
+    else:
+        assert info.reason == "converged"
+        torch.testing.assert_close(X, torch.zeros_like(B) if case == "zero_rhs" else expected)
+        assert info.matvecs == (1 if case == "exact_guess" else 0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_gmres_cuda_memory_without_iterations():
+    B = torch.ones(20000, 16, device="cuda", dtype=torch.float32)
+    gmres(lambda X: X, torch.ones(4, device="cuda"))  # warm up
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
+    before = torch.cuda.memory_allocated()
+    gmres(lambda X: X, B, settings=GMRESSettings(restart=50, max_iter=0), return_info=True)
+    torch.cuda.synchronize()
+    # Far below the 65 MB of a restart-sized basis: only a few (n, k) temporaries
+    assert torch.cuda.max_memory_allocated() - before <= 8 * B.numel() * B.element_size()
