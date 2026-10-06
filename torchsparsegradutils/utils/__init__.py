@@ -1,5 +1,6 @@
 from .bicgstab import BICGSTABSettings, bicgstab
 from .dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
+from .gmres import GMRESInfo, GMRESSettings, gmres
 from .linear_cg import CGInfo, LinearCGSettings, linear_cg
 from .lsmr import lsmr
 from .minres import MINRESInfo, MINRESSettings, minres
@@ -22,6 +23,9 @@ __all__ = [
     "MINRESInfo",
     "bicgstab",
     "BICGSTABSettings",
+    "gmres",
+    "GMRESSettings",
+    "GMRESInfo",
     "lsmr",
     "convert_coo_to_csr_indices_values",
     "convert_coo_to_csr",

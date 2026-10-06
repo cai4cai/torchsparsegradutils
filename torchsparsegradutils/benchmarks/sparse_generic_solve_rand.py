@@ -35,7 +35,7 @@ from torchsparsegradutils.benchmarks.benchmark_utils import (
 )
 from torchsparsegradutils.cupy.cupy_sparse_solve import sparse_solve_c4t
 from torchsparsegradutils.sparse_solve import sparse_generic_solve
-from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, linear_cg, minres
+from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, gmres, linear_cg, minres
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
 REPEATS = 50
@@ -104,6 +104,14 @@ def make_generic_solver_with_tol(solver_func):
         return lambda A, B: sparse_generic_solve(
             A, B, solve=solver_func, transpose_solve=solver_func, settings=settings
         )
+    elif solver_func == gmres:
+        # gmres counts Arnoldi iterations over all restart cycles, as CuPy's maxiter does
+        from torchsparsegradutils.utils.gmres import GMRESSettings
+
+        settings = GMRESSettings(rtol=SOLVER_TOL, atol=SOLVER_ATOL, max_iter=SOLVER_MAXITER)
+        return lambda A, B: sparse_generic_solve(
+            A, B, solve=solver_func, transpose_solve=solver_func, settings=settings
+        )
     else:
         # Default fallback
         return lambda A, B: sparse_generic_solve(A, B, solve=solver_func, transpose_solve=solver_func)
@@ -130,6 +138,7 @@ ALGORITHMS = [
     ("sparse_generic_cg", make_generic_solver_with_tol(linear_cg)),
     ("sparse_generic_bicgstab", make_generic_solver_with_tol(bicgstab)),
     ("sparse_generic_minres", make_generic_solver_with_tol(minres)),
+    ("sparse_generic_gmres", make_generic_solver_with_tol(gmres)),
     # CuPy/SciPy solve algorithms with consistent tolerance
     ("cupy_cg", make_cupy_solver_with_tol("cg")),
     ("cupy_cgs", make_cupy_solver_with_tol("cgs")),

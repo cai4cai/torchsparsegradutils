@@ -5,7 +5,7 @@ import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, Tolerances
 
 from torchsparsegradutils.sparse_solve import sparse_generic_solve, sparse_generic_symmetric_solve
-from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, linear_cg, minres
+from torchsparsegradutils.utils import bicgstab, convert_coo_to_csr, gmres, linear_cg, minres
 from torchsparsegradutils.utils.random_sparse import make_spd_sparse
 
 TEST_DATA = [
@@ -16,7 +16,7 @@ TEST_DATA = [
 ]
 
 LAYOUTS = [torch.sparse_coo, torch.sparse_csr]
-SOLVES = [None, linear_cg, bicgstab, minres]
+SOLVES = [None, linear_cg, bicgstab, minres, gmres]
 
 
 # Define Test Names:

@@ -321,6 +321,8 @@ def sparse_generic_solve(
 
         * ``linear_cg`` (SPD matrices)
         * ``minres`` (symmetric, possibly indefinite; see :func:`sparse_generic_symmetric_solve`)
+        * ``gmres`` (general non-symmetric, restarted GMRES; more robust than BiCGSTAB at the cost of storing
+          ``restart`` Krylov vectors per right-hand side)
 
     transpose_solve : callable, optional
         Solver for the transpose system used in backprop, with signature
