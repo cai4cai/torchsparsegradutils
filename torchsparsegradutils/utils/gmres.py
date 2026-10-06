@@ -204,7 +204,7 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
     Raises
     ------
     ValueError
-        If a setting is invalid, if ``rhs`` is not real floating point, or if ``initial_guess`` does not
+        If a setting is invalid, if ``rhs`` is neither ``float32`` nor ``float64``, or if ``initial_guess`` does not
         have the shape of ``rhs``.
     TypeError
         If ``matmul_closure`` or ``preconditioner`` is neither a tensor nor a callable.
@@ -262,7 +262,7 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
     end a cycle early once all columns have stopped. Raising ``check_every`` trades
     synchronisations for possibly wasted operator applications.
 
-    Only real floating-point dtypes are supported. Memory use is :math:`O((\mathrm{restart} + 1)\, n\, k)`
+    Only ``float32`` and ``float64`` are supported. Memory use is :math:`O((\mathrm{restart} + 1)\, n\, k)`
     for the Krylov bases.
 
     See Also
@@ -314,8 +314,10 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
         raise ValueError("settings.orthogonalization must be 'cgs2' or 'mgs'")
     if settings.check_every < 1:
         raise ValueError("settings.check_every must be at least 1")
-    if not rhs.is_floating_point():
-        raise ValueError(f"gmres only supports real floating-point dtypes, got {rhs.dtype}")
+    if rhs.dtype not in (torch.float32, torch.float64):
+        # Half precision is rejected too: the triangular solve has no float16/bfloat16 kernels on CPU or MPS, and
+        # an epsilon around 1e-3 would make the breakdown test and the orthogonalisation unreliable anyway
+        raise ValueError(f"gmres only supports float32 and float64, got {rhs.dtype}")
     if initial_guess is not None and initial_guess.shape != rhs.shape:
         raise ValueError(f"initial_guess has shape {tuple(initial_guess.shape)}, expected {tuple(rhs.shape)}")
     op = _as_operator(matmul_closure, "matmul_closure")

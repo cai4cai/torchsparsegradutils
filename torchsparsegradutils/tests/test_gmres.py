@@ -288,10 +288,10 @@ def test_gmres_invalid_settings(settings, message):
 
 
 def test_gmres_invalid_arguments():
-    with pytest.raises(ValueError, match="real floating-point"):
+    with pytest.raises(ValueError, match="float32 and float64"):
         gmres(torch.eye(2, dtype=torch.complex128), torch.ones(2, dtype=torch.complex128))
-    for dtype in (torch.int64, torch.bool):
-        with pytest.raises(ValueError, match="real floating-point"):
+    for dtype in (torch.int64, torch.bool, torch.float16, torch.bfloat16):
+        with pytest.raises(ValueError, match="float32 and float64"):
             gmres(torch.eye(2, dtype=dtype), torch.ones(2, dtype=dtype))
     with pytest.raises(ValueError, match="initial_guess"):
         gmres(torch.eye(2), torch.ones(2), initial_guess=torch.ones(3))
