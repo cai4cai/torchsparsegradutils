@@ -390,3 +390,28 @@ def test_gmres_mps():
         assert X.device.type == "mps"
         assert info.reason == "converged"
         assert _relative_residual(A.double(), X.cpu().double(), B.double()).max() <= 2e-5
+
+
+@pytest.mark.parametrize("with_guess", [False, True])
+@pytest.mark.parametrize("with_preconditioner", [False, True])
+def test_gmres_recursive_residual_without_iterations(with_guess, with_preconditioner):
+    """Without any Arnoldi iteration, the residual estimate is the initial (preconditioned) relative residual."""
+    A = _convection_diffusion(30)
+    B = torch.randn(30, 2, dtype=torch.float64)
+    B[:, 1] = 0
+    X0 = torch.randn_like(B) if with_guess else None
+    inv_diag = 1 / torch.diagonal(A)
+    M = (lambda R: inv_diag.unsqueeze(-1) * R) if with_preconditioner else (lambda R: R)
+    _, info = gmres(
+        A,
+        B,
+        initial_guess=X0,
+        preconditioner=M if with_preconditioner else None,
+        settings=GMRESSettings(max_iter=0),
+        return_info=True,
+    )
+    R0 = B if X0 is None else B - A @ X0
+    expected = torch.linalg.vector_norm(M(R0[:, :1])) / torch.linalg.vector_norm(M(B[:, :1]))
+    torch.testing.assert_close(info.recursive_relative_residual[0], expected)
+    assert info.recursive_relative_residual[1] == 0
+    assert info.converged.tolist() == [False, True]

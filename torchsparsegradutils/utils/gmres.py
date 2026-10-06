@@ -67,8 +67,9 @@ class GMRESInfo:
     true_relative_residual is ``||b - A x||_2 / ||b||_2``, computed by the
     residual update that ends every restart cycle (0 for a zero right-hand
     side). recursive_relative_residual is the GMRES residual estimate at the
-    end of the last cycle that updated each column, relative to the norm of
-    ``M^{-1} b`` (``b`` without a preconditioner); it is measured on the
+    end of the last cycle that updated each column (or the initial residual
+    for a column that never iterated), relative to the norm of ``M^{-1} b``
+    (``b`` without a preconditioner); it is measured on the
     left-preconditioned residual ``M^{-1} (b - A x)``, so it can differ from
     the true relative residual even in exact arithmetic.
 
@@ -373,7 +374,14 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
     safe_b_norm = b_norm.masked_fill(b_is_zero, 1)
     ptol_max_factor = torch.ones_like(b_norm)
     ptol = Mb_norm * torch.clamp_max(threshold / safe_b_norm, 1)
-    presid = torch.zeros_like(b_norm)
+    # Preconditioned residual estimate, starting from the initial residual so that it is meaningful for columns that
+    # never iterate (e.g. max_iter=0, or an initial guess that already converged)
+    if precon is None:
+        presid = r_norm.clone()
+    elif initial_guess is None:
+        presid = Mb_norm.masked_fill(b_is_zero, 0)
+    else:
+        presid = norm(apply_precon(r)).masked_fill_(b_is_zero, 0)
     safe_Mb_norm = Mb_norm.masked_fill(Mb_norm.eq(0), 1)
 
     batch = b.shape[:-1]
