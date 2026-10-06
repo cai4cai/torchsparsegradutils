@@ -5,8 +5,38 @@
 # (and the default); past Givens rotations are accumulated in a small orthogonal matrix so that each Arnoldi step only
 # launches a fixed number of kernels.
 #
-# SciPy is distributed under the BSD-3-Clause license:
-# Copyright (c) 2001-2002 Enthought, Inc. 2003, SciPy Developers. All rights reserved.
+# SciPy is distributed under the BSD-3-Clause license, reproduced below as its terms require:
+#
+# Copyright (c) 2001-2002 Enthought, Inc. 2003, SciPy Developers.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above
+#    copyright notice, this list of conditions and the following
+#    disclaimer in the documentation and/or other materials provided
+#    with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import math
 import warnings
@@ -21,7 +51,8 @@ class GMRESSettings(NamedTuple):
     rtol: float = 1e-5  # Relative tolerance: stop once ||b - A x|| <= max(rtol * ||b||, atol) for every column
     atol: float = 0.0  # Absolute tolerance
     restart: int = 20  # Krylov subspace dimension between restarts, capped at n
-    max_iter: int | None = None  # Maximum total number of Arnoldi iterations over all restart cycles (default 10 n)
+    max_iter: int | None = None  # Maximum total number of Arnoldi iterations over all restart cycles (default 10 n).
+    # It does not count the residual update ending each cycle nor the initial residual of an initial guess.
     orthogonalization: Literal["cgs2", "mgs"] = "cgs2"  # Classical Gram-Schmidt applied twice, or modified Gram-Schmidt
     check_every: int = 1  # Arnoldi iterations between host synchronisations testing for an early end of the cycle
 
@@ -77,6 +108,15 @@ def _givens(f: torch.Tensor, g: torch.Tensor) -> tuple[torch.Tensor, torch.Tenso
     c = torch.where(nonzero, f / safe_r, 1)
     s = torch.where(nonzero, g / safe_r, 0)
     return c, s, r
+
+
+def _project_on_full_basis(device: torch.device) -> bool:
+    """Whether Gram-Schmidt projects on the full, zero-padded Krylov basis rather than on its filled rows.
+
+    Both give the same coefficients since the rows that are not filled yet are zero. MPS runs batched products whose
+    shape changes every iteration an order of magnitude slower, so it uses the fixed-size full basis.
+    """
+    return device.type == "mps"
 
 
 @overload
@@ -149,7 +189,8 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
         tested on the true residual :math:`\lVert b - A x \rVert_2`.
     settings : GMRESSettings, optional
         Tolerances (``rtol``, ``atol``), restart length, iteration budget (``max_iter``
-        counts Arnoldi iterations over all cycles; ``None`` uses ``10 n``), Gram-Schmidt
+        counts Arnoldi iterations over all cycles, not the residual updates between
+        cycles; ``None`` uses ``10 n``), Gram-Schmidt
         variant and host synchronisation frequency (``check_every``).
     return_info : bool, optional
         Also return a :class:`GMRESInfo`. The true residuals it reports come for free from
@@ -163,7 +204,7 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
     Raises
     ------
     ValueError
-        If a setting is invalid, if ``rhs`` is complex, or if ``initial_guess`` does not
+        If a setting is invalid, if ``rhs`` is not real floating point, or if ``initial_guess`` does not
         have the shape of ``rhs``.
     TypeError
         If ``matmul_closure`` or ``preconditioner`` is neither a tensor nor a callable.
@@ -191,7 +232,11 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
 
     **Iteration budget.** Unlike SciPy, whose ``maxiter`` counts restart cycles (by default
     ``10 n`` cycles of ``restart`` iterations), ``max_iter`` bounds the total number of
-    Arnoldi iterations, i.e. of batched operator applications, whatever the restart length.
+    Arnoldi iterations, whatever the restart length. Each Arnoldi iteration applies the
+    operator once (to all right-hand sides at once). The residual update that ends every
+    restart cycle, and the initial residual of an ``initial_guess``, also apply it once but
+    are not counted in ``max_iter``, so ``info.matvecs`` is
+    ``iterations + restarts (+ 1 with an initial guess)``.
 
     **Orthogonalisation.** SciPy uses modified Gram-Schmidt (MGS, ``"mgs"``), which needs
     ``j + 1`` dependent dot products at Arnoldi step ``j``. The default, ``"cgs2"``,
@@ -217,7 +262,7 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
     end a cycle early once all columns have stopped. Raising ``check_every`` trades
     synchronisations for possibly wasted operator applications.
 
-    Only real dtypes are supported. Memory use is :math:`O((\mathrm{restart} + 1)\, n\, k)`
+    Only real floating-point dtypes are supported. Memory use is :math:`O((\mathrm{restart} + 1)\, n\, k)`
     for the Krylov bases.
 
     See Also
@@ -269,8 +314,8 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
         raise ValueError("settings.orthogonalization must be 'cgs2' or 'mgs'")
     if settings.check_every < 1:
         raise ValueError("settings.check_every must be at least 1")
-    if rhs.is_complex():
-        raise ValueError("gmres only supports real dtypes")
+    if not rhs.is_floating_point():
+        raise ValueError(f"gmres only supports real floating-point dtypes, got {rhs.dtype}")
     if initial_guess is not None and initial_guess.shape != rhs.shape:
         raise ValueError(f"initial_guess has shape {tuple(initial_guess.shape)}, expected {tuple(rhs.shape)}")
     op = _as_operator(matmul_closure, "matmul_closure")
@@ -315,8 +360,10 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
         matvecs += 1
     r_norm = norm(r).masked_fill_(b_is_zero, 0)
 
-    converged = r_norm.le(threshold)
-    broken = ~converged & ~torch.isfinite(r_norm)
+    # A non-finite residual never converges, even against an infinite threshold (e.g. an infinite rhs)
+    finite_r_norm = torch.isfinite(r_norm)
+    converged = finite_r_norm & r_norm.le(threshold)
+    broken = ~finite_r_norm
     running = ~converged & ~broken
 
     # Tolerance on the preconditioned residual estimate for the inner iterations (scipy/scipy#8400)
@@ -334,7 +381,7 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
     R = torch.empty(*batch, restart, restart, dtype=dtype, device=device)
     eye = torch.eye(restart, dtype=dtype, device=device)
     steps = torch.arange(restart, device=device)
-    full_basis = device.type == "mps"
+    full_basis = _project_on_full_basis(device)
 
     iterations = 0
     restarts = 0
@@ -365,8 +412,8 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
             iterations += 1
             h0 = norm(w)
 
-            # Rows of V past j are zero, so projecting on all of them gives the same coefficients. MPS runs batched
-            # products whose shape changes every iteration an order of magnitude slower, so it uses the full basis.
+            # Rows of V past j are zero, so projecting on all of them gives the same coefficients (see
+            # _project_on_full_basis)
             basis = V if full_basis else V[..., : j + 1, :]
             h_col = torch.zeros(*batch, restart + 1, dtype=dtype, device=device)
             if settings.orthogonalization == "cgs2":
@@ -432,7 +479,7 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
         previous_r_norm = r_norm
         r_norm = torch.where(running, norm(r), r_norm)
 
-        newly_converged = running & r_norm.le(threshold)
+        newly_converged = running & torch.isfinite(r_norm) & r_norm.le(threshold)
         # A breakdown found an invariant subspace. If the true residual still misses the tolerance, SciPy stops. A
         # breakdown in finite precision (e.g. once the Krylov space spans everything) can however leave a residual
         # that a restart, acting as iterative refinement, reduces further: only stop when the cycle did not at least

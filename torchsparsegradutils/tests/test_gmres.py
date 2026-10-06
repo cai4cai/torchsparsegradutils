@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import pytest
 import scipy.sparse.linalg as spla
@@ -286,8 +288,11 @@ def test_gmres_invalid_settings(settings, message):
 
 
 def test_gmres_invalid_arguments():
-    with pytest.raises(ValueError, match="real"):
+    with pytest.raises(ValueError, match="real floating-point"):
         gmres(torch.eye(2, dtype=torch.complex128), torch.ones(2, dtype=torch.complex128))
+    for dtype in (torch.int64, torch.bool):
+        with pytest.raises(ValueError, match="real floating-point"):
+            gmres(torch.eye(2, dtype=dtype), torch.ones(2, dtype=dtype))
     with pytest.raises(ValueError, match="initial_guess"):
         gmres(torch.eye(2), torch.ones(2), initial_guess=torch.ones(3))
     with pytest.raises(TypeError, match="matmul_closure"):
@@ -334,3 +339,54 @@ def test_gmres_restarts_after_rounding_breakdown():
     assert info.reason == "converged"
     assert info.restarts >= 2
     assert _relative_residual(A.double(), X.double(), B.double()).max() <= 2e-6
+
+
+@pytest.mark.parametrize("bad_value", [float("inf"), float("nan")])
+def test_gmres_non_finite_rhs_is_not_converged(bad_value):
+    A = _nonsymmetric(6)
+    B = torch.randn(6, 2, dtype=torch.float64)
+    B[0, 0] = bad_value
+    X, info = gmres(A, B, settings=GMRESSettings(rtol=1e-12), return_info=True)
+    assert info.converged.tolist() == [False, True]
+    assert info.reason == "breakdown"
+    torch.testing.assert_close(X[:, 1], torch.linalg.solve(A, B[:, 1]))
+    with pytest.warns(UserWarning, match="breakdown"):
+        gmres(A, B[:, 0])
+
+
+def test_gmres_matvecs_count_residual_updates():
+    """max_iter caps Arnoldi iterations only: residual updates and the initial guess residual add matvecs."""
+    A = _convection_diffusion(40)
+    b = torch.randn(40, dtype=torch.float64)
+    settings = GMRESSettings(rtol=1e-12, restart=4, max_iter=10)
+    _, info = gmres(A, b, initial_guess=torch.zeros_like(b), settings=settings, return_info=True)
+    assert info.iterations == 10 and info.restarts == 3
+    assert info.matvecs == info.iterations + info.restarts + 1 > settings.max_iter
+
+
+@pytest.mark.parametrize("orthogonalization", ORTHOGONALIZATIONS)
+def test_gmres_full_basis_projection_matches(monkeypatch, orthogonalization):
+    """The fixed-size projection used on MPS gives the same iterates as the default sliced projection."""
+    # The package re-exports the function under the module's name: fetch the module itself
+    gmres_module = sys.modules["torchsparsegradutils.utils.gmres"]
+
+    A = _convection_diffusion(50)
+    B = torch.randn(50, 3, dtype=torch.float64)
+    B[:, 1] = 0
+    settings = GMRESSettings(rtol=1e-10, restart=8, orthogonalization=orthogonalization)
+    X_ref, info_ref = gmres(A, B, settings=settings, return_info=True)
+    monkeypatch.setattr(gmres_module, "_project_on_full_basis", lambda device: True)
+    X, info = gmres(A, B, settings=settings, return_info=True)
+    assert info.iterations == info_ref.iterations and info.restarts == info_ref.restarts
+    torch.testing.assert_close(X, X_ref, rtol=1e-10, atol=1e-12)
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS is not available")
+def test_gmres_mps():
+    A = _convection_diffusion(60, torch.float32)
+    B = torch.randn(60, 3, dtype=torch.float32)
+    for operator in (A.to("mps"), A.to_sparse_coo().to("mps")):
+        X, info = gmres(operator, B.to("mps"), settings=GMRESSettings(rtol=1e-5, restart=10), return_info=True)
+        assert X.device.type == "mps"
+        assert info.reason == "converged"
+        assert _relative_residual(A.double(), X.cpu().double(), B.double()).max() <= 2e-5
