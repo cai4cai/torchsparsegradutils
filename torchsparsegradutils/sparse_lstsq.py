@@ -11,14 +11,16 @@ def sparse_generic_lstsq(
 ) -> torch.Tensor:
     r"""Sparse linear least squares with sparse-aware gradients.
 
-     Solves the overdetermined problem :math:`\min_x \|\mathbf{A}x - \mathbf{B}\|_2^2` where
-     :math:`\mathbf{A} \in \mathbb{R}^{m\times n}` is tall (:math:`m>n`) and either sparse (COO/CSR)
-     or dense, and :math:`\mathbf{B} \in \mathbb{R}^{m\times p}` is dense. For sparse :math:`\mathbf{A}`,
+     Solves the least-squares problem :math:`\min_x \|\mathbf{A}x - \mathbf{B}\|_2^2` where
+     :math:`\mathbf{A} \in \mathbb{R}^{m\times n}` is either sparse (COO/CSR) or dense, and :math:`\mathbf{B} \in \mathbb{R}^{m\times p}` is dense. For sparse :math:`\mathbf{A}`,
      backprop preserves the sparsity pattern by returning sparse gradients for :math:`\mathbf{A}` at
      its nonzero entries only; for dense :math:`\mathbf{A}`, the full dense gradient is returned.
 
-     We assume :math:`\mathbf{A}` has full column rank so that :math:`\mathbf{A}^{+}\mathbf{A}=\mathbf{I}`
-     (with :math:`\,\cdot^{+}` the Moore–Penrose pseudoinverse). Let
+     The gradient with respect to :math:`\mathbf{A}` assumes :math:`\mathbf{A}` is tall (:math:`m \ge n`)
+     with full column rank, so that :math:`\mathbf{A}^{+}\mathbf{A}=\mathbf{I}` (with :math:`\,\cdot^{+}`
+     the Moore–Penrose pseudoinverse). The gradient with respect to :math:`\mathbf{B}` holds for any
+     shape, provided ``lstsq`` returns the minimum-norm solution :math:`\mathbf{x} = \mathbf{A}^{+}\mathbf{B}`
+     (as the default LSMR does when :math:`\mathbf{A}` is wide). Let
      :math:`\mathbf{x} \in \mathbb{R}^{n\times p}` denote the solution and let the upstream
      gradient be :math:`\frac{\partial \mathcal{L}}{\partial \mathbf{x}} \in \mathbb{R}^{n\times p}` for some
      scalar objective :math:`\mathcal{L}`.
@@ -36,7 +38,8 @@ def sparse_generic_lstsq(
          \; -\; (\mathbf{A}\,\mathbf{x} - \mathbf{B})\; \big(\mathbf{A}^{+}\, \mathbf{G}_B\big)^{\top},
 
      which is returned as is for dense :math:`\mathbf{A}`. For sparse :math:`\mathbf{A}`, we evaluate
-     only the entries corresponding to nonzeros of :math:`\mathbf{A}` to keep the gradient sparse. Equivalently, for a nonzero entry :math:`\mathbf{A}_{ij}` with residuals
+     only the entries corresponding to nonzeros of :math:`\mathbf{A}` to keep the gradient sparse.
+     Equivalently, for a nonzero entry :math:`\mathbf{A}_{ij}` with residuals
      :math:`\mathbf{r}=\mathbf{A}\,\mathbf{x}-\mathbf{B}` and :math:`\mathbf{H}=\mathbf{A}^{+}\,\mathbf{G}_B`,
      the contribution is
 
@@ -50,8 +53,9 @@ def sparse_generic_lstsq(
     Parameters
     ----------
     A : torch.Tensor
-        Sparse COO/CSR or dense (strided) tensor of shape ``(m, n)`` with ``m>n`` and full
-        column rank. For dense ``A``, the gradient is returned as a dense tensor.
+        Sparse COO/CSR or dense (strided) tensor of shape ``(m, n)``. If ``A.requires_grad``,
+        it must be tall (``m >= n``) with full column rank. For dense ``A``, the gradient is
+        returned as a dense tensor.
     B : torch.Tensor
         Dense RHS of shape ``(m,)`` or ``(m, k)`` with ``B.shape[0] == A.shape[0]``.
     lstsq : callable, optional
@@ -70,7 +74,7 @@ def sparse_generic_lstsq(
     TypeError
         If ``A`` is not sparse COO/CSR or dense (strided).
     ValueError
-        If dimension mismatch or if backward encounters non-tall ``A``.
+        If dimension mismatch, or if ``A`` requires gradients but is wide (``m < n``).
     RuntimeError
         If a provided solver fails or returns unexpected shape.
 
@@ -130,6 +134,10 @@ def sparse_generic_lstsq(
     """
     if A.layout not in (torch.sparse_coo, torch.sparse_csr, torch.strided):
         raise TypeError(f"Unsupported layout: {A.layout}. Only COO, CSR and dense (strided) are supported.")
+    if A.requires_grad and A.dim() == 2 and A.shape[1] > A.shape[0]:
+        raise ValueError(
+            f"Gradients with respect to A require a tall full-rank matrix (m >= n). Got A.shape={tuple(A.shape)}"
+        )
 
     if lstsq is None or transpose_lstsq is None:
         from .utils import lsmr
@@ -211,10 +219,7 @@ class SparseGenericLstsq(torch.autograd.Function):
 
         # We make use of equation 4.12 in https://www.jstor.org/stable/2156365
         # but assume A is tall and full rank to get A^+ A = Id and simplify the derivation.
-        # We don't try and compute the rank of A for computational reason but at least check
-        # that A is a tall matrix
-        if A.shape[1] > A.shape[0]:
-            raise ValueError(f"A should be a tall full-rank matrix. Got A.shape={A.shape}")
+        # This assumption is only needed for gradA (checked below); gradB = (A^T)^+ grad holds for any shape.
         # Following the derivation in https://blog.flaport.net/solving-sparse-linear-systems-in-pytorch.html
         # but using the pseudo-inverse instead of the inverse:
         # The gradient with respect to the matrix A seen as a dense matrix would
@@ -241,6 +246,11 @@ class SparseGenericLstsq(torch.autograd.Function):
 
         gradA = None
         if ctx.needs_input_grad[0]:  # skip the extra lstsq solve when only B needs gradients
+            # We don't try and compute the rank of A for computational reason but at least check
+            # that A is a tall matrix
+            if A.shape[1] > A.shape[0]:
+                raise ValueError(f"A should be a tall full-rank matrix. Got A.shape={A.shape}")
+
             # residuals and A^+ gradB, shared by the dense and sparse branches
             mresiduals = B - A @ x
             Apgb = ctx.lstsq(A, gradB)

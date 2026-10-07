@@ -297,3 +297,34 @@ def test_generic_lstsq_backward_B_only_skips_A_grad(device, A_layout):
     assert len(calls) == 1  # forward only; the A^+ gradB solve is skipped
     assert A.grad is None
     assert torch.allclose(B.grad, B_ref.grad, rtol=RTOL, atol=RTOL)
+
+
+@pytest.mark.parametrize("A_layout", [torch.sparse_csr, torch.strided], ids=["csr", "dense"])
+def test_generic_lstsq_wide_A_requires_grad_raises(device, A_layout):
+    A = torch.randn(3, 5, dtype=torch.float64, device=device)
+    if A_layout != torch.strided:
+        A = A.to_sparse_csr()
+    A.requires_grad_()
+    with pytest.raises(ValueError, match="tall"):
+        sparse_generic_lstsq(A, torch.randn(3, dtype=torch.float64, device=device))
+
+
+@pytest.mark.parametrize("B_shape", [(3,), (3, 2)], ids=["vector_1d", "multi_rhs"])
+@pytest.mark.parametrize("A_layout", [torch.sparse_csr, torch.strided], ids=["csr", "dense"])
+def test_generic_lstsq_wide_A_B_only_gradient(device, A_layout, B_shape):
+    dtype = torch.float64
+    torch.manual_seed(0)
+    A_dense = torch.randn(3, 5, dtype=dtype, device=device)
+    A = A_dense if A_layout == torch.strided else A_dense.to_sparse_csr()
+    B = torch.randn(B_shape, dtype=dtype, device=device, requires_grad=True)
+    B_ref = B.detach().clone().requires_grad_()
+
+    # Minimum-norm solution, as returned by the default LSMR
+    x = sparse_generic_lstsq(A, B)
+    x_ref = torch.linalg.pinv(A_dense) @ B_ref
+    assert torch.allclose(x, x_ref, rtol=RTOL, atol=RTOL)
+
+    grad_output = torch.randn_like(x)
+    x.backward(grad_output)
+    x_ref.backward(grad_output)
+    assert torch.allclose(B.grad, B_ref.grad, rtol=RTOL, atol=RTOL)
