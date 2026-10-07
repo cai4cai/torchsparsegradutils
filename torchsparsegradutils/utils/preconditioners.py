@@ -170,3 +170,10 @@ class MatrixPreconditioner(Preconditioner):
         else:
             M_inv_t = self.M_inv.transpose(0, 1)
         return MatrixPreconditioner(M_inv_t)
+
+
+def _matrix_operator(M: torch.Tensor):
+    """Operator X -> M X; sparse matrices go through MatrixPreconditioner to support batched X."""
+    if M.layout == torch.strided:
+        return M.matmul
+    return MatrixPreconditioner(M)

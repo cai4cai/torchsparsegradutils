@@ -9,6 +9,8 @@ from typing import Literal, NamedTuple, overload
 
 import torch
 
+from .preconditioners import _matrix_operator
+
 
 class _MINRESSettingsFields(NamedTuple):
     max_cg_iterations: int | None = None  # Deprecated alias of max_minres_iterations, kept in first position for
@@ -353,7 +355,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     if preconditioner is None:
         preconditioner = lambda x: x.clone()
     elif isinstance(preconditioner, torch.Tensor):
-        preconditioner = preconditioner.matmul
+        preconditioner = _matrix_operator(preconditioner)
 
     if shifts is None:
         shifts_tensor = torch.tensor(0.0, dtype=rhs.dtype, device=rhs.device)

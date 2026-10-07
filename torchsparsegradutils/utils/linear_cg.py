@@ -9,6 +9,8 @@ from typing import Literal, NamedTuple
 
 import torch
 
+from .preconditioners import _matrix_operator
+
 
 class LinearCGSettings(NamedTuple):
     max_cg_iterations: int = 1000  # The maximum number of conjugate gradient iterations to perform (when computing
@@ -335,7 +337,7 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
         precond = False
     else:
         if isinstance(preconditioner, torch.Tensor):
-            preconditioner = preconditioner.matmul
+            preconditioner = _matrix_operator(preconditioner)
         precond = True
 
     # If we are running m CG iterations, we obviously can't get more than m Lanczos coefficients

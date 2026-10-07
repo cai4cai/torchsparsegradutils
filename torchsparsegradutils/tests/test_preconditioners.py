@@ -235,6 +235,16 @@ def test_solvers_accept_tensor_preconditioner(device, solver):
     torch.testing.assert_close(x, torch.linalg.solve(A, b), rtol=1e-5, atol=1e-5)
 
 
+@pytest.mark.parametrize("layout", [torch.sparse_coo, torch.sparse_csr], ids=["coo", "csr"])
+@pytest.mark.parametrize("solver", [linear_cg, minres, gmres], ids=lambda s: s.__name__)
+def test_solvers_accept_sparse_tensor_preconditioner_with_batched_rhs(device, solver, layout):
+    A = _badly_scaled_spd(8, device)
+    B = torch.randn(3, 8, 2, dtype=torch.float64, device=device)
+    M_inv = _to_layout(torch.diag(1.0 / torch.diagonal(A)), layout)
+    X = solver(A, B, preconditioner=M_inv)
+    torch.testing.assert_close(X, torch.linalg.solve(A, B), rtol=1e-5, atol=1e-5)
+
+
 # ---------------------------------------------------------------- sparse_generic_solve
 
 
