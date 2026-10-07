@@ -117,7 +117,7 @@ def minres(
     shifts: torch.Tensor | None = None,
     value: float | None = None,
     max_iter: int | None = None,
-    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    preconditioner: torch.Tensor | Callable[[torch.Tensor], torch.Tensor] | None = None,
     settings: MINRESSettings = MINRESSettings(),
     tolerance: float | None = None,
     return_info: Literal[False] = False,
@@ -132,7 +132,7 @@ def minres(
     shifts: torch.Tensor | None = None,
     value: float | None = None,
     max_iter: int | None = None,
-    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    preconditioner: torch.Tensor | Callable[[torch.Tensor], torch.Tensor] | None = None,
     settings: MINRESSettings = MINRESSettings(),
     tolerance: float | None = None,
     *,
@@ -148,7 +148,7 @@ def minres(
     shifts: torch.Tensor | None = None,
     value: float | None = None,
     max_iter: int | None = None,
-    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    preconditioner: torch.Tensor | Callable[[torch.Tensor], torch.Tensor] | None = None,
     settings: MINRESSettings = MINRESSettings(),
     tolerance: float | None = None,
     return_info: bool = False,
@@ -162,7 +162,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     shifts: torch.Tensor | None = None,
     value: float | None = None,
     max_iter: int | None = None,
-    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    preconditioner: torch.Tensor | Callable[[torch.Tensor], torch.Tensor] | None = None,
     settings: MINRESSettings = MINRESSettings(),
     tolerance: float | None = None,
     return_info: bool = False,
@@ -211,9 +211,10 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
         ``n`` is only useful while the true residual is still decreasing. With a
         preconditioner and nonzero shifts, this true residual is unavailable, so
         ``max_iter`` is capped at ``n + 1`` with a warning.
-    preconditioner : callable, optional
-        Symmetric positive definite preconditioner with signature
-        ``preconditioner(x) -> M^{-1} x``. If ``None``, no preconditioning is used.
+    preconditioner : {torch.Tensor, callable(x) -> M^{-1} x}, optional
+        Symmetric positive definite preconditioner approximating ``A^{-1}``, as a matrix or a
+        callable, e.g. a :class:`~torchsparsegradutils.utils.JacobiPreconditioner` (with
+        ``absolute=True`` for indefinite ``A``). If ``None``, no preconditioning is used.
         A positive semi-definite ``M^{-1}`` is acceptable when its null space only
         covers rows where both ``A`` and ``b`` vanish, e.g. a Jacobi preconditioner
         that is zero on the empty rows of a singular graph Laplacian.
@@ -351,6 +352,8 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     has_preconditioner = preconditioner is not None
     if preconditioner is None:
         preconditioner = lambda x: x.clone()
+    elif isinstance(preconditioner, torch.Tensor):
+        preconditioner = preconditioner.matmul
 
     if shifts is None:
         shifts_tensor = torch.tensor(0.0, dtype=rhs.dtype, device=rhs.device)

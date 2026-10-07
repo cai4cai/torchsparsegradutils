@@ -157,7 +157,7 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
     max_iter: int | None = None,
     max_tridiag_iter: int | None = None,
     initial_guess: torch.Tensor | None = None,
-    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    preconditioner: torch.Tensor | Callable[[torch.Tensor], torch.Tensor] | None = None,
     settings: LinearCGSettings = _DEFAULT_LINEAR_CG_SETTINGS,
     convergence_reduction: Literal["all", "mean"] = "all",
     min_iter: int = 0,
@@ -203,8 +203,9 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
         ``settings.max_lanczos_quadrature_iterations``.
     initial_guess : torch.Tensor, optional, shape like ``rhs``
         Initial guess. If ``None``, zeros are used.
-    preconditioner : callable, optional
-        Preconditioner with signature ``preconditioner(x) -> M^{-1} x``.
+    preconditioner : {torch.Tensor, callable(x) -> M^{-1} x}, optional
+        Symmetric positive definite preconditioner approximating ``A^{-1}``, as a matrix or a
+        callable, e.g. a :class:`~torchsparsegradutils.utils.JacobiPreconditioner`.
         If ``None``, no preconditioning is used.
     settings : LinearCGSettings, optional
         Configuration for iteration caps, tolerances, and logging verbosity.
@@ -333,6 +334,8 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
         preconditioner = _default_preconditioner
         precond = False
     else:
+        if isinstance(preconditioner, torch.Tensor):
+            preconditioner = preconditioner.matmul
         precond = True
 
     # If we are running m CG iterations, we obviously can't get more than m Lanczos coefficients

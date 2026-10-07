@@ -16,6 +16,7 @@ class BICGSTABSettings(NamedTuple):
     matvec_max: Optional[int] = None  # Nonnegative max matvecs per RHS (default 2n)
     abstol: float = 1.0e-8  # Absolute stopping tolerance
     reltol: float = 1.0e-6  # Relative stopping tolerance, scaled by the RHS 2-norm
+    # Deprecated: pass ``preconditioner`` to bicgstab instead
     precon: Optional[Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]]] = None
     logger: logging.Logger = _null_log
 
@@ -25,13 +26,15 @@ def bicgstab(
     rhs: torch.Tensor,
     initial_guess: Optional[torch.Tensor] = None,
     settings: BICGSTABSettings = BICGSTABSettings(),
+    *,
+    preconditioner: Optional[Union[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]]] = None,
 ) -> torch.Tensor:
     r"""
     Solve linear systems with the BiConjugate Gradient Stabilized (BiCGSTAB) method.
 
     Solves nonsymmetric, nonsingular systems :math:`A x = b`. Accepts either a matrix-like
     tensor (using ``.matmul``) or a callable for the matrix–vector product, and
-    optionally a (left) preconditioner, also as tensor or callable, approximating :math:`M^{-1}`.
+    optionally a (right) preconditioner, also as tensor or callable, approximating :math:`A^{-1}`.
 
     Parameters
     ----------
@@ -44,9 +47,15 @@ def bicgstab(
     initial_guess : torch.Tensor, optional, shape like ``rhs``
         Initial guess. If ``None``, zero initialization is used.
     settings : BICGSTABSettings, optional
-        Convergence tolerances, maximum matvecs per RHS, optional preconditioner and logger.
+        Convergence tolerances, maximum matvecs per RHS and logger. Its ``precon`` field is a
+        deprecated alias of ``preconditioner``.
         A zero matvec budget returns the initial iterate without evaluating the operator
         or checking convergence, and emits a warning. Negative budgets are invalid.
+    preconditioner : {torch.Tensor, callable(x) -> M^{-1} x}, optional
+        Right preconditioner approximating :math:`A^{-1}`, e.g. a
+        :class:`~torchsparsegradutils.utils.JacobiPreconditioner`. It is applied to vectors of
+        shape ``(n,)``. Since preconditioning is applied on the right, the stopping test still
+        uses the unpreconditioned residual.
 
     Returns
     -------
@@ -57,9 +66,11 @@ def bicgstab(
     ------
     ValueError
         If ``settings.matvec_max`` is negative.
+    ValueError
+        If both ``preconditioner`` and the deprecated ``settings.precon`` are given.
     RuntimeError
         If ``matmul_closure`` is neither tensor nor callable, or if the
-        ``precon`` is neither tensor nor callable.
+        ``preconditioner`` is neither tensor nor callable.
 
     Notes
     -----
@@ -109,17 +120,8 @@ def bicgstab(
 
     With preconditioning:
 
-    >>> # Diagonal preconditioner
-    >>> # Extract and regularize diagonal
-    >>> diagA = torch.diag(A)
-    >>> eps = 1e-12
-    >>> safe_diag = torch.where(diagA.abs() < eps, torch.full_like(diagA, eps), diagA)
-    >>> inv_diag = 1.0 / safe_diag
-    >>> # Supply as an operator (apply M^{-1} r = inv_diag * r elementwise)
-    >>> settings_precond = BICGSTABSettings(
-    ...     precon=lambda r: inv_diag * r  # r has same shape as b
-    ... )
-    >>> x = bicgstab(A.matmul, b, settings=settings_precond)
+    >>> from torchsparsegradutils.utils import JacobiPreconditioner
+    >>> x = bicgstab(A.matmul, b, preconditioner=JacobiPreconditioner(A))
     """
     if settings.matvec_max is not None and settings.matvec_max < 0:
         raise ValueError("settings.matvec_max must be nonnegative or None")
@@ -130,14 +132,25 @@ def bicgstab(
     else:
         raise RuntimeError("matmul_closure must be a tensor, or a callable object!")
 
-    if settings.precon is None:
+    if settings.precon is not None:
+        if preconditioner is not None:
+            raise ValueError("Pass either preconditioner or the deprecated settings.precon, not both")
+        warnings.warn(
+            "BICGSTABSettings.precon is deprecated, pass bicgstab(..., preconditioner=...) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        preconditioner = settings.precon
+        settings = settings._replace(precon=None)
+
+    if preconditioner is None:
         precon = None
-    elif torch.is_tensor(settings.precon):
-        precon = settings.precon.matmul
-    elif callable(settings.precon):
-        precon = settings.precon
+    elif torch.is_tensor(preconditioner):
+        precon = preconditioner.matmul
+    elif callable(preconditioner):
+        precon = preconditioner
     else:
-        raise RuntimeError("settings.precon must be a tensor, or a callable object!")
+        raise RuntimeError("preconditioner must be a tensor, or a callable object!")
 
     if settings.matvec_max == 0:
         warnings.warn(
@@ -156,6 +169,7 @@ def bicgstab(
                 rhs[:, i],
                 None if initial_guess is None else initial_guess[:, i],
                 settings,
+                preconditioner=preconditioner,
             )
             for i in range(cols)
         ]
