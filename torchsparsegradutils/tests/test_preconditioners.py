@@ -228,3 +228,145 @@ def test_solvers_accept_tensor_preconditioner(device, solver):
     M_inv = torch.diag(1.0 / torch.diagonal(A))
     x = solver(A, b, preconditioner=M_inv)
     torch.testing.assert_close(x, torch.linalg.solve(A, b), rtol=1e-5, atol=1e-5)
+
+
+# ---------------------------------------------------------------- sparse_generic_solve
+
+
+def _recording_solve(log):
+    """gmres that records the preconditioner it receives, with a tight tolerance."""
+
+    def solve(A, B, preconditioner=None):
+        log.append(preconditioner)
+        return gmres(A, B, preconditioner=preconditioner, settings=GMRESSettings(rtol=1e-12, restart=30, max_iter=1000))
+
+    return solve
+
+
+@pytest.mark.parametrize("layout", LAYOUTS, ids=LAYOUT_IDS)
+def test_generic_solve_uses_transpose_preconditioner_in_backward(device, layout):
+    n = 12
+    A_dense = _badly_scaled_nonsymmetric(n, device)
+    # Non-symmetric preconditioner: the inverse of the lower-triangular part of A
+    M_inv = torch.linalg.inv(torch.tril(A_dense))
+    A = _to_layout(A_dense.clone(), layout).requires_grad_(True)
+    B = torch.randn(n, 2, dtype=torch.float64, device=device, requires_grad=True)
+
+    log = []
+    X = sparse_generic_solve(A, B, solve=_recording_solve(log), preconditioner=MatrixPreconditioner(M_inv))
+    G = torch.randn_like(X)
+    X.backward(G)
+
+    forward_P, backward_P = log
+    E = torch.randn(n, 3, dtype=torch.float64, device=device)
+    torch.testing.assert_close(forward_P(E), M_inv @ E)
+    torch.testing.assert_close(backward_P(E), M_inv.T @ E)
+
+    A_ref = A_dense.clone().requires_grad_(True)
+    B_ref = B.detach().clone().requires_grad_(True)
+    torch.linalg.solve(A_ref, B_ref).backward(G)
+    torch.testing.assert_close(X.detach(), torch.linalg.solve(A_dense, B.detach()))
+    torch.testing.assert_close(B.grad, B_ref.grad)
+    grad_A = A.grad.to_dense() if layout != torch.strided else A.grad
+    mask = A_dense != 0
+    torch.testing.assert_close(grad_A[mask], A_ref.grad[mask])
+
+
+def test_generic_solve_preconditioner_forms(device):
+    n = 10
+    A_dense = _badly_scaled_nonsymmetric(n, device)
+    A = A_dense.to_sparse_csr()
+    M_inv = torch.linalg.inv(torch.tril(A_dense))
+    E = torch.eye(n, dtype=torch.float64, device=device)
+
+    def run(**kwargs):
+        log = []
+        B = torch.randn(n, dtype=torch.float64, device=device, requires_grad=True)
+        sparse_generic_solve(A, B, solve=_recording_solve(log), **kwargs).sum().backward()
+        return [P(E) for P in log]
+
+    # A Preconditioner subclass is built from A
+    forward, backward = run(preconditioner=JacobiPreconditioner)
+    torch.testing.assert_close(forward, torch.diag(1.0 / torch.diagonal(A_dense)))
+    torch.testing.assert_close(backward, forward)
+
+    # A tensor is wrapped and transposed
+    forward, backward = run(preconditioner=M_inv)
+    torch.testing.assert_close(forward, M_inv)
+    torch.testing.assert_close(backward, M_inv.T)
+
+    # Only the transpose preconditioner: the forward one is derived from it
+    forward, backward = run(transpose_preconditioner=M_inv.T)
+    torch.testing.assert_close(forward, M_inv)
+    torch.testing.assert_close(backward, M_inv.T)
+
+    # A plain callable is reused for the backward pass unless a transpose is given
+    forward, backward = run(preconditioner=lambda X: M_inv @ X)
+    torch.testing.assert_close(backward, M_inv)
+    forward, backward = run(preconditioner=lambda X: M_inv @ X, transpose_preconditioner=lambda X: M_inv.T @ X)
+    torch.testing.assert_close(forward, M_inv)
+    torch.testing.assert_close(backward, M_inv.T)
+
+
+def test_generic_solve_preconditioner_with_builtin_solvers(device):
+    n = 30
+    A_dense = _badly_scaled_spd(n, device)
+    B = torch.randn(n, 2, dtype=torch.float64, device=device, requires_grad=True)
+    X_ref = torch.linalg.solve(A_dense, B.detach())
+    for solve in (None, linear_cg, minres, gmres, bicgstab):
+        A = A_dense.to_sparse_csr().requires_grad_(True)
+        X = sparse_generic_solve(A, B, solve=solve, preconditioner=JacobiPreconditioner)
+        torch.testing.assert_close(X.detach(), X_ref, rtol=1e-4, atol=1e-4)
+        X.sum().backward()
+
+
+def test_generic_solve_without_preconditioner_does_not_forward_it(device):
+    A = torch.eye(3, dtype=torch.float64, device=device).to_sparse_csr()
+    B = torch.ones(3, dtype=torch.float64, device=device)
+
+    def solve(A, B):
+        return B.clone()
+
+    torch.testing.assert_close(sparse_generic_solve(A, B, solve=solve), B)
+
+
+def test_generic_solve_transpose_only_when_needed(device):
+    class NoTranspose(Preconditioner):
+        def __init__(self, A):
+            self.shape = tuple(A.shape)
+
+        def __call__(self, X):
+            return X.clone()
+
+    A = _badly_scaled_nonsymmetric(6, device).to_sparse_csr()
+    B = torch.ones(6, dtype=torch.float64, device=device)
+    # No gradient required: the missing transpose is never needed
+    sparse_generic_solve(A, B, preconditioner=NoTranspose)
+    with pytest.raises(NotImplementedError, match="pass transpose_preconditioner explicitly"):
+        sparse_generic_solve(A, B.requires_grad_(True), preconditioner=NoTranspose)
+
+
+def test_generic_solve_rejects_invalid_preconditioner():
+    A = torch.eye(2).to_sparse_csr()
+    with pytest.raises(TypeError, match="Preconditioner subclass"):
+        sparse_generic_solve(A, torch.ones(2), preconditioner=int)
+    with pytest.raises(TypeError, match="preconditioner must be"):
+        sparse_generic_solve(A, torch.ones(2), preconditioner=3.0)
+
+
+def test_generic_symmetric_solve_preconditioner(device):
+    n = 20
+    A_dense = _badly_scaled_spd(n, device)
+    A_dense[0, 0] = -A_dense[0, 0]  # symmetric indefinite
+    A = A_dense.to_sparse_coo()
+    B = torch.randn(n, dtype=torch.float64, device=device)
+    X_ref = torch.linalg.solve(A_dense, B)
+
+    with pytest.warns(UserWarning, match="minres requires a symmetric positive definite preconditioner"):
+        sparse_generic_symmetric_solve(A, B, preconditioner=JacobiPreconditioner(A))
+
+    counting = _CountingPreconditioner(JacobiPreconditioner(A, absolute=True))
+    counting.is_symmetric = counting.is_positive_definite = True
+    X = sparse_generic_symmetric_solve(A, B, preconditioner=counting, tolerance=1e-10)
+    torch.testing.assert_close(X, X_ref, rtol=1e-6, atol=1e-6)
+    assert counting.calls > 0
