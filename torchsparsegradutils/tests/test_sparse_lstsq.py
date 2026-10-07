@@ -274,3 +274,26 @@ def test_generic_lstsq_unsupported_layout_raises():
     A = torch.randn(5, 3).to_sparse_csc()
     with pytest.raises(TypeError, match="Unsupported layout"):
         sparse_generic_lstsq(A, torch.randn(5))
+
+
+@pytest.mark.parametrize("A_layout", [torch.sparse_csr, torch.strided], ids=["csr", "dense"])
+def test_generic_lstsq_backward_B_only_skips_A_grad(device, A_layout):
+    dtype = torch.float64
+    torch.manual_seed(0)
+    A_dense = torch.randn(7, 4, dtype=dtype, device=device)
+    A = A_dense if A_layout == torch.strided else A_dense.to_sparse_csr()
+    B = torch.randn(7, 2, dtype=dtype, device=device, requires_grad=True)
+    B_ref = B.detach().clone().requires_grad_()
+
+    calls = []
+
+    def counting_lstsq(AA, BB):
+        calls.append(1)
+        return torch.linalg.lstsq(AA.to_dense(), BB).solution
+
+    sparse_generic_lstsq(A, B, lstsq=counting_lstsq).sum().backward()
+    torch.linalg.lstsq(A_dense, B_ref).solution.sum().backward()
+
+    assert len(calls) == 1  # forward only; the A^+ gradB solve is skipped
+    assert A.grad is None
+    assert torch.allclose(B.grad, B_ref.grad, rtol=RTOL, atol=RTOL)

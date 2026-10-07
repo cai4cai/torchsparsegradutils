@@ -239,47 +239,49 @@ class SparseGenericLstsq(torch.autograd.Function):
         # gradA = gradA_u1 + gradA_u2
         # return gradA, gradB, None, None
 
-        # residuals and A^+ gradB, shared by the dense and sparse branches
-        mresiduals = B - A @ x
-        Apgb = ctx.lstsq(A, gradB)
-        if Apgb.dim() == 1:
-            Apgb = Apgb.unsqueeze(1)
+        gradA = None
+        if ctx.needs_input_grad[0]:  # skip the extra lstsq solve when only B needs gradients
+            # residuals and A^+ gradB, shared by the dense and sparse branches
+            mresiduals = B - A @ x
+            Apgb = ctx.lstsq(A, gradB)
+            if Apgb.dim() == 1:
+                Apgb = Apgb.unsqueeze(1)
 
-        if A.layout == torch.strided:
-            # Dense A: there is no sparsity pattern to preserve, so return the full dense gradient.
-            gradA = -gradB @ x.mT + mresiduals @ Apgb.mT
-        else:
-            # We start by getting the i and j indices:
-            if A.layout == torch.sparse_coo:
-                A_row_idx = A.indices()[0, :]
-                A_col_idx = A.indices()[1, :]
+            if A.layout == torch.strided:
+                # Dense A: there is no sparsity pattern to preserve, so return the full dense gradient.
+                gradA = -gradB @ x.mT + mresiduals @ Apgb.mT
             else:
-                A_col_idx = A.col_indices()
-                A_crow_idx = A.crow_indices()
-                # Uncompress row indices:
-                A_row_idx = torch.repeat_interleave(
-                    torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
-                )
+                # We start by getting the i and j indices:
+                if A.layout == torch.sparse_coo:
+                    A_row_idx = A.indices()[0, :]
+                    A_col_idx = A.indices()[1, :]
+                else:
+                    A_col_idx = A.col_indices()
+                    A_crow_idx = A.crow_indices()
+                    # Uncompress row indices:
+                    A_row_idx = torch.repeat_interleave(
+                        torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
+                    )
 
-            mgradbselect = -gradB.index_select(0, A_row_idx)  # -gradB[i, :]
-            xselect = x.index_select(0, A_col_idx)  # x[j, :]
+                mgradbselect = -gradB.index_select(0, A_row_idx)  # -gradB[i, :]
+                xselect = x.index_select(0, A_col_idx)  # x[j, :]
 
-            # Dot product:
-            mgbx = mgradbselect * xselect
-            gradA_u1 = torch.sum(mgbx, dim=1)
+                # Dot product:
+                mgbx = mgradbselect * xselect
+                gradA_u1 = torch.sum(mgbx, dim=1)
 
-            mresidualsselect = mresiduals.index_select(0, A_row_idx)
-            Apgbselect = Apgb.index_select(0, A_col_idx)
+                mresidualsselect = mresiduals.index_select(0, A_row_idx)
+                Apgbselect = Apgb.index_select(0, A_col_idx)
 
-            # Dot product:
-            mresApgb = mresidualsselect * Apgbselect
-            gradA_u2 = torch.sum(mresApgb, dim=1)
+                # Dot product:
+                mresApgb = mresidualsselect * Apgbselect
+                gradA_u2 = torch.sum(mresApgb, dim=1)
 
-            gradA = gradA_u1 + gradA_u2
-            if A.layout == torch.sparse_coo:
-                gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
-            else:
-                gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
+                gradA = gradA_u1 + gradA_u2
+                if A.layout == torch.sparse_coo:
+                    gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
+                else:
+                    gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
 
         if grad.ndim == 1:
             gradB = gradB.squeeze()

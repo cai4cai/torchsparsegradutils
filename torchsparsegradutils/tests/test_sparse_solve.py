@@ -662,3 +662,18 @@ def test_solve_unsupported_layout_raises():
     A = torch.eye(3).to_sparse_csc()
     with pytest.raises(TypeError, match="Unsupported layout"):
         sparse_generic_solve(A, torch.ones(3))
+
+
+@pytest.mark.parametrize("A_layout", [torch.sparse_coo, torch.sparse_csr, torch.strided], ids=["coo", "csr", "dense"])
+def test_solve_backward_B_only(A_layout, device, value_dtype, index_dtype):
+    _, A_dense = make_spd_sparse(8, torch.sparse_coo, value_dtype, index_dtype, device, nz=0)
+    A = A_dense if A_layout == torch.strided else A_dense.to_sparse(layout=A_layout)
+    B = torch.rand(8, 2, dtype=value_dtype, device=device, requires_grad=True)
+    B_ref = B.detach().clone().requires_grad_()
+
+    sparse_generic_solve(A, B).sum().backward()
+    torch.linalg.solve(A_dense, B_ref).sum().backward()
+
+    atol, rtol = Tolerances.iterative(value_dtype)
+    assert A.grad is None
+    assert torch.allclose(B.grad, B_ref.grad, atol=atol, rtol=rtol)
