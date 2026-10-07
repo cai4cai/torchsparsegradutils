@@ -280,11 +280,12 @@ def sparse_generic_solve(
 ) -> torch.Tensor:
     r"""Sparse linear solve with iterative methods and sparse-aware gradients.
 
-     Solves :math:`\mathbf{A}\,\mathbf{x} = \mathbf{B}` with sparse :math:`\mathbf{A} \in \mathbb{R}^{n\times n}`
-     (COO/CSR) and dense :math:`\mathbf{B} \in \mathbb{R}^{n\times p}` using iterative methods, while
-     preserving sparsity in :math:`\frac{\partial \mathcal{L}}{\partial \mathbf{A}}`. Supports single
-     (vector) and multiple (matrix) right-hand sides and works with non-differentiable solvers via
-     the implicit function theorem.
+     Solves :math:`\mathbf{A}\,\mathbf{x} = \mathbf{B}` with sparse (COO/CSR) or dense
+     :math:`\mathbf{A} \in \mathbb{R}^{n\times n}` and dense :math:`\mathbf{B} \in \mathbb{R}^{n\times p}`
+     using iterative methods. For sparse :math:`\mathbf{A}`, sparsity is preserved in
+     :math:`\frac{\partial \mathcal{L}}{\partial \mathbf{A}}`; for dense :math:`\mathbf{A}`, the gradient
+     is dense. Supports single (vector) and multiple (matrix) right-hand sides and works with
+     non-differentiable solvers via the implicit function theorem.
 
      Let :math:`\mathbf{G} = \frac{\partial \mathcal{L}}{\partial \mathbf{x}}` be the upstream gradient and
      :math:`\mathbf{x}` the solution. The dense-form gradients are
@@ -295,12 +296,13 @@ def sparse_generic_solve(
          \frac{\partial \mathcal{L}}{\partial \mathbf{B}} \;=\; \mathbf{A}^{-\top} \, \mathbf{G}
          \;\equiv\; \mathbf{G}_B.
 
-     Gradient with respect to A (sparse):
+     Gradient with respect to A (sparse or dense, matching :math:`\mathbf{A}`):
 
      .. math::
          \frac{\partial \mathcal{L}}{\partial \mathbf{A}} \;=\; -\, \mathbf{G}_B\, \mathbf{x}^{\top}.
 
-     We evaluate only the entries corresponding to nonzeros of :math:`\mathbf{A}`, yielding a
+     For dense :math:`\mathbf{A}`, this full matrix is returned. For sparse :math:`\mathbf{A}`, we
+     evaluate only the entries corresponding to nonzeros of :math:`\mathbf{A}`, yielding a
      sparse gradient tensor with memory proportional to ``nnz(A)``. Equivalently, for a nonzero
      :math:`\mathbf{A}_{ij}` the contribution is
 
@@ -310,9 +312,10 @@ def sparse_generic_solve(
 
     Parameters
     ----------
-    A : torch.Tensor, sparse COO or CSR, shape ``(n, n)``
-        Sparse square coefficient matrix. Must be invertible (or suitable) for the
-        chosen solver. All tensors must be on the same device.
+    A : torch.Tensor, sparse COO or CSR, or dense (strided), shape ``(n, n)``
+        Square coefficient matrix. Must be invertible (or suitable) for the
+        chosen solver. All tensors must be on the same device. Dense matrices are
+        supported for convenience; their gradient is returned as a dense tensor.
     B : torch.Tensor, dense (strided), shape ``(n,)`` or ``(n, k)``
         Right-hand side(s). ``B.shape[0]`` must equal ``A.shape[0]``.
     solve : callable, optional
@@ -343,14 +346,15 @@ def sparse_generic_solve(
     ValueError
         If inputs are not tensors; shapes are incompatible; ranks are invalid.
     TypeError
-        If ``A`` is not COO/CSR or if ``B`` is not dense (strided).
+        If ``A`` is not COO/CSR/dense (strided) or if ``B`` is not dense (strided).
     UserWarning
         If ``A`` and ``B`` use different dtypes (may affect solver behavior).
 
     Notes
     -----
-    Only entries at the nonzeros of :math:`\mathbf{A}` are computed, keeping the gradient
-    sparse and memory-efficient.
+    For sparse :math:`\mathbf{A}`, only entries at the nonzeros of :math:`\mathbf{A}` are
+    computed, keeping the gradient sparse and memory-efficient. For dense (strided)
+    :math:`\mathbf{A}`, the full dense gradient :math:`-\mathbf{G}_B\,\mathbf{x}^{\top}` is returned.
 
     See Also
     --------
@@ -395,14 +399,21 @@ def sparse_generic_solve(
     >>> x.sum().backward()
     >>> A.grad.is_sparse
     True
+
+    >>> # Dense A is also supported (A.grad is then dense)
+    >>> A_dense = A.detach().to_dense().requires_grad_(True)
+    >>> x = sparse_generic_solve(A_dense, B)
+    >>> x.sum().backward()
+    >>> A_dense.grad.layout
+    torch.strided
     """
 
     # Input validation
     if not isinstance(A, torch.Tensor) or not isinstance(B, torch.Tensor):
         raise ValueError("Both A and B should be instances of torch.Tensor")
 
-    if A.layout not in (torch.sparse_coo, torch.sparse_csr):
-        raise TypeError(f"Unsupported sparse layout: {A.layout}. Only COO and CSR are supported.")
+    if A.layout not in (torch.sparse_coo, torch.sparse_csr, torch.strided):
+        raise TypeError(f"Unsupported layout: {A.layout}. Only COO, CSR and dense (strided) are supported.")
 
     if A.dim() != 2:
         raise ValueError("A must be a 2D tensor")
@@ -461,8 +472,8 @@ def sparse_generic_symmetric_solve(
 
     Parameters
     ----------
-    A : torch.Tensor, sparse COO or CSR, shape ``(n, n)``
-        Sparse symmetric square coefficient matrix. Symmetry is not checked.
+    A : torch.Tensor, sparse COO or CSR, or dense (strided), shape ``(n, n)``
+        Symmetric square coefficient matrix. Symmetry is not checked.
     B : torch.Tensor, dense (strided), shape ``(n,)`` or ``(n, k)``
         Right-hand side(s).
     solve : callable, optional
@@ -558,34 +569,42 @@ class SparseGenericSolve(torch.autograd.Function):
         # we can directly only compute the required values:
         # gradA[i,j] = - dotprod(gradB[i,:], x[j,:])
 
-        # We start by getting the i and j indices:
-        if A.layout == torch.sparse_coo:
-            A_coalesced = A.coalesce()  # Ensure tensor is coalesced before accessing indices
-            A_row_idx = A_coalesced.indices()[0, :]
-            A_col_idx = A_coalesced.indices()[1, :]
-        else:
-            A_col_idx = A.col_indices()
-            A_crow_idx = A.crow_indices()
-            # Uncompress row indices:
-            A_row_idx = torch.repeat_interleave(
-                torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
-            )
+        gradA = None
+        if ctx.needs_input_grad[0]:
+            if A.layout == torch.strided:
+                # Dense A: there is no sparsity pattern to preserve, so return the full dense gradient.
+                gradA = -gradB @ x.mT
+                if gradA.dtype != A.dtype:
+                    gradA = gradA.to(dtype=A.dtype)
+            else:
+                # We start by getting the i and j indices:
+                if A.layout == torch.sparse_coo:
+                    A_coalesced = A.coalesce()  # Ensure tensor is coalesced before accessing indices
+                    A_row_idx = A_coalesced.indices()[0, :]
+                    A_col_idx = A_coalesced.indices()[1, :]
+                else:
+                    A_col_idx = A.col_indices()
+                    A_crow_idx = A.crow_indices()
+                    # Uncompress row indices:
+                    A_row_idx = torch.repeat_interleave(
+                        torch.arange(A.size()[0], device=A.device), A_crow_idx[1:] - A_crow_idx[:-1]
+                    )
 
-        mgradbselect = -gradB.index_select(0, A_row_idx)  # -gradB[i, :]
-        xselect = x.index_select(0, A_col_idx)  # x[j, :]
+                mgradbselect = -gradB.index_select(0, A_row_idx)  # -gradB[i, :]
+                xselect = x.index_select(0, A_col_idx)  # x[j, :]
 
-        # Dot product:
-        mgbx = mgradbselect * xselect
-        gradA = torch.sum(mgbx, dim=1)
+                # Dot product:
+                mgbx = mgradbselect * xselect
+                gradA = torch.sum(mgbx, dim=1)
 
-        # Ensure gradient dtype matches input dtype
-        if gradA.dtype != A.dtype:
-            gradA = gradA.to(dtype=A.dtype)
+                # Ensure gradient dtype matches input dtype
+                if gradA.dtype != A.dtype:
+                    gradA = gradA.to(dtype=A.dtype)
 
-        if A.layout == torch.sparse_coo:
-            gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
-        else:
-            gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
+                if A.layout == torch.sparse_coo:
+                    gradA = torch.sparse_coo_tensor(torch.stack([A_row_idx, A_col_idx]), gradA, A.shape)
+                else:
+                    gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
 
         # Squeeze gradB back to original shape if it was a vector
         if is_vector:

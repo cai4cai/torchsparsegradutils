@@ -559,3 +559,121 @@ def test_sparse_generic_solve_single_solver_nonsymmetric_gradients(layout, devic
     assert torch.allclose(X, X_ref, atol=atol, rtol=rtol)
     assert torch.allclose(B.grad, B_dense.grad, atol=atol, rtol=rtol)
     assert torch.allclose(theta.grad, theta_dense.grad, atol=atol, rtol=rtol)
+
+
+# Dense (strided) A
+
+
+def test_dense_solve_forward_backward(solve, device, value_dtype, index_dtype, shapes):
+    _, A_shape, B_shape, num_zero = shapes
+    n = A_shape[0]
+    _, A_dense = make_spd_sparse(n, torch.sparse_coo, value_dtype, index_dtype, device, nz=num_zero)
+
+    Ad1 = A_dense.detach().clone().requires_grad_()
+    Ad2 = A_dense.detach().clone().requires_grad_()
+    Bd1 = torch.rand(*B_shape, dtype=value_dtype, device=device).requires_grad_()
+    Bd2 = Bd1.clone().detach().requires_grad_()
+
+    res_ref = torch.linalg.solve(Ad2, Bd2)
+    res_test = sparse_generic_solve(Ad1, Bd1, solve=solve, transpose_solve=solve)
+
+    atol, rtol = Tolerances.iterative(value_dtype)
+    assert res_test.shape == res_ref.shape
+    assert torch.allclose(res_test, res_ref, atol=atol, rtol=rtol)
+
+    grad_output = torch.rand_like(res_test)
+    res_ref.backward(grad_output)
+    res_test.backward(grad_output)
+
+    assert Ad1.grad.layout == torch.strided
+    assert torch.allclose(Ad1.grad, Ad2.grad, atol=atol, rtol=rtol)
+    assert torch.allclose(Bd1.grad, Bd2.grad, atol=atol, rtol=rtol)
+
+
+def test_dense_solve_default_nonsymmetric(device, value_dtype):
+    torch.manual_seed(5)
+    n = 6
+    theta = torch.randn(3 * n - 2, dtype=value_dtype, device=device)
+    _, A_dense = _make_differentiable_nonsymmetric_tridiag(theta, torch.sparse_coo)
+    assert not torch.allclose(A_dense, A_dense.T)
+
+    A1 = A_dense.clone().requires_grad_()
+    A2 = A_dense.clone().requires_grad_()
+    B1 = torch.randn(n, 2, dtype=value_dtype, device=device, requires_grad=True)
+    B2 = B1.detach().clone().requires_grad_()
+
+    X = sparse_generic_solve(A1, B1)
+    X_ref = torch.linalg.solve(A2, B2)
+
+    grad_output = torch.randn_like(X)
+    X.backward(grad_output)
+    X_ref.backward(grad_output)
+
+    atol, rtol = Tolerances.iterative(value_dtype)
+    assert torch.allclose(X, X_ref, atol=atol, rtol=rtol)
+    assert torch.allclose(A1.grad, A2.grad, atol=atol, rtol=rtol)
+    assert torch.allclose(B1.grad, B2.grad, atol=atol, rtol=rtol)
+
+
+@pytest.mark.parametrize("base_solve", [linear_cg, minres], ids=[solve_id(linear_cg), solve_id(minres)])
+def test_dense_solve_higher_order_matches_dense_reference(base_solve, device, value_dtype):
+    torch.manual_seed(1)
+
+    theta_test = torch.randn(6, dtype=value_dtype, device=device, requires_grad=True)
+    theta_ref = theta_test.detach().clone().requires_grad_()
+
+    B = torch.randn(6, 2, dtype=value_dtype, device=device)
+
+    _, A_test = _make_differentiable_tridiag_spd(theta_test, torch.sparse_coo)
+    _, A_ref = _make_differentiable_tridiag_spd(theta_ref, torch.sparse_coo)
+
+    kwargs = _settings_for_higher_order_solve(base_solve, value_dtype)
+    tolerances = _higher_order_spd_tolerances(value_dtype)
+
+    out_test = sparse_generic_solve(A_test, B, solve=base_solve, transpose_solve=base_solve, **kwargs)
+    out_ref = torch.linalg.solve(A_ref, B)
+
+    grad_test = torch.autograd.grad(out_test.square().sum(), theta_test, create_graph=True)[0]
+    grad_ref = torch.autograd.grad(out_ref.square().sum(), theta_ref, create_graph=True)[0]
+
+    hess_vec_test = torch.autograd.grad(grad_test.sum(), theta_test)[0]
+    hess_vec_ref = torch.autograd.grad(grad_ref.sum(), theta_ref)[0]
+
+    grad_atol, grad_rtol = tolerances["grad"]
+    hess_atol, hess_rtol = tolerances["hess"]
+    assert torch.allclose(grad_test, grad_ref, atol=grad_atol, rtol=grad_rtol)
+    assert torch.allclose(hess_vec_test, hess_vec_ref, atol=hess_atol, rtol=hess_rtol)
+
+
+def test_dense_symmetric_solve(device, value_dtype, index_dtype):
+    _, A_dense = make_spd_sparse(8, torch.sparse_coo, value_dtype, index_dtype, device, nz=0)
+    A = A_dense.clone().requires_grad_()
+    B = torch.rand(8, 2, dtype=value_dtype, device=device)
+
+    X = sparse_generic_symmetric_solve(A, B)
+    atol, rtol = Tolerances.iterative(value_dtype)
+    assert torch.allclose(X, torch.linalg.solve(A_dense, B), atol=atol, rtol=rtol)
+
+    X.sum().backward()
+    assert A.grad is not None and A.grad.layout == torch.strided
+
+
+def test_solve_unsupported_layout_raises():
+    A = torch.eye(3).to_sparse_csc()
+    with pytest.raises(TypeError, match="Unsupported layout"):
+        sparse_generic_solve(A, torch.ones(3))
+
+
+@pytest.mark.parametrize("A_layout", [torch.sparse_coo, torch.sparse_csr, torch.strided], ids=["coo", "csr", "dense"])
+def test_solve_backward_B_only(A_layout, device, value_dtype, index_dtype):
+    _, A_dense = make_spd_sparse(8, torch.sparse_coo, value_dtype, index_dtype, device, nz=0)
+    A = A_dense if A_layout == torch.strided else A_dense.to_sparse(layout=A_layout)
+    B = torch.rand(8, 2, dtype=value_dtype, device=device, requires_grad=True)
+    B_ref = B.detach().clone().requires_grad_()
+
+    sparse_generic_solve(A, B).sum().backward()
+    torch.linalg.solve(A_dense, B_ref).sum().backward()
+
+    atol, rtol = Tolerances.iterative(value_dtype)
+    assert A.grad is None
+    assert torch.allclose(B.grad, B_ref.grad, atol=atol, rtol=rtol)
