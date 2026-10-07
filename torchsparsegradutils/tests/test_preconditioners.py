@@ -153,6 +153,11 @@ def test_matrix_preconditioner_transpose(device, layout):
     P = MatrixPreconditioner(_to_layout(M, layout))
     X = torch.randn(3, 2, dtype=torch.float64, device=device)
     torch.testing.assert_close(P(X), M @ X)
+    x = torch.randn(3, dtype=torch.float64, device=device)
+    torch.testing.assert_close(P(x), M @ x)
+    Xb = torch.randn(4, 2, 3, 2, dtype=torch.float64, device=device)
+    torch.testing.assert_close(P(Xb), M @ Xb)
+    torch.testing.assert_close(P.transpose()(Xb), M.T @ Xb)
     torch.testing.assert_close(P.transpose()(X), M.T @ X)
     assert P.transpose().M_inv.layout == layout
     assert not P.is_symmetric

@@ -92,9 +92,9 @@ class JacobiPreconditioner(Preconditioner):
     --------
     >>> import torch
     >>> from torchsparsegradutils.utils import JacobiPreconditioner, linear_cg
-    >>> A = torch.tensor([[100.0, 1.0], [1.0, 0.01]]).to_sparse_csr()
+    >>> A = torch.tensor([[100.0, 1.0], [1.0, 0.1]]).to_sparse_csr()
     >>> M_inv = JacobiPreconditioner(A)
-    >>> M_inv(torch.tensor([100.0, 0.01]))
+    >>> M_inv(torch.tensor([100.0, 0.1]))
     tensor([1., 1.])
     >>> x = linear_cg(A.matmul, torch.tensor([1.0, 2.0]), preconditioner=M_inv)
     """
@@ -154,7 +154,12 @@ class MatrixPreconditioner(Preconditioner):
         self.is_symmetric = symmetric or positive_definite
 
     def __call__(self, X: torch.Tensor) -> torch.Tensor:
-        return self.M_inv.matmul(X)
+        if X.dim() <= 2 or self.M_inv.layout == torch.strided:
+            return self.M_inv.matmul(X)
+        # Sparse matmul does not broadcast over batch dimensions: fold them into the columns, (*batch, n, k) -> (n, B k)
+        n = X.shape[-2]
+        X_cols = X.movedim(-2, 0).reshape(n, -1)
+        return self.M_inv.matmul(X_cols).reshape(n, *X.shape[:-2], X.shape[-1]).movedim(0, -2)
 
     def transpose(self) -> Preconditioner:
         if self.is_symmetric:
