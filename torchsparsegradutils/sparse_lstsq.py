@@ -12,10 +12,10 @@ def sparse_generic_lstsq(
     r"""Sparse linear least squares with sparse-aware gradients.
 
      Solves the overdetermined problem :math:`\min_x \|\mathbf{A}x - \mathbf{B}\|_2^2` where
-     :math:`\mathbf{A} \in \mathbb{R}^{m\times n}` is sparse and tall (:math:`m>n`) and
-     :math:`\mathbf{B} \in \mathbb{R}^{m\times p}` is dense. Backprop preserves the
-     sparsity pattern by returning sparse gradients for :math:`\mathbf{A}` at its nonzero
-     entries only.
+     :math:`\mathbf{A} \in \mathbb{R}^{m\times n}` is tall (:math:`m>n`) and either sparse (COO/CSR)
+     or dense, and :math:`\mathbf{B} \in \mathbb{R}^{m\times p}` is dense. For sparse :math:`\mathbf{A}`,
+     backprop preserves the sparsity pattern by returning sparse gradients for :math:`\mathbf{A}` at
+     its nonzero entries only; for dense :math:`\mathbf{A}`, the full dense gradient is returned.
 
      We assume :math:`\mathbf{A}` has full column rank so that :math:`\mathbf{A}^{+}\mathbf{A}=\mathbf{I}`
      (with :math:`\,\cdot^{+}` the Moore–Penrose pseudoinverse). Let
@@ -29,14 +29,14 @@ def sparse_generic_lstsq(
      .. math::
          \frac{\partial \mathcal{L}}{\partial \mathbf{B}} \;=\; (\mathbf{A}^{\top})^{+} \, \frac{\partial \mathcal{L}}{\partial \mathbf{x}} \;\equiv\; \mathbf{G}_B.
 
-    Gradient with respect to A (sparse): The dense form is
+    Gradient with respect to A (sparse or dense, matching :math:`\mathbf{A}`): The dense form is
 
      .. math::
          \frac{\partial \mathcal{L}}{\partial \mathbf{A}} \;=\; -\, \mathbf{G}_B\, \mathbf{x}^{\top}
          \; -\; (\mathbf{A}\,\mathbf{x} - \mathbf{B})\; \big(\mathbf{A}^{+}\, \mathbf{G}_B\big)^{\top},
 
-     and we evaluate only the entries corresponding to nonzeros of :math:`\mathbf{A}` to keep
-     the gradient sparse. Equivalently, for a nonzero entry :math:`\mathbf{A}_{ij}` with residuals
+     which is returned as is for dense :math:`\mathbf{A}`. For sparse :math:`\mathbf{A}`, we evaluate
+     only the entries corresponding to nonzeros of :math:`\mathbf{A}` to keep the gradient sparse. Equivalently, for a nonzero entry :math:`\mathbf{A}_{ij}` with residuals
      :math:`\mathbf{r}=\mathbf{A}\,\mathbf{x}-\mathbf{B}` and :math:`\mathbf{H}=\mathbf{A}^{+}\,\mathbf{G}_B`,
      the contribution is
 

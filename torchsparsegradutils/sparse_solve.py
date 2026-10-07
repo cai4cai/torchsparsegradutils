@@ -280,11 +280,12 @@ def sparse_generic_solve(
 ) -> torch.Tensor:
     r"""Sparse linear solve with iterative methods and sparse-aware gradients.
 
-     Solves :math:`\mathbf{A}\,\mathbf{x} = \mathbf{B}` with sparse :math:`\mathbf{A} \in \mathbb{R}^{n\times n}`
-     (COO/CSR) and dense :math:`\mathbf{B} \in \mathbb{R}^{n\times p}` using iterative methods, while
-     preserving sparsity in :math:`\frac{\partial \mathcal{L}}{\partial \mathbf{A}}`. Supports single
-     (vector) and multiple (matrix) right-hand sides and works with non-differentiable solvers via
-     the implicit function theorem.
+     Solves :math:`\mathbf{A}\,\mathbf{x} = \mathbf{B}` with sparse (COO/CSR) or dense
+     :math:`\mathbf{A} \in \mathbb{R}^{n\times n}` and dense :math:`\mathbf{B} \in \mathbb{R}^{n\times p}`
+     using iterative methods. For sparse :math:`\mathbf{A}`, sparsity is preserved in
+     :math:`\frac{\partial \mathcal{L}}{\partial \mathbf{A}}`; for dense :math:`\mathbf{A}`, the gradient
+     is dense. Supports single (vector) and multiple (matrix) right-hand sides and works with
+     non-differentiable solvers via the implicit function theorem.
 
      Let :math:`\mathbf{G} = \frac{\partial \mathcal{L}}{\partial \mathbf{x}}` be the upstream gradient and
      :math:`\mathbf{x}` the solution. The dense-form gradients are
@@ -295,12 +296,13 @@ def sparse_generic_solve(
          \frac{\partial \mathcal{L}}{\partial \mathbf{B}} \;=\; \mathbf{A}^{-\top} \, \mathbf{G}
          \;\equiv\; \mathbf{G}_B.
 
-     Gradient with respect to A (sparse):
+     Gradient with respect to A (sparse or dense, matching :math:`\mathbf{A}`):
 
      .. math::
          \frac{\partial \mathcal{L}}{\partial \mathbf{A}} \;=\; -\, \mathbf{G}_B\, \mathbf{x}^{\top}.
 
-     We evaluate only the entries corresponding to nonzeros of :math:`\mathbf{A}`, yielding a
+     For dense :math:`\mathbf{A}`, this full matrix is returned. For sparse :math:`\mathbf{A}`, we
+     evaluate only the entries corresponding to nonzeros of :math:`\mathbf{A}`, yielding a
      sparse gradient tensor with memory proportional to ``nnz(A)``. Equivalently, for a nonzero
      :math:`\mathbf{A}_{ij}` the contribution is
 
