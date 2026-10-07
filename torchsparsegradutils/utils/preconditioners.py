@@ -2,8 +2,10 @@ r"""Preconditioners for the iterative solvers.
 
 A preconditioner is any callable ``M_inv(X) -> Y`` applying an approximation :math:`\mathbf{M}^{-1}` of
 :math:`\mathbf{A}^{-1}` to ``X`` of shape ``(n,)`` or ``(*batch, n, k)``, returning a tensor of the same shape,
-dtype and device. All solvers in :mod:`torchsparsegradutils.utils` accept one through their ``preconditioner``
-argument.
+dtype and device. The square-system solvers :func:`~torchsparsegradutils.utils.bicgstab`,
+:func:`~torchsparsegradutils.utils.gmres`, :func:`~torchsparsegradutils.utils.linear_cg` and
+:func:`~torchsparsegradutils.utils.minres` accept one through their ``preconditioner`` argument;
+:func:`~torchsparsegradutils.utils.lsmr` does not support preconditioning yet.
 
 The :class:`Preconditioner` base class adds what a bare callable lacks: :meth:`Preconditioner.transpose`, which
 :func:`~torchsparsegradutils.sparse_generic_solve` uses to precondition the transposed system
