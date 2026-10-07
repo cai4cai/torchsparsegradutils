@@ -236,3 +236,41 @@ def test_generic_lstsq_gradient_multiple_rhs(device):
     nz_mask = As1.grad.to_dense() != 0.0
     assert torch.allclose(As1.grad.to_dense()[nz_mask], Ad2.grad[nz_mask], rtol=RTOL)
     assert torch.allclose(Bd1.grad, Bd2.grad, rtol=RTOL)
+
+
+# Dense (strided) A
+@pytest.mark.parametrize("B_shape", [(7,), (7, 1), (7, 3)], ids=["vector_1d", "vector_2d", "multi_rhs"])
+def test_generic_lstsq_dense(device, B_shape):
+    A_shape = (7, 4)
+    dtype = torch.float64
+    torch.manual_seed(0)
+
+    A = torch.randn(A_shape, dtype=dtype, device=device)
+    B = torch.randn(B_shape, dtype=dtype, device=device)
+
+    A1 = A.clone().requires_grad_()
+    B1 = B.clone().requires_grad_()
+    A2 = A.clone().requires_grad_()
+    B2 = B.clone().requires_grad_()
+
+    x = sparse_generic_lstsq(A1, B1)
+    x_ref = torch.linalg.lstsq(A2, B2.unsqueeze(-1) if B.dim() == 1 else B2).solution
+    if B.dim() == 1:
+        x_ref = x_ref.squeeze(-1)
+
+    assert x.shape == x_ref.shape
+    assert torch.allclose(x, x_ref, rtol=RTOL)
+
+    grad_output = torch.randn_like(x)
+    x.backward(grad_output)
+    x_ref.backward(grad_output)
+
+    assert A1.grad.layout == torch.strided
+    assert torch.allclose(A1.grad, A2.grad, rtol=RTOL, atol=RTOL)
+    assert torch.allclose(B1.grad, B2.grad, rtol=RTOL, atol=RTOL)
+
+
+def test_generic_lstsq_unsupported_layout_raises():
+    A = torch.randn(5, 3).to_sparse_csc()
+    with pytest.raises(TypeError, match="Unsupported layout"):
+        sparse_generic_lstsq(A, torch.randn(5))
