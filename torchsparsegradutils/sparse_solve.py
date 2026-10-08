@@ -310,6 +310,13 @@ def _resolve_preconditioners(A, preconditioner, transpose_preconditioner, need_t
     if transpose_preconditioner is not None:
         transpose_preconditioner = _as_preconditioner(transpose_preconditioner, _transpose(A))
     if preconditioner is None and transpose_preconditioner is not None:
+        if not isinstance(transpose_preconditioner, Preconditioner):
+            # Unlike a plain forward preconditioner, which is reused for the backward pass for backward compatibility,
+            # an approximation of A^{-T} is no basis for preconditioning the forward system
+            raise ValueError(
+                "A plain callable transpose_preconditioner has no known transpose to precondition the forward "
+                "solve: also pass preconditioner, or use a Preconditioner"
+            )
         preconditioner = _transpose_preconditioner(transpose_preconditioner)
     elif transpose_preconditioner is None and preconditioner is not None and need_transpose:
         transpose_preconditioner = _transpose_preconditioner(preconditioner)
@@ -399,7 +406,8 @@ def sparse_generic_solve(
         Preconditioner approximating :math:`\mathbf{A}^{-\top}` for the transposed system solved in the backward
         pass. If ``None``, it is derived from ``preconditioner`` as described above, and only when gradients are
         required. If only ``transpose_preconditioner`` is given, ``preconditioner`` is derived from it by
-        transposition. A class is built from ``A.T``.
+        transposition. A class is built from ``A.T``. A plain callable has no known transpose, so it can only be
+        given together with ``preconditioner``.
     **kwargs : dict
         Extra keyword arguments forwarded to the solvers (e.g., tolerances,
         iteration caps, or solver-specific settings objects).

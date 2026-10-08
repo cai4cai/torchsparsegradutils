@@ -412,6 +412,13 @@ def test_generic_solve_transpose_only_when_needed(device):
         sparse_generic_solve(A, B.requires_grad_(True), preconditioner=NoTranspose)
 
 
+def test_generic_solve_rejects_callable_transpose_preconditioner_alone(device):
+    A = _badly_scaled_nonsymmetric(4, device).to_sparse_csr()
+    B = torch.ones(4, dtype=torch.float64, device=device)
+    with pytest.raises(ValueError, match="also pass preconditioner"):
+        sparse_generic_solve(A, B, transpose_preconditioner=lambda X: X)
+
+
 def test_generic_solve_rejects_invalid_preconditioner():
     A = torch.eye(2).to_sparse_csr()
     with pytest.raises(TypeError, match="Preconditioner subclass"):
