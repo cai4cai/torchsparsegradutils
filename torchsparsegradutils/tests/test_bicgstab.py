@@ -125,7 +125,9 @@ def test_bicgstab_zero_matvec_budget(device, supplied_guess, multiple_rhs):
         pytest.fail("A zero budget must not evaluate the operator or preconditioner")
 
     with pytest.warns(UserWarning, match="matvec_max=0.*without evaluating the operator") as caught:
-        result = bicgstab(unexpected_call, rhs, initial_guess, BICGSTABSettings(matvec_max=0, precon=unexpected_call))
+        result = bicgstab(
+            unexpected_call, rhs, initial_guess, BICGSTABSettings(matvec_max=0), preconditioner=unexpected_call
+        )
 
     assert len(caught) == 1  # Warn once per solve, not once per RHS column.
     torch.testing.assert_close(result, expected)
@@ -146,7 +148,7 @@ def test_bicgstab_negative_matvec_budget(device, supplied_guess, multiple_rhs):
         pytest.fail("An invalid budget must be rejected before evaluating the operator or preconditioner")
 
     with pytest.raises(ValueError, match="matvec_max must be nonnegative"):
-        bicgstab(unexpected_call, rhs, initial_guess, BICGSTABSettings(matvec_max=-1, precon=unexpected_call))
+        bicgstab(unexpected_call, rhs, initial_guess, BICGSTABSettings(matvec_max=-1), preconditioner=unexpected_call)
 
 
 @pytest.mark.parametrize("matvec_max", [0, 1])
@@ -161,12 +163,10 @@ def test_bicgstab_validates_arguments_before_budget_return(device, matvec_max, m
 
     operator = object() if invalid_argument == "operator" else unexpected_call
     precon = object() if invalid_argument == "preconditioner" else unexpected_call
-    message = (
-        "matmul_closure must be a tensor" if invalid_argument == "operator" else "settings.precon must be a tensor"
-    )
+    message = "matmul_closure must be a tensor" if invalid_argument == "operator" else "preconditioner must be a tensor"
 
     with pytest.raises(RuntimeError, match=message):
-        bicgstab(operator, rhs, settings=BICGSTABSettings(matvec_max=matvec_max, precon=precon))
+        bicgstab(operator, rhs, settings=BICGSTABSettings(matvec_max=matvec_max), preconditioner=precon)
 
 
 def test_bicgstab_accepts_warm_start_within_rhs_tolerance(device):
@@ -230,3 +230,21 @@ def test_bicgstab_zero_rhs_uses_absolute_tolerance(device, guess_value):
     assert torch.linalg.vector_norm(diagonal * result) <= settings.abstol
     if guess_value <= 1e-9:
         torch.testing.assert_close(result, initial_guess, atol=0, rtol=0)
+
+
+def test_bicgstab_deprecated_settings_precon(device):
+    A = torch.tensor([[3.0, 1.0], [2.0, 4.0]], dtype=torch.float64, device=device)
+    b = torch.tensor([1.0, 2.0], dtype=torch.float64, device=device)
+    calls = []
+
+    def precon(x):
+        calls.append(x.shape)
+        return x / torch.diagonal(A)
+
+    with pytest.warns(DeprecationWarning, match="BICGSTABSettings.precon is deprecated"):
+        x = bicgstab(A, b, settings=BICGSTABSettings(precon=precon))
+    assert calls
+    torch.testing.assert_close(x, torch.linalg.solve(A, b))
+
+    with pytest.raises(ValueError, match="not both"):
+        bicgstab(A, b, settings=BICGSTABSettings(precon=precon), preconditioner=precon)

@@ -1,10 +1,14 @@
 import warnings
-from typing import Callable, Optional, cast
+from typing import Callable, Optional, Union, cast
 
 import torch
 
 from torchsparsegradutils._compat import linalg_solve_triangular_compat
 from torchsparsegradutils.utils import convert_coo_to_csr, sparse_block_diag, sparse_block_diag_split, stack_csr
+from torchsparsegradutils.utils.preconditioners import MatrixPreconditioner, Preconditioner
+
+# A preconditioner instance, a plain callable X -> M^{-1} X, a matrix M^{-1}, or a Preconditioner subclass built from A
+PreconditionerLike = Union[Preconditioner, Callable[[torch.Tensor], torch.Tensor], torch.Tensor, type]
 
 
 def sparse_triangular_solve(
@@ -261,14 +265,62 @@ def _generic_transpose_solve(solve: Callable[..., torch.Tensor]) -> Callable[...
     """
 
     def transposed_solve(A: torch.Tensor, B: torch.Tensor, **kwargs) -> torch.Tensor:
-        if A.layout == torch.sparse_csr:
-            # A.T on sparse CSR triggers aten::as_strided; transpose(...) returns CSC, so convert back.
-            At = A.transpose(0, 1).to_sparse_csr()
-        else:
-            At = A.T
-        return solve(At, B, **kwargs)
+        return solve(_transpose(A), B, **kwargs)
 
     return transposed_solve
+
+
+def _transpose(A: torch.Tensor) -> torch.Tensor:
+    if A.layout == torch.sparse_csr:
+        # A.T on sparse CSR triggers aten::as_strided; transpose(...) returns CSC, so convert back.
+        return A.transpose(0, 1).to_sparse_csr()
+    return A.T
+
+
+def _as_preconditioner(preconditioner, A: torch.Tensor):
+    """Build a Preconditioner subclass from ``A`` and wrap a matrix; pass other callables through."""
+    if isinstance(preconditioner, type):
+        if not issubclass(preconditioner, Preconditioner):
+            raise TypeError(f"preconditioner class must be a Preconditioner subclass, got {preconditioner.__name__}")
+        return cast(Callable[[torch.Tensor], Preconditioner], preconditioner)(A.detach())
+    if isinstance(preconditioner, torch.Tensor):
+        return MatrixPreconditioner(preconditioner)
+    if not callable(preconditioner):
+        raise TypeError("preconditioner must be a Preconditioner, a callable, a tensor or a Preconditioner subclass")
+    return preconditioner
+
+
+def _transpose_preconditioner(preconditioner, name: str, missing: str):
+    """M^{-T} for a Preconditioner; a plain callable has no known transpose, so the other member must be given."""
+    if not isinstance(preconditioner, Preconditioner):
+        raise ValueError(
+            f"A plain callable {name} has no known transpose: also pass {missing} "
+            "(the same callable if it is symmetric), or use a Preconditioner"
+        )
+    try:
+        return preconditioner.transpose()
+    except NotImplementedError as err:
+        raise NotImplementedError(
+            f"{type(preconditioner).__name__} has no transpose() to precondition the transposed system; "
+            f"pass {missing} explicitly"
+        ) from err
+
+
+def _resolve_preconditioners(A, preconditioner, transpose_preconditioner, need_transpose):
+    """Return the (forward, transpose) preconditioner pair, deriving a missing member by transposition."""
+    if preconditioner is not None:
+        preconditioner = _as_preconditioner(preconditioner, A)
+    if transpose_preconditioner is not None:
+        transpose_preconditioner = _as_preconditioner(transpose_preconditioner, _transpose(A))
+    if preconditioner is None and transpose_preconditioner is not None:
+        preconditioner = _transpose_preconditioner(
+            transpose_preconditioner, "transpose_preconditioner", "preconditioner"
+        )
+    elif transpose_preconditioner is None and preconditioner is not None and need_transpose:
+        transpose_preconditioner = _transpose_preconditioner(
+            preconditioner, "preconditioner", "transpose_preconditioner"
+        )
+    return preconditioner, transpose_preconditioner
 
 
 def sparse_generic_solve(
@@ -276,6 +328,9 @@ def sparse_generic_solve(
     B: torch.Tensor,
     solve: Optional[Callable[..., torch.Tensor]] = None,
     transpose_solve: Optional[Callable[..., torch.Tensor]] = None,
+    *,
+    preconditioner: Optional[PreconditionerLike] = None,
+    transpose_preconditioner: Optional[PreconditionerLike] = None,
     **kwargs,
 ) -> torch.Tensor:
     r"""Sparse linear solve with iterative methods and sparse-aware gradients.
@@ -332,6 +387,27 @@ def sparse_generic_solve(
         ``transpose_solve(A, G, **kwargs) -> Y`` that solves :math:`A^\top Y = G` in the
         least-squares / iterative sense. If ``None``, it is derived from ``solve`` by applying it to
         ``A.T``. If only ``transpose_solve`` is given, ``solve`` is derived from it the same way.
+    preconditioner : Preconditioner, callable, torch.Tensor or Preconditioner subclass, optional
+        Preconditioner :math:`\mathbf{M}^{-1} \approx \mathbf{A}^{-1}` for the forward solve, forwarded to
+        ``solve`` as its ``preconditioner`` keyword argument. It can be
+
+        * a :class:`~torchsparsegradutils.utils.Preconditioner` instance, e.g.
+          ``JacobiPreconditioner(A)``; its :meth:`~torchsparsegradutils.utils.Preconditioner.transpose`
+          preconditions the transposed system of the backward pass;
+        * a :class:`~torchsparsegradutils.utils.Preconditioner` subclass, e.g. ``JacobiPreconditioner``,
+          which is then built from ``A.detach()``, since the gradients below do not depend on it;
+        * a matrix :math:`\mathbf{M}^{-1}`, wrapped in a :class:`~torchsparsegradutils.utils.MatrixPreconditioner`;
+        * any other callable ``X -> M^{-1} X``. It has no known transpose, so when gradients are required,
+          ``transpose_preconditioner`` must be given too (the same callable if :math:`\mathbf{M}^{-1}` is
+          symmetric); otherwise a ``ValueError`` is raised.
+
+        Preconditioning only affects convergence: the gradients are those of the exact solve either way.
+    transpose_preconditioner : same types as ``preconditioner``, optional
+        Preconditioner approximating :math:`\mathbf{A}^{-\top}` for the transposed system solved in the backward
+        pass. If ``None``, it is derived from ``preconditioner`` as described above, and only when gradients are
+        required. If only ``transpose_preconditioner`` is given, ``preconditioner`` is derived from it by
+        transposition. A class is built from ``A.T``. A plain callable has no known transpose, so it can only be
+        given together with ``preconditioner``.
     **kwargs : dict
         Extra keyword arguments forwarded to the solvers (e.g., tolerances,
         iteration caps, or solver-specific settings objects).
@@ -390,6 +466,10 @@ def sparse_generic_solve(
     >>> settings = LinearCGSettings(max_cg_iterations=1000, cg_tolerance=1e-8)
     >>> x = sparse_generic_solve(A, B, solve=linear_cg, settings=settings)
 
+    >>> # Jacobi preconditioning, applied to A.T in the backward pass
+    >>> from torchsparsegradutils.utils import JacobiPreconditioner
+    >>> x = sparse_generic_solve(A, B, preconditioner=JacobiPreconditioner)
+
     >>> # With gradients (A.grad is sparse)
     >>> A.requires_grad_(True)  # doctest: +ELLIPSIS
     tensor(...)
@@ -447,7 +527,15 @@ def sparse_generic_solve(
     elif transpose_solve is None:
         transpose_solve = _generic_transpose_solve(solve=solve)
 
-    X = cast(torch.Tensor, SparseGenericSolve.apply(A, B, solve, transpose_solve, kwargs))
+    need_transpose = torch.is_grad_enabled() and (A.requires_grad or B.requires_grad)
+    preconditioner, transpose_preconditioner = _resolve_preconditioners(
+        A, preconditioner, transpose_preconditioner, need_transpose
+    )
+
+    X = cast(
+        torch.Tensor,
+        SparseGenericSolve.apply(A, B, solve, transpose_solve, kwargs, preconditioner, transpose_preconditioner),
+    )
 
     # Ensure output rank matches B (solver might return (n,1) for 1D B, etc.)
     if B.dim() == 1 and X.dim() == 2 and X.shape[1] == 1:
@@ -462,6 +550,8 @@ def sparse_generic_symmetric_solve(
     A: torch.Tensor,
     B: torch.Tensor,
     solve: Optional[Callable[..., torch.Tensor]] = None,
+    *,
+    preconditioner: Optional[PreconditionerLike] = None,
     **kwargs,
 ) -> torch.Tensor:
     r"""Sparse linear solve for symmetric :math:`\mathbf{A}`, defaulting to MINRES.
@@ -479,6 +569,11 @@ def sparse_generic_symmetric_solve(
     solve : callable, optional
         Solver with signature ``solve(A, B, **kwargs) -> X``, used for both the forward and
         backward systems. If ``None``, uses ``minres``.
+    preconditioner : Preconditioner, callable, torch.Tensor or Preconditioner subclass, optional
+        Preconditioner, see :func:`sparse_generic_solve`. MINRES and CG require it to be symmetric
+        positive definite; for indefinite :math:`\mathbf{A}`, use e.g.
+        ``JacobiPreconditioner(A, absolute=True)``. A warning is emitted when ``solve`` is ``minres`` or
+        ``linear_cg`` and a :class:`~torchsparsegradutils.utils.Preconditioner` is not positive definite.
     **kwargs : dict
         Extra keyword arguments forwarded to the solver.
 
@@ -503,11 +598,33 @@ def sparse_generic_symmetric_solve(
     >>> x.shape
     torch.Size([3])
     """
-    if solve is None:
-        from .utils import minres
+    from .utils import linear_cg, minres
 
+    if solve is None:
         solve = minres
-    return sparse_generic_solve(A, B, solve=solve, transpose_solve=solve, **kwargs)
+    if preconditioner is not None:
+        preconditioner = _as_preconditioner(preconditioner, A)
+        if (
+            solve in (minres, linear_cg)
+            and isinstance(preconditioner, Preconditioner)
+            and not preconditioner.is_positive_definite
+        ):
+            warnings.warn(
+                f"{solve.__name__} requires a symmetric positive definite preconditioner, but "
+                f"{type(preconditioner).__name__} is not known to be positive definite.",
+                UserWarning,
+                stacklevel=2,
+            )
+    # Since A^T = A, the backward system is the forward one, so it takes the same preconditioner
+    return sparse_generic_solve(
+        A,
+        B,
+        solve=solve,
+        transpose_solve=solve,
+        preconditioner=preconditioner,
+        transpose_preconditioner=preconditioner,
+        **kwargs,
+    )
 
 
 class SparseGenericSolve(torch.autograd.Function):
@@ -520,12 +637,17 @@ class SparseGenericSolve(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, A, B, solve, transpose_solve, kwargs):
+    def forward(ctx, A, B, solve, transpose_solve, kwargs, preconditioner, transpose_preconditioner):
         grad_flag = A.requires_grad or B.requires_grad
         ctx.solve = solve
         ctx.transpose_solve = transpose_solve
         ctx.kwargs = kwargs  # Store kwargs for backward pass
+        ctx.preconditioner = preconditioner
+        ctx.transpose_preconditioner = transpose_preconditioner
 
+        if preconditioner is not None:
+            # Only forwarded when set, so that custom solvers without a preconditioner argument keep working
+            kwargs = {**kwargs, "preconditioner": preconditioner}
         x = solve(A.detach(), B.detach(), **kwargs)
 
         # Ensure output dtype matches input dtype
@@ -553,6 +675,8 @@ class SparseGenericSolve(torch.autograd.Function):
             grad,
             solve=ctx.transpose_solve,
             transpose_solve=ctx.solve,
+            preconditioner=ctx.transpose_preconditioner,
+            transpose_preconditioner=ctx.preconditioner,
             **ctx.kwargs,
         )
 
@@ -610,4 +734,4 @@ class SparseGenericSolve(torch.autograd.Function):
         if is_vector:
             gradB = gradB.squeeze(-1)
 
-        return gradA, gradB, None, None, None
+        return gradA, gradB, None, None, None, None, None

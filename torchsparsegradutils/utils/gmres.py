@@ -46,6 +46,8 @@ from typing import Literal, NamedTuple, overload
 
 import torch
 
+from .preconditioners import MatrixPreconditioner
+
 
 class GMRESSettings(NamedTuple):
     rtol: float = 1e-5  # Relative tolerance: stop once ||b - A x|| <= max(rtol * ||b||, atol) for every column
@@ -344,6 +346,8 @@ def gmres(  # noqa: C901 - the restarted Arnoldi recurrence is intentionally kep
     if initial_guess is not None and initial_guess.shape != rhs.shape:
         raise ValueError(f"initial_guess has shape {tuple(initial_guess.shape)}, expected {tuple(rhs.shape)}")
     op = _as_operator(matmul_closure, "matmul_closure")
+    if isinstance(preconditioner, torch.Tensor):
+        preconditioner = MatrixPreconditioner(preconditioner)
     precon = None if preconditioner is None else _as_operator(preconditioner, "preconditioner")
 
     squeeze = rhs.dim() == 1

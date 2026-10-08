@@ -20,6 +20,7 @@ DOCTEST_MODULES = [
     "torchsparsegradutils.utils.gmres",
     "torchsparsegradutils.utils.linear_cg",
     "torchsparsegradutils.utils.minres",
+    "torchsparsegradutils.utils.preconditioners",
     "torchsparsegradutils.utils.random_sparse",
     "torchsparsegradutils.utils.utils",
     "torchsparsegradutils.utils.dist_stats_helpers",

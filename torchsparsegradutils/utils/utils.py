@@ -911,3 +911,57 @@ def sparse_eye(
 
     else:
         raise ValueError("Layout {} not supported. Only sparse_coo and sparse_csr are supported.".format(layout))
+
+
+def sparse_diagonal(A: torch.Tensor) -> torch.Tensor:
+    """
+    Extract the main diagonal of a sparse (COO/CSR) or dense matrix.
+
+    Unlike :func:`torch.diagonal`, this works on sparse COO and CSR layouts. Entries that are not stored
+    count as zero, and duplicate entries of an uncoalesced COO matrix are summed.
+
+    Parameters
+    ----------
+    A : torch.Tensor, sparse COO or CSR, or dense (strided), shape ``(m, n)``
+        Matrix whose diagonal is extracted.
+
+    Returns
+    -------
+    torch.Tensor
+        Dense tensor of shape ``(min(m, n),)`` with the dtype and device of ``A``.
+        Differentiable with respect to the values of ``A``.
+
+    Raises
+    ------
+    ValueError
+        If ``A`` is not 2D.
+    TypeError
+        If ``A`` is not COO, CSR or dense (strided).
+
+    Examples
+    --------
+    >>> from torchsparsegradutils.utils import sparse_diagonal
+    >>> A = torch.tensor([[4.0, 1.0, 0.0], [0.0, 0.0, 2.0], [1.0, 0.0, 3.0]])
+    >>> sparse_diagonal(A.to_sparse_csr())
+    tensor([4., 0., 3.])
+    """
+    if A.dim() != 2:
+        raise ValueError(f"A must be a 2D tensor, got {A.dim()}D")
+    size = min(A.shape)
+
+    if A.layout == torch.strided:
+        return torch.diagonal(A)
+    if A.layout == torch.sparse_coo:
+        A = A.coalesce()
+        rows, cols = A.indices()
+        values = A.values()
+    elif A.layout == torch.sparse_csr:
+        cols = A.col_indices()
+        rows = _demcompress_crow_indices(A.crow_indices(), A.shape[0])
+        values = A.values()
+    else:
+        raise TypeError(f"Unsupported layout: {A.layout}. Only COO, CSR and dense (strided) are supported.")
+
+    on_diag = rows == cols
+    diag = torch.zeros(size, dtype=A.dtype, device=A.device)
+    return diag.index_add(0, rows[on_diag].long(), values[on_diag])
