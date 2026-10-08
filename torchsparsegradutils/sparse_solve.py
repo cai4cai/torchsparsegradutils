@@ -290,16 +290,19 @@ def _as_preconditioner(preconditioner, A: torch.Tensor):
     return preconditioner
 
 
-def _transpose_preconditioner(preconditioner):
-    """M^{-T} for a Preconditioner; a plain callable carries no transpose and is reused as is."""
+def _transpose_preconditioner(preconditioner, name: str, missing: str):
+    """M^{-T} for a Preconditioner; a plain callable has no known transpose, so the other member must be given."""
     if not isinstance(preconditioner, Preconditioner):
-        return preconditioner
+        raise ValueError(
+            f"A plain callable {name} has no known transpose: also pass {missing} "
+            "(the same callable if it is symmetric), or use a Preconditioner"
+        )
     try:
         return preconditioner.transpose()
     except NotImplementedError as err:
         raise NotImplementedError(
             f"{type(preconditioner).__name__} has no transpose() to precondition the transposed system; "
-            "pass transpose_preconditioner explicitly"
+            f"pass {missing} explicitly"
         ) from err
 
 
@@ -310,16 +313,13 @@ def _resolve_preconditioners(A, preconditioner, transpose_preconditioner, need_t
     if transpose_preconditioner is not None:
         transpose_preconditioner = _as_preconditioner(transpose_preconditioner, _transpose(A))
     if preconditioner is None and transpose_preconditioner is not None:
-        if not isinstance(transpose_preconditioner, Preconditioner):
-            # Unlike a plain forward preconditioner, which is reused for the backward pass for backward compatibility,
-            # an approximation of A^{-T} is no basis for preconditioning the forward system
-            raise ValueError(
-                "A plain callable transpose_preconditioner has no known transpose to precondition the forward "
-                "solve: also pass preconditioner, or use a Preconditioner"
-            )
-        preconditioner = _transpose_preconditioner(transpose_preconditioner)
+        preconditioner = _transpose_preconditioner(
+            transpose_preconditioner, "transpose_preconditioner", "preconditioner"
+        )
     elif transpose_preconditioner is None and preconditioner is not None and need_transpose:
-        transpose_preconditioner = _transpose_preconditioner(preconditioner)
+        transpose_preconditioner = _transpose_preconditioner(
+            preconditioner, "preconditioner", "transpose_preconditioner"
+        )
     return preconditioner, transpose_preconditioner
 
 
@@ -397,9 +397,9 @@ def sparse_generic_solve(
         * a :class:`~torchsparsegradutils.utils.Preconditioner` subclass, e.g. ``JacobiPreconditioner``,
           which is then built from ``A.detach()``, since the gradients below do not depend on it;
         * a matrix :math:`\mathbf{M}^{-1}`, wrapped in a :class:`~torchsparsegradutils.utils.MatrixPreconditioner`;
-        * any other callable ``X -> M^{-1} X``. It has no known transpose, so unless
-          ``transpose_preconditioner`` is given it is also used for the backward pass, which only suits
-          a symmetric :math:`\mathbf{M}^{-1}`.
+        * any other callable ``X -> M^{-1} X``. It has no known transpose, so when gradients are required,
+          ``transpose_preconditioner`` must be given too (the same callable if :math:`\mathbf{M}^{-1}` is
+          symmetric); otherwise a ``ValueError`` is raised.
 
         Preconditioning only affects convergence: the gradients are those of the exact solve either way.
     transpose_preconditioner : same types as ``preconditioner``, optional
@@ -615,7 +615,16 @@ def sparse_generic_symmetric_solve(
                 UserWarning,
                 stacklevel=2,
             )
-    return sparse_generic_solve(A, B, solve=solve, transpose_solve=solve, preconditioner=preconditioner, **kwargs)
+    # Since A^T = A, the backward system is the forward one, so it takes the same preconditioner
+    return sparse_generic_solve(
+        A,
+        B,
+        solve=solve,
+        transpose_solve=solve,
+        preconditioner=preconditioner,
+        transpose_preconditioner=preconditioner,
+        **kwargs,
+    )
 
 
 class SparseGenericSolve(torch.autograd.Function):

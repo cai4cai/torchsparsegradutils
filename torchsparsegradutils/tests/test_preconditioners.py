@@ -366,9 +366,17 @@ def test_generic_solve_preconditioner_forms(device):
     torch.testing.assert_close(forward, M_inv)
     torch.testing.assert_close(backward, M_inv.T)
 
-    # A plain callable is reused for the backward pass unless a transpose is given
-    forward, backward = run(preconditioner=lambda X: M_inv @ X)
-    torch.testing.assert_close(backward, M_inv)
+    # A plain callable needs its transpose when gradients are required, and only then
+    with pytest.raises(ValueError, match="also pass transpose_preconditioner"):
+        run(preconditioner=lambda X: M_inv @ X)
+    log = []
+    sparse_generic_solve(
+        A,
+        torch.ones(n, dtype=torch.float64, device=device),
+        solve=_recording_solve(log),
+        preconditioner=lambda X: M_inv @ X,
+    )
+    torch.testing.assert_close(log[0](E), M_inv)
     forward, backward = run(preconditioner=lambda X: M_inv @ X, transpose_preconditioner=lambda X: M_inv.T @ X)
     torch.testing.assert_close(forward, M_inv)
     torch.testing.assert_close(backward, M_inv.T)
@@ -443,3 +451,25 @@ def test_generic_symmetric_solve_preconditioner(device):
     X = sparse_generic_symmetric_solve(A, B, preconditioner=counting, tolerance=1e-10)
     torch.testing.assert_close(X, X_ref, rtol=1e-6, atol=1e-6)
     assert counting.calls > 0
+
+
+def test_generic_symmetric_solve_reuses_plain_callable_for_backward(device):
+    n = 12
+    A_dense = _badly_scaled_spd(n, device)
+    A = A_dense.to_sparse_csr().requires_grad_(True)
+    B = torch.randn(n, dtype=torch.float64, device=device, requires_grad=True)
+    inv_diag = 1.0 / torch.diagonal(A_dense)
+    calls = []
+
+    def precondition(X):
+        calls.append(X.shape)
+        return inv_diag.unsqueeze(-1) * X
+
+    X = sparse_generic_symmetric_solve(A, B, preconditioner=precondition, tolerance=1e-10)
+    n_forward = len(calls)
+    X.sum().backward()
+    assert n_forward > 0 and len(calls) > n_forward
+
+    B_ref = B.detach().clone().requires_grad_(True)
+    torch.linalg.solve(A_dense, B_ref).sum().backward()
+    torch.testing.assert_close(B.grad, B_ref.grad, rtol=1e-6, atol=1e-6)
