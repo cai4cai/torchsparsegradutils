@@ -388,7 +388,7 @@ def sparse_generic_solve(
           ``JacobiPreconditioner(A)``; its :meth:`~torchsparsegradutils.utils.Preconditioner.transpose`
           preconditions the transposed system of the backward pass;
         * a :class:`~torchsparsegradutils.utils.Preconditioner` subclass, e.g. ``JacobiPreconditioner``,
-          which is then built from (a detached) ``A``;
+          which is then built from ``A.detach()``, since the gradients below do not depend on it;
         * a matrix :math:`\mathbf{M}^{-1}`, wrapped in a :class:`~torchsparsegradutils.utils.MatrixPreconditioner`;
         * any other callable ``X -> M^{-1} X``. It has no known transpose, so unless
           ``transpose_preconditioner`` is given it is also used for the backward pass, which only suits

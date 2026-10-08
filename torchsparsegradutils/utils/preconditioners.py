@@ -12,11 +12,19 @@ The :class:`Preconditioner` base class adds what a bare callable lacks: :meth:`P
 :math:`\mathbf{A}^\top \mathbf{Y} = \mathbf{G}` solved in the backward pass, and structural flags that the
 symmetric solvers rely on.
 
-The implicit-function gradients of :func:`~torchsparsegradutils.sparse_generic_solve` do not depend on
-:math:`\mathbf{M}`, so preconditioners built from :math:`\mathbf{A}` (such as :class:`JacobiPreconditioner`, or
-a :class:`Preconditioner` subclass passed to :func:`~torchsparsegradutils.sparse_generic_solve`) use a detached
-copy of it. :class:`MatrixPreconditioner` keeps its matrix as given: applying it directly is differentiable with
-respect to that matrix.
+.. rubric:: Gradients
+
+Like other torch functions, the preconditioners never detach their input: a preconditioner built from a matrix
+that requires gradients is differentiable with respect to it. Whether that matters depends on how the solve is
+differentiated:
+
+* :func:`~torchsparsegradutils.sparse_generic_solve` computes gradients with the implicit function theorem, which
+  does not involve :math:`\mathbf{M}`: the preconditioner only affects convergence. A :class:`Preconditioner`
+  subclass passed there is therefore built from ``A.detach()``, so no unused graph is kept. Detach a
+  preconditioner you build yourself, e.g. ``JacobiPreconditioner(A.detach())``, for the same reason.
+* When backpropagating through the iterations of a solver called directly, the iterate after a finite number of
+  steps does depend on :math:`\mathbf{M}`, and gradients flow into it. This is what a learned preconditioner
+  needs; otherwise, pass a detached matrix.
 """
 
 from __future__ import annotations
@@ -80,7 +88,7 @@ class JacobiPreconditioner(Preconditioner):
     Parameters
     ----------
     A : torch.Tensor, sparse COO or CSR, or dense (strided), shape ``(n, n)``
-        Matrix to precondition. It is detached, so the preconditioner never tracks gradients.
+        Matrix to precondition. It is not detached: see the module notes on gradients.
     absolute : bool, default=False
         Use :math:`|\operatorname{diag}(\mathbf{A})|` instead of the diagonal itself. For symmetric indefinite
         matrices, this yields the symmetric positive definite preconditioner that
@@ -108,7 +116,7 @@ class JacobiPreconditioner(Preconditioner):
     def __init__(self, A: torch.Tensor, *, absolute: bool = False):
         if A.dim() != 2 or A.shape[0] != A.shape[1]:
             raise ValueError(f"A must be a square 2D matrix, got shape {tuple(A.shape)}")
-        diag = sparse_diagonal(A.detach())
+        diag = sparse_diagonal(A)
         if absolute:
             diag = diag.abs()
         diag = torch.where(diag == 0, torch.ones_like(diag), diag)
@@ -133,7 +141,7 @@ class MatrixPreconditioner(Preconditioner):
     ----------
     M_inv : torch.Tensor, sparse COO or CSR of shape ``(n, n)``, or dense (strided) of shape ``(*batch, n, n)``
         Matrix approximating :math:`\mathbf{A}^{-1}`. A batched dense matrix is broadcast against the input as
-        :func:`torch.matmul` does.
+        :func:`torch.matmul` does. It is not detached: see the module notes on gradients.
     symmetric : bool, default=False
         Declare :math:`\mathbf{M}^{-1}` symmetric, so :meth:`transpose` returns ``self`` instead of a transposed
         copy. Not checked.

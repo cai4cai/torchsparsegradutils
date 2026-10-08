@@ -130,13 +130,37 @@ def test_jacobi_matches_dense_inverse_diagonal(device, layout):
     assert JacobiPreconditioner(A, absolute=True).is_positive_definite
 
 
-def test_jacobi_detaches_and_follows_input_dtype(device):
-    A = torch.tensor([[2.0, 0.0], [0.0, 4.0]], dtype=torch.float64, device=device, requires_grad=True)
-    M_inv = JacobiPreconditioner(A)
-    assert not M_inv.inv_diag.requires_grad
-    y = M_inv(torch.ones(2, dtype=torch.float32, device=device))
+def test_jacobi_follows_input_dtype(device):
+    A = torch.tensor([[2.0, 0.0], [0.0, 4.0]], dtype=torch.float64, device=device)
+    y = JacobiPreconditioner(A)(torch.ones(2, dtype=torch.float32, device=device))
     assert y.dtype == torch.float32
     torch.testing.assert_close(y, torch.tensor([0.5, 0.25], device=device))
+
+
+@pytest.mark.parametrize("layout", LAYOUTS, ids=LAYOUT_IDS)
+def test_jacobi_is_differentiable(device, layout):
+    A_dense = torch.tensor([[2.0, 1.0], [1.0, 4.0]], dtype=torch.float64, device=device)
+    A = _to_layout(A_dense.clone(), layout).requires_grad_(True)
+    x = torch.tensor([1.0, 2.0], dtype=torch.float64, device=device)
+    JacobiPreconditioner(A)(x).sum().backward()
+    # d/dA_ii of x_i / A_ii is -x_i / A_ii^2; off-diagonal entries get no gradient
+    expected = torch.diag(-x / torch.diagonal(A_dense) ** 2)
+    torch.testing.assert_close(A.grad.to_dense(), expected)
+    assert not JacobiPreconditioner(A.detach()).inv_diag.requires_grad
+
+
+def test_generic_solve_builds_preconditioner_class_from_detached_A(device):
+    built_from = []
+
+    class Recording(JacobiPreconditioner):
+        def __init__(self, A):
+            built_from.append(A)
+            super().__init__(A)
+
+    A = _badly_scaled_spd(6, device).to_sparse_csr().requires_grad_(True)
+    B = torch.ones(6, dtype=torch.float64, device=device)
+    sparse_generic_solve(A, B, solve=linear_cg, preconditioner=Recording).sum().backward()
+    assert built_from and not any(M.requires_grad for M in built_from)
 
 
 def test_jacobi_rejects_non_square():
