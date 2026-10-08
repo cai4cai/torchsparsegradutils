@@ -242,6 +242,16 @@ def test_sparse_mm_broadcasts_unbatched_A(layout, device, value_dtype, B_shape):
     torch.testing.assert_close(A.grad.to_dense()[mask], A_ref.grad[mask], atol=atol, rtol=rtol)
 
 
+@pytest.mark.parametrize(
+    "B_shape", [(0,), (0, 2), (4, 0, 2), (2, 4, 0, 2)], ids=["vector", "matrix", "batch", "batch2"]
+)
+def test_sparse_mm_zero_inner_dimension(layout, B_shape):
+    A_dense = torch.zeros(3, 0, dtype=torch.float64)
+    A = A_dense.to_sparse_csr() if layout == torch.sparse_csr else A_dense.to_sparse_coo()
+    B = torch.zeros(B_shape, dtype=torch.float64)
+    torch.testing.assert_close(sparse_mm(A, B), A_dense @ B)
+
+
 ################################## Memory Usage Tests: #####################################
 
 MEM_USAGE_TEST_DATA = [

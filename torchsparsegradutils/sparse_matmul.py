@@ -143,7 +143,7 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
         return cast(torch.Tensor, SparseMatMul.apply(A, B.unsqueeze(-1))).squeeze(-1)
     if A.dim() == 2 and B.dim() > 2:
         # Fold the batch dimensions of B into its columns, (*batch, m, p) -> (m, batch * p), and unfold the result
-        B_cols = B.movedim(-2, 0).reshape(inner, -1)
+        B_cols = B.movedim(-2, 0).flatten(1)
         C_cols = cast(torch.Tensor, SparseMatMul.apply(A, B_cols))
         return C_cols.reshape(A.size(0), *B.shape[:-2], B.size(-1)).movedim(0, -2)
     return cast(torch.Tensor, SparseMatMul.apply(A, B))

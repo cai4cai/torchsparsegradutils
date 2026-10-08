@@ -12,9 +12,11 @@ The :class:`Preconditioner` base class adds what a bare callable lacks: :meth:`P
 :math:`\mathbf{A}^\top \mathbf{Y} = \mathbf{G}` solved in the backward pass, and structural flags that the
 symmetric solvers rely on.
 
-Preconditioners are built from a detached copy of the matrix: the implicit-function gradients of
-:func:`~torchsparsegradutils.sparse_generic_solve` do not depend on :math:`\mathbf{M}`, so a preconditioner
-never needs to be differentiated.
+The implicit-function gradients of :func:`~torchsparsegradutils.sparse_generic_solve` do not depend on
+:math:`\mathbf{M}`, so preconditioners built from :math:`\mathbf{A}` (such as :class:`JacobiPreconditioner`, or
+a :class:`Preconditioner` subclass passed to :func:`~torchsparsegradutils.sparse_generic_solve`) use a detached
+copy of it. :class:`MatrixPreconditioner` keeps its matrix as given: applying it directly is differentiable with
+respect to that matrix.
 """
 
 from __future__ import annotations
