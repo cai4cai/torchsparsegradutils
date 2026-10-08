@@ -387,3 +387,76 @@ def test_torch_sparse_mm_errors_on_batched(layout, device, value_dtype, index_dt
     # native torch.sparse.mm should error on batched inputs
     with pytest.raises(RuntimeError):
         torch.sparse.mm(A, B)
+
+
+@pytest.mark.parametrize("batched", [False, True])
+def test_sparse_mm_duplicate_coo_value_gradients(device, batched):
+    # Unsorted duplicates include a coordinate whose values cancel to zero.
+    indices = torch.tensor([[1, 0, 0, 1, 1], [2, 0, 0, 1, 2]], device=device)
+    values = torch.tensor([1.0, 2.0, 3.0, 4.0, -1.0], dtype=torch.float64, device=device)
+    shape = (2, 3)
+    if batched:
+        indices = torch.cat([torch.stack([torch.full_like(indices[0], batch), *indices]) for batch in range(2)], dim=1)
+        values = torch.cat([values, 2 * values])
+        shape = (2, *shape)
+    values.requires_grad_()
+    reference_values = values.detach().clone().requires_grad_()
+    A = torch.sparse_coo_tensor(indices, values, shape)
+    reference_A = torch.zeros(shape, dtype=values.dtype, device=device).index_put(
+        tuple(indices), reference_values, accumulate=True
+    )
+    B = torch.arange(1, 7, dtype=values.dtype, device=device).reshape(3, 2)
+    if batched:
+        B = torch.stack([B, B + 1])
+    B.requires_grad_()
+    reference_B = B.detach().clone().requires_grad_()
+
+    actual = sparse_mm(A, B)
+    expected = reference_A @ reference_B
+    upstream = torch.arange(1, actual.numel() + 1, dtype=values.dtype, device=device).reshape(actual.shape)
+    actual_grads = torch.autograd.grad(actual, (values, B), upstream)
+    expected_grads = torch.autograd.grad(expected, (reference_values, reference_B), upstream)
+
+    torch.testing.assert_close(actual, expected)
+    for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(actual_grad, expected_grad)
+    # Canonicalization must not mutate the user's sparse tensor or lose zero-coordinate gradients.
+    assert not A.is_coalesced()
+    torch.testing.assert_close(A._indices(), indices)
+    torch.testing.assert_close(A._values(), values.detach())
+    assert torch.all(actual_grads[0] != 0)
+
+
+@pytest.mark.parametrize("matrix_grad,rhs_grad", [(False, False), (False, True), (True, False), (True, True)])
+@pytest.mark.parametrize("batched", [False, True])
+def test_duplicate_coo_leaf_gradient_modes(device, batched, matrix_grad, rhs_grad):
+    indices = torch.tensor([[1, 0, 0, 1, 1], [2, 0, 0, 1, 2]], device=device)
+    values = torch.tensor([1.0, 2.0, 3.0, 4.0, -1.0], dtype=torch.float64, device=device)
+    a = torch.sparse_coo_tensor(indices, values, (2, 3))
+    if batched:
+        a = torch.stack([a, a])
+    a = a.detach().requires_grad_(matrix_grad)
+    dense_a = a.to_dense().detach().requires_grad_(matrix_grad)
+    b = torch.arange(1, 7, device=device, dtype=values.dtype).reshape(3, 2)
+    if batched:
+        b = torch.stack([b, b + 1])
+    b.requires_grad_(rhs_grad)
+    dense_b = b.detach().clone().requires_grad_(rhs_grad)
+    actual, expected = sparse_mm(a, b), dense_a @ dense_b
+    torch.testing.assert_close(actual, expected)
+    assert not a.is_coalesced()
+    if not (matrix_grad or rhs_grad):
+        assert not actual.requires_grad
+        return
+    inputs = tuple(x for x in (a, b) if x.requires_grad)
+    reference_inputs = tuple(x for x in (dense_a, dense_b) if x.requires_grad)
+    actual_grads = torch.autograd.grad(actual.sum(), inputs)
+    reference_grads = torch.autograd.grad(expected.sum(), reference_inputs)
+    for tensor, actual_grad, reference_grad in zip(inputs, actual_grads, reference_grads):
+        if tensor is a:
+            mask = torch.tensor([[True, False, False], [False, True, True]], device=device)
+            torch.testing.assert_close(actual_grad.to_dense(), reference_grad * mask)
+            if not batched:
+                assert actual_grad.is_coalesced()
+        else:
+            torch.testing.assert_close(actual_grad, reference_grad)

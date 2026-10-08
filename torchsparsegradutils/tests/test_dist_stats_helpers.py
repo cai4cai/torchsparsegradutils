@@ -13,6 +13,7 @@ including:
 import numpy as np
 import pytest
 import torch
+from scipy.stats import chi2, f
 from test_config import DEVICES
 
 from torchsparsegradutils.utils.dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
@@ -54,28 +55,17 @@ def batch_size_fixture(request):
 class TestMeanHotellingT2Test:
     """Test suite for the Hotelling T² test for multivariate means."""
 
-    def test_correct_mean_should_pass(self, device, dimension, batch_size_fixture):
-        """Test that correct means pass the test at reasonable confidence levels."""
-        n = 100_000  # Large sample for stability
-
-        # True parameters
-        true_mean = torch.zeros(batch_size_fixture, dimension, device=device)
-        true_cov = torch.eye(dimension, device=device).unsqueeze(0).repeat(batch_size_fixture, 1, 1)
-
-        # Generate samples from the true distribution
-        from torch.distributions import MultivariateNormal
-
-        dist = MultivariateNormal(true_mean, true_cov)
-        samples = dist.sample((n,))  # [n, batch_size, p]
-
-        # Compute sample statistics
-        sample_mean = samples.mean(0)  # [batch_size, p]
-        sample_cov = torch.stack([torch.cov(samples[:, i, :].T) for i in range(batch_size_fixture)])
-
-        # Test with high confidence level (should pass most of the time)
-        result, t2_stat, t2_thresh = mean_hotelling_t2_test(sample_mean, true_mean, sample_cov, n, confidence_level=0.9)
-
-        assert result.any().item(), f"T² stats: {t2_stat}, threshold: {t2_thresh}"
+    def test_matching_mean_should_pass(self, device, dimension, batch_size_fixture):
+        """Matching supplied means have zero Hotelling distance for every batch."""
+        n = 100_000
+        true_mean = torch.arange(dimension, device=device, dtype=torch.float64).expand(batch_size_fixture, -1)
+        covariance = torch.eye(dimension, device=device, dtype=torch.float64).expand(batch_size_fixture, -1, -1)
+        result, statistic, threshold = mean_hotelling_t2_test(
+            true_mean.clone(), true_mean, covariance, n, confidence_level=0.9
+        )
+        assert result.all().item()
+        torch.testing.assert_close(statistic, torch.zeros_like(statistic), atol=0, rtol=0)
+        assert threshold == pytest.approx(dimension * (n - 1) / (n - dimension) * f.ppf(0.9, dimension, n - dimension))
 
     def test_wrong_mean_should_fail(self, device, dimension):
         """Test that significantly wrong means fail the test."""
@@ -153,30 +143,20 @@ class TestMeanHotellingT2Test:
 class TestCovNagaoTest:
     """Test suite for the Nagao covariance test."""
 
-    def test_correct_covariance_should_pass(self, device, dimension, batch_size_fixture):
-        """Test that correct covariances pass the test at reasonable confidence levels."""
-        n = 100_000  # Large sample for stability
+    def test_matching_covariance_should_pass(self, device, dimension, batch_size_fixture):
+        """Matching supplied covariances have zero Nagao distance for every batch.
 
-        # True parameters
-        true_mean = torch.zeros(batch_size_fixture, dimension, device=device)
-        true_cov = torch.eye(dimension, device=device).unsqueeze(0).repeat(batch_size_fixture, 1, 1)
-        # Add some correlation for more interesting test
-        if dimension >= 2:
-            true_cov[:, 0, 1] = true_cov[:, 1, 0] = 0.3
-
-        # Generate samples from the true distribution
-        from torch.distributions import MultivariateNormal
-
-        dist = MultivariateNormal(true_mean, true_cov)
-        samples = dist.sample((n,))
-
-        # Compute sample covariance
-        sample_cov = torch.stack([torch.cov(samples[:, i, :].T) for i in range(batch_size_fixture)])
-
-        # Test with high confidence level (should pass most of the time)
-        result, t_n_stat, chi2_thresh = cov_nagao_test(sample_cov, true_cov, n, confidence_level=0.95)
-
-        assert result.any().item(), f"T_N stats: {t_n_stat}, threshold: {chi2_thresh}"
+        An empirical covariance from the true model can legitimately fail a 95%
+        test. Increasing its sample size does not eliminate that rejection rate;
+        this acceptance case therefore uses exactly matched nontrivial moments.
+        """
+        n = 100_000
+        true_cov = torch.eye(dimension, device=device, dtype=torch.float64).repeat(batch_size_fixture, 1, 1)
+        true_cov[:, 0, 1] = true_cov[:, 1, 0] = 0.3
+        result, statistic, threshold = cov_nagao_test(true_cov.clone(), true_cov, n, confidence_level=0.95)
+        assert result.all().item()
+        torch.testing.assert_close(statistic, torch.zeros_like(statistic), atol=1e-20, rtol=0)
+        assert threshold == pytest.approx(chi2.ppf(0.95, dimension * (dimension + 1) / 2))
 
     def test_wrong_covariance_should_fail(self, device, dimension):
         """Test that significantly wrong covariances fail the test."""
@@ -257,33 +237,26 @@ class TestIntegrationBehavior:
                 f"Threshold for {conf_levels[i]} should be <= threshold for {conf_levels[i + 1]}"
             )
 
-    def test_known_statistical_example(self):
-        """Test with a known statistical example for validation."""
-        # Create a simple 2D case where we know the expected behavior
-        n = 100000  # Very large sample for stable statistics
-        p = 2
-        batch_size = 1
-
-        # True parameters: zero mean, identity covariance
-        true_mean = torch.zeros(batch_size, p)
-        true_cov = torch.eye(p).unsqueeze(0)
-
-        # Generate samples
-        from torch.distributions import MultivariateNormal
-
-        dist = MultivariateNormal(true_mean.squeeze(0), true_cov.squeeze(0))
-        samples = dist.sample((n,)).unsqueeze(1)  # Add batch dimension
-
-        # Compute sample statistics
-        sample_mean = samples.mean(0)
-        sample_cov = torch.cov(samples.squeeze(1).T).unsqueeze(0)
-
-        # Both tests should pass with very high probability for correct parameters
-        mean_result, _, _ = mean_hotelling_t2_test(sample_mean, true_mean, sample_cov, n, confidence_level=0.99)
-        cov_result, _, _ = cov_nagao_test(sample_cov, true_cov, n, confidence_level=0.99)
-
-        assert mean_result.item(), "Mean test should pass with correct parameters and large sample"
-        assert cov_result.item(), "Covariance test should pass with correct parameters and large sample"
+    @pytest.mark.parametrize("confidence", [0.9, 0.99])
+    def test_known_statistical_example(self, device, confidence):
+        """Nonzero, hand-calculated statistics exercise acceptance and rejection."""
+        n = 100
+        sample_mean = torch.tensor([[0.1, 0.2], [1.0, 2.0]], device=device, dtype=torch.float64)
+        true_mean = torch.zeros_like(sample_mean)
+        sample_cov = torch.diag_embed(torch.tensor([[1.2, 0.8], [2.0, 3.0]], device=device, dtype=torch.float64))
+        true_cov = torch.eye(2, device=device, dtype=torch.float64).expand(2, -1, -1)
+        mean_result, mean_stat, mean_threshold = mean_hotelling_t2_test(
+            sample_mean, true_mean, sample_cov, n, confidence_level=confidence
+        )
+        cov_result, cov_stat, cov_threshold = cov_nagao_test(sample_cov, true_cov, n, confidence_level=confidence)
+        # T² = n * sum(mean_i² / variance_i); Nagao = n/2 * sum((variance_i - 1)²).
+        torch.testing.assert_close(mean_stat.cpu(), torch.tensor([35 / 6, 550 / 3], dtype=torch.float64))
+        torch.testing.assert_close(cov_stat.cpu(), torch.tensor([4.0, 250.0], dtype=torch.float64))
+        assert mean_threshold == pytest.approx(99 / 49 * f.ppf(confidence, 2, 98))
+        assert cov_threshold == pytest.approx(chi2.ppf(confidence, 3))
+        # The first mean falls outside the 90% region but inside the 99% region.
+        assert mean_result.tolist() == [confidence == 0.99, False]
+        assert cov_result.tolist() == [True, False]
 
 
 if __name__ == "__main__":

@@ -147,12 +147,17 @@ class SparseMatMul(torch.autograd.Function):
         grad_flag = A.requires_grad or B.requires_grad
 
         A, B = A.detach(), B.detach()
+        # Return one gradient per coordinate; COO construction distributes it to duplicates.
+        if A.layout == torch.sparse_coo and ctx.needs_input_grad[0]:
+            A = A.coalesce()
 
         if ctx.batch_size is not None:
             A = sparse_block_diag(*A)
             B = B.reshape(-1, B.size(-1))
 
-        x = torch.sparse.mm(A, B)
+        # CUDA CSR kernels can misread strided single-column operands.
+        # Copy only at the kernel boundary, retaining the saved input tensor.
+        x = torch.sparse.mm(A, B.contiguous())
 
         ctx.save_for_backward(A, B)
 
@@ -206,7 +211,8 @@ class SparseMatMul(torch.autograd.Function):
 
             # Create a sparse matrix of the gradient with respect to the nnz of A
             if A.layout == torch.sparse_coo:
-                gradA = torch.sparse_coo_tensor(A._indices(), gradA, A.shape)
+                # Coalescing above (or block-diagonal assembly) gives sorted, unique coordinates.
+                gradA = torch.sparse_coo_tensor(A._indices(), gradA, A.shape, is_coalesced=True)
             elif A.layout == torch.sparse_csr:
                 gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
 
@@ -226,7 +232,7 @@ class SparseMatMul(torch.autograd.Function):
                 grad_for_B = grad
 
             # Now compute the dense gradient with respect to B
-            gradB = torch.sparse.mm(A.t(), grad_for_B)
+            gradB = torch.sparse.mm(A.t(), grad_for_B.contiguous())
 
             if ctx.batch_size is not None:
                 gradB = gradB.view(ctx.B_shape)
