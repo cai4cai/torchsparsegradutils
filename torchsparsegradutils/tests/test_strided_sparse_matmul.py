@@ -47,3 +47,29 @@ def test_single_column_strides_dense_reference(device, dtype, layout, batched, s
     torch.testing.assert_close(actual_a.to_dense(), expected_a * mask)
     torch.testing.assert_close(actual_b, expected_b)
     assert (b.stride(), gradient.stride()) == original_strides
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", VALUE_DTYPES)
+@pytest.mark.parametrize("layout", SPARSE_LAYOUTS)
+def test_contiguous_singleton_strides_dense_reference(device, dtype, layout):
+    # A singleton column can have a non-unit stride while still being contiguous.
+    dense_a = torch.tensor(
+        [[2.0, 0.0, 0.0, 1.0], [0.0, -3.0, 0.0, 0.0], [0.0, 1.5, 4.0, 0.0]], device=device, dtype=dtype
+    )
+    a = dense_a.to_sparse_coo() if layout == torch.sparse_coo else dense_a.to_sparse_csr()
+    a.requires_grad_()
+    b = torch.arange(1, 21, device=device, dtype=dtype).reshape(5, 4).t()[:, :1].requires_grad_()
+    gradient = torch.arange(1, 16, device=device, dtype=dtype).reshape(5, 3).t()[:, :1]
+    assert b.is_contiguous() and b.stride() == (1, 4)
+    assert gradient.is_contiguous() and gradient.stride() == (1, 3)
+    assert b.contiguous().stride() == b.stride()
+    assert gradient.contiguous().stride() == gradient.stride()
+    dense_a.requires_grad_()
+    actual = sparse_mm(a, b)
+    expected = dense_a @ b
+    torch.testing.assert_close(actual, expected)
+    actual_a, actual_b = torch.autograd.grad(actual, (a, b), gradient)
+    expected_a, expected_b = torch.autograd.grad(expected, (dense_a, b), gradient)
+    torch.testing.assert_close(actual_a.to_dense(), expected_a * (dense_a != 0))
+    torch.testing.assert_close(actual_b, expected_b)

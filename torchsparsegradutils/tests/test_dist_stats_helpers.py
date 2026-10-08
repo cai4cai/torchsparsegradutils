@@ -13,6 +13,7 @@ including:
 import numpy as np
 import pytest
 import torch
+from scipy.stats import chi2, f
 from test_config import DEVICES
 
 from torchsparsegradutils.utils.dist_stats_helpers import cov_nagao_test, mean_hotelling_t2_test
@@ -64,7 +65,7 @@ class TestMeanHotellingT2Test:
         )
         assert result.all().item()
         torch.testing.assert_close(statistic, torch.zeros_like(statistic), atol=0, rtol=0)
-        assert threshold > 0
+        assert threshold == pytest.approx(dimension * (n - 1) / (n - dimension) * f.ppf(0.9, dimension, n - dimension))
 
     def test_wrong_mean_should_fail(self, device, dimension):
         """Test that significantly wrong means fail the test."""
@@ -155,7 +156,7 @@ class TestCovNagaoTest:
         result, statistic, threshold = cov_nagao_test(true_cov.clone(), true_cov, n, confidence_level=0.95)
         assert result.all().item()
         torch.testing.assert_close(statistic, torch.zeros_like(statistic), atol=1e-20, rtol=0)
-        assert threshold > 0
+        assert threshold == pytest.approx(chi2.ppf(0.95, dimension * (dimension + 1) / 2))
 
     def test_wrong_covariance_should_fail(self, device, dimension):
         """Test that significantly wrong covariances fail the test."""
@@ -236,33 +237,26 @@ class TestIntegrationBehavior:
                 f"Threshold for {conf_levels[i]} should be <= threshold for {conf_levels[i + 1]}"
             )
 
-    def test_known_statistical_example(self):
-        """Test with a known statistical example for validation."""
-        # Create a simple 2D case where we know the expected behavior
-        n = 100000  # Very large sample for stable statistics
-        p = 2
-        batch_size = 1
-
-        # True parameters: zero mean, identity covariance
-        true_mean = torch.zeros(batch_size, p)
-        true_cov = torch.eye(p).unsqueeze(0)
-
-        # Generate samples
-        from torch.distributions import MultivariateNormal
-
-        dist = MultivariateNormal(true_mean.squeeze(0), true_cov.squeeze(0))
-        samples = dist.sample((n,)).unsqueeze(1)  # Add batch dimension
-
-        # Compute sample statistics
-        sample_mean = samples.mean(0)
-        sample_cov = torch.cov(samples.squeeze(1).T).unsqueeze(0)
-
-        # Both tests should pass with very high probability for correct parameters
-        mean_result, _, _ = mean_hotelling_t2_test(sample_mean, true_mean, sample_cov, n, confidence_level=0.99)
-        cov_result, _, _ = cov_nagao_test(sample_cov, true_cov, n, confidence_level=0.99)
-
-        assert mean_result.item(), "Mean test should pass with correct parameters and large sample"
-        assert cov_result.item(), "Covariance test should pass with correct parameters and large sample"
+    @pytest.mark.parametrize("confidence", [0.9, 0.99])
+    def test_known_statistical_example(self, device, confidence):
+        """Nonzero, hand-calculated statistics exercise acceptance and rejection."""
+        n = 100
+        sample_mean = torch.tensor([[0.1, 0.2], [1.0, 2.0]], device=device, dtype=torch.float64)
+        true_mean = torch.zeros_like(sample_mean)
+        sample_cov = torch.diag_embed(torch.tensor([[1.2, 0.8], [2.0, 3.0]], device=device, dtype=torch.float64))
+        true_cov = torch.eye(2, device=device, dtype=torch.float64).expand(2, -1, -1)
+        mean_result, mean_stat, mean_threshold = mean_hotelling_t2_test(
+            sample_mean, true_mean, sample_cov, n, confidence_level=confidence
+        )
+        cov_result, cov_stat, cov_threshold = cov_nagao_test(sample_cov, true_cov, n, confidence_level=confidence)
+        # T² = n * sum(mean_i² / variance_i); Nagao = n/2 * sum((variance_i - 1)²).
+        torch.testing.assert_close(mean_stat.cpu(), torch.tensor([35 / 6, 550 / 3], dtype=torch.float64))
+        torch.testing.assert_close(cov_stat.cpu(), torch.tensor([4.0, 250.0], dtype=torch.float64))
+        assert mean_threshold == pytest.approx(99 / 49 * f.ppf(confidence, 2, 98))
+        assert cov_threshold == pytest.approx(chi2.ppf(confidence, 3))
+        # The first mean falls outside the 90% region but inside the 99% region.
+        assert mean_result.tolist() == [confidence == 0.99, False]
+        assert cov_result.tolist() == [True, False]
 
 
 if __name__ == "__main__":
