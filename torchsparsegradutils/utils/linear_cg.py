@@ -9,7 +9,7 @@ from typing import Literal, NamedTuple
 
 import torch
 
-from .preconditioners import _matrix_operator
+from .preconditioners import MatrixPreconditioner
 
 
 class LinearCGSettings(NamedTuple):
@@ -337,7 +337,7 @@ def linear_cg(  # noqa: C901 - inherited solver is intentionally kept as one rec
         precond = False
     else:
         if isinstance(preconditioner, torch.Tensor):
-            preconditioner = _matrix_operator(preconditioner)
+            preconditioner = MatrixPreconditioner(preconditioner)
         precond = True
 
     # If we are running m CG iterations, we obviously can't get more than m Lanczos coefficients

@@ -166,6 +166,33 @@ def test_matrix_preconditioner_transpose(device, layout):
     assert S.is_symmetric and S.transpose() is S
 
 
+def test_matrix_preconditioner_batched_dense(device):
+    M = torch.randn(3, 4, 4, dtype=torch.float64, device=device)
+    P = MatrixPreconditioner(M)
+    X = torch.randn(3, 4, 2, dtype=torch.float64, device=device)
+    assert P.shape == (4, 4)
+    torch.testing.assert_close(P(X), M @ X)
+    torch.testing.assert_close(P.transpose()(X), M.mT @ X)
+
+
+def test_matrix_preconditioner_rejects_invalid_shapes():
+    with pytest.raises(ValueError, match=r"\(n, n\)"):
+        MatrixPreconditioner(torch.stack([torch.eye(2).to_sparse_coo()]))
+    with pytest.raises(ValueError, match=r"\(\*batch, n, n\)"):
+        MatrixPreconditioner(torch.ones(2, 3))
+
+
+@pytest.mark.parametrize("layout", [torch.sparse_coo, torch.sparse_csr], ids=["coo", "csr"])
+def test_matrix_preconditioner_sparse_gradient(device, layout):
+    M_dense = torch.tensor([[2.0, 1.0, 0.0], [0.0, 3.0, 0.0], [1.0, 0.0, 4.0]], dtype=torch.float64, device=device)
+    M = _to_layout(M_dense, layout).requires_grad_(True)
+    X = torch.randn(2, 3, 2, dtype=torch.float64, device=device)
+    MatrixPreconditioner(M)(X).sum().backward()
+    assert M.grad.layout == layout
+    expected = (torch.ones_like(X) @ X.mT).sum(0)
+    torch.testing.assert_close(M.grad.to_dense()[M_dense != 0], expected[M_dense != 0])
+
+
 def test_preconditioner_without_transpose_raises():
     class OneSided(Preconditioner):
         shape = (2, 2)

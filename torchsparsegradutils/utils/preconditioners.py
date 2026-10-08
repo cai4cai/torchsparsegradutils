@@ -123,13 +123,15 @@ class MatrixPreconditioner(Preconditioner):
     r"""Preconditioner given by an explicit matrix :math:`\mathbf{M}^{-1}`.
 
     Wraps a sparse (COO/CSR) or dense matrix so that its transpose is available for the backward pass of
-    :func:`~torchsparsegradutils.sparse_generic_solve`. This is how a tensor passed as ``preconditioner`` there
-    is interpreted.
+    :func:`~torchsparsegradutils.sparse_generic_solve`. This is how a tensor passed as ``preconditioner`` to it or
+    to the solvers is interpreted. Sparse matrices are applied with :func:`~torchsparsegradutils.sparse_mm`, which
+    broadcasts over vectors and batched inputs and keeps gradients sparse when a solver is differentiated directly.
 
     Parameters
     ----------
-    M_inv : torch.Tensor, sparse COO or CSR, or dense (strided), shape ``(n, n)``
-        Matrix approximating :math:`\mathbf{A}^{-1}`. It is detached.
+    M_inv : torch.Tensor, sparse COO or CSR of shape ``(n, n)``, or dense (strided) of shape ``(*batch, n, n)``
+        Matrix approximating :math:`\mathbf{A}^{-1}`. A batched dense matrix is broadcast against the input as
+        :func:`torch.matmul` does.
     symmetric : bool, default=False
         Declare :math:`\mathbf{M}^{-1}` symmetric, so :meth:`transpose` returns ``self`` instead of a transposed
         copy. Not checked.
@@ -146,22 +148,24 @@ class MatrixPreconditioner(Preconditioner):
     """
 
     def __init__(self, M_inv: torch.Tensor, *, symmetric: bool = False, positive_definite: bool = False):
-        if M_inv.dim() != 2 or M_inv.shape[0] != M_inv.shape[1]:
-            raise ValueError(f"M_inv must be a square 2D matrix, got shape {tuple(M_inv.shape)}")
         if M_inv.layout not in (torch.sparse_coo, torch.sparse_csr, torch.strided):
             raise TypeError(f"Unsupported layout: {M_inv.layout}. Only COO, CSR and dense (strided) are supported.")
-        self.M_inv = M_inv.detach()
-        self.shape = (M_inv.shape[0], M_inv.shape[1])
+        max_dim = None if M_inv.layout == torch.strided else 2
+        if M_inv.dim() < 2 or (max_dim is not None and M_inv.dim() > max_dim) or M_inv.shape[-1] != M_inv.shape[-2]:
+            expected = "(*batch, n, n)" if max_dim is None else "(n, n)"
+            raise ValueError(f"M_inv must have shape {expected}, got {tuple(M_inv.shape)}")
+        self.M_inv = M_inv
+        self.shape = (M_inv.shape[-2], M_inv.shape[-1])
         self.is_positive_definite = positive_definite
         self.is_symmetric = symmetric or positive_definite
 
     def __call__(self, X: torch.Tensor) -> torch.Tensor:
-        if X.dim() <= 2 or self.M_inv.layout == torch.strided:
+        if self.M_inv.layout == torch.strided:
             return self.M_inv.matmul(X)
-        # Sparse matmul does not broadcast over batch dimensions: fold them into the columns, (*batch, n, k) -> (n, B k)
-        n = X.shape[-2]
-        X_cols = X.movedim(-2, 0).reshape(n, -1)
-        return self.M_inv.matmul(X_cols).reshape(n, *X.shape[:-2], X.shape[-1]).movedim(0, -2)
+        # Deferred import: torchsparsegradutils.sparse_matmul imports the utils package, which imports this module
+        from torchsparsegradutils.sparse_matmul import sparse_mm
+
+        return sparse_mm(self.M_inv, X)
 
     def transpose(self) -> Preconditioner:
         if self.is_symmetric:
@@ -170,12 +174,5 @@ class MatrixPreconditioner(Preconditioner):
             # Transposing CSR gives CSC; convert back so that matmul stays on the CSR kernels
             M_inv_t = self.M_inv.transpose(0, 1).to_sparse_csr()
         else:
-            M_inv_t = self.M_inv.transpose(0, 1)
+            M_inv_t = self.M_inv.transpose(-2, -1)
         return MatrixPreconditioner(M_inv_t)
-
-
-def _matrix_operator(M: torch.Tensor):
-    """Operator X -> M X; sparse matrices go through MatrixPreconditioner to support batched X."""
-    if M.layout == torch.strided:
-        return M.matmul
-    return MatrixPreconditioner(M)

@@ -7,6 +7,8 @@ from typing import Callable, NamedTuple, Optional, Union
 
 import torch
 
+from .preconditioners import MatrixPreconditioner
+
 # Default (null) logger.
 _null_log = logging.getLogger("bicgstab")
 _null_log.disabled = True
@@ -146,7 +148,7 @@ def bicgstab(
     if preconditioner is None:
         precon = None
     elif torch.is_tensor(preconditioner):
-        precon = preconditioner.matmul
+        precon = MatrixPreconditioner(preconditioner)
     elif callable(preconditioner):
         precon = preconditioner
     else:

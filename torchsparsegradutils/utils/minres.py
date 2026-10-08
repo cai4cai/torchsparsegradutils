@@ -9,7 +9,7 @@ from typing import Literal, NamedTuple, overload
 
 import torch
 
-from .preconditioners import _matrix_operator
+from .preconditioners import MatrixPreconditioner
 
 
 class _MINRESSettingsFields(NamedTuple):
@@ -355,7 +355,7 @@ def minres(  # noqa: C901 - inherited solver is intentionally kept as one recurr
     if preconditioner is None:
         preconditioner = lambda x: x.clone()
     elif isinstance(preconditioner, torch.Tensor):
-        preconditioner = _matrix_operator(preconditioner)
+        preconditioner = MatrixPreconditioner(preconditioner)
 
     if shifts is None:
         shifts_tensor = torch.tensor(0.0, dtype=rhs.dtype, device=rhs.device)
