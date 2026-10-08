@@ -167,21 +167,28 @@ BAD_TEST_DATA = [
         torch.tensor([0, 1]).to_sparse(),
         torch.rand(6, 2),
         ValueError,
-        "Both A and B should be at least 2-dimensional tensors",
+        "A should be a 2D or batched 3D tensor",
     ),
     (
         "bad_dim_B",
         torch.rand(4, 6).to_sparse(),
-        torch.rand(6),
+        torch.tensor(1.0),
         ValueError,
-        "Both A and B should be at least 2-dimensional tensors",
+        "B should be at least 1-dimensional",
     ),
     (
         "bad_dim_mismatch",
-        torch.rand(4, 6).to_sparse(),
-        torch.rand(1, 6, 2),
+        torch.stack([torch.rand(4, 6).to_sparse()]),
+        torch.rand(6, 2),
         ValueError,
-        "A and B must both be 2D or both be 3D tensors",
+        "If A is batched (3D), B must be 3D",
+    ),
+    (
+        "bad_inner_vector",
+        torch.rand(4, 6).to_sparse(),
+        torch.rand(4),
+        ValueError,
+        "Incompatible inner dimensions: A[..., 6] vs B[..., 4]",
     ),
     (
         "bad_format",
@@ -210,6 +217,29 @@ def test_sparse_mm_error(bad_inputs):
     with pytest.raises(expected_error) as e:
         sparse_mm(A, B)
     assert str(e.value) == error_msg
+
+
+@pytest.mark.parametrize("B_shape", [(6,), (3, 6, 2), (2, 3, 6, 2)], ids=["vector", "batch", "batch2"])
+def test_sparse_mm_broadcasts_unbatched_A(layout, device, value_dtype, B_shape):
+    A_dense = torch.randn(4, 6, dtype=value_dtype, device=device)
+    A_dense[A_dense.abs() < 0.5] = 0
+    A = (A_dense.to_sparse_csr() if layout == torch.sparse_csr else A_dense.to_sparse_coo()).requires_grad_(True)
+    B = torch.randn(B_shape, dtype=value_dtype, device=device, requires_grad=True)
+    A_ref = A_dense.clone().requires_grad_(True)
+    B_ref = B.detach().clone().requires_grad_(True)
+
+    C = sparse_mm(A, B)
+    C_ref = A_ref @ B_ref
+    atol, rtol = Tolerances.direct(value_dtype)
+    torch.testing.assert_close(C, C_ref, atol=atol, rtol=rtol)
+
+    G = torch.randn_like(C)
+    C.backward(G)
+    C_ref.backward(G)
+    torch.testing.assert_close(B.grad, B_ref.grad, atol=atol, rtol=rtol)
+    assert A.grad.layout == layout
+    mask = A_dense != 0
+    torch.testing.assert_close(A.grad.to_dense()[mask], A_ref.grad[mask], atol=atol, rtol=rtol)
 
 
 ################################## Memory Usage Tests: #####################################

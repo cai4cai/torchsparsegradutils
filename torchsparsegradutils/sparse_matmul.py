@@ -14,7 +14,8 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
      :math:`\mathbf{C} \in \mathbb{R}^{n\times p}`. Gradients preserve the sparsity pattern
      of :math:`\mathbf{A}`. Supports unbatched 2D ``(n,m) @ (m,p)`` and batched 3D inputs by
      block–diagonalising the batch of sparse matrices and concatenating dense matrices along
-     the batch dimension.
+     the batch dimension. A 2D :math:`\mathbf{A}` also follows :func:`torch.matmul` broadcasting:
+     a vector ``(m,)`` gives ``(n,)``, and a batch ``(*batch, m, p)`` gives ``(*batch, n, p)``.
 
      Let the upstream gradient be :math:`\mathbf{G} = \frac{\partial \mathcal{L}}{\partial \mathbf{C}} \in \mathbb{R}^{n\times p}`.
      The gradients are:
@@ -44,19 +45,21 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     A : torch.Tensor, sparse COO or CSR, shape ``(n, m)`` or ``(b, n, m)``
         Left operand. For batched input, all batch items must share ``(n, m)``. All tensors
         must be on the same device.
-    B : torch.Tensor, dense (strided), shape ``(m, p)`` or ``(b, m, p)``
-        Right operand. Must have the same number of dimensions as ``A`` and
-        matching batch size / inner dimension ``m``.
+    B : torch.Tensor, dense (strided)
+        Right operand with inner dimension ``m``. For a 2D ``A``: shape ``(m,)``, ``(m, p)`` or
+        ``(*batch, m, p)``; the same ``A`` then multiplies every batch item. For a 3D ``A``: shape
+        ``(b, m, p)`` with a matching batch size.
 
     Returns
     -------
     torch.Tensor
-        Dense result of shape ``(n, p)`` or ``(b, n, p)``.
+        Dense result of shape ``(n,)``, ``(n, p)``, ``(*batch, n, p)`` or ``(b, n, p)``, following ``B``.
 
     Raises
     ------
     ValueError
-        If ``A`` or ``B`` are not tensors; if ranks are < 2 or not both 2D/3D;
+        If ``A`` or ``B`` are not tensors; if ``A`` is not 2D/3D, ``B`` is 0D, or ``A`` is
+        3D and ``B`` is not;
         if layouts are incompatible (``A`` not COO/CSR or ``B`` not dense);
         if shapes are incompatible (batch or inner dims).
     RuntimeError
@@ -99,6 +102,13 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
         >>> out.shape
         torch.Size([2, 3, 2])
 
+    Broadcasting a single sparse matrix::
+
+        >>> sparse_mm(A, torch.randn(4)).shape
+        torch.Size([3])
+        >>> sparse_mm(A, torch.randn(5, 2, 4, 2)).shape
+        torch.Size([5, 2, 3, 2])
+
     With gradients::
 
         >>> A.requires_grad_(True)  # doctest: +ELLIPSIS
@@ -113,19 +123,29 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
 
     if not isinstance(A, torch.Tensor) or not isinstance(B, torch.Tensor):
         raise ValueError("Both A and B should be instances of torch.Tensor")
-    if A.dim() < 2 or B.dim() < 2:
-        raise ValueError("Both A and B should be at least 2-dimensional tensors")
-    if A.dim() != B.dim() or A.dim() not in (2, 3):
-        raise ValueError("A and B must both be 2D or both be 3D tensors")
+    if A.dim() not in (2, 3):
+        raise ValueError("A should be a 2D or batched 3D tensor")
+    if B.dim() < 1:
+        raise ValueError("B should be at least 1-dimensional")
+    if A.dim() == 3 and B.dim() != 3:
+        raise ValueError("If A is batched (3D), B must be 3D")
     if A.layout not in {torch.sparse_coo, torch.sparse_csr}:
         raise ValueError("A should be in either COO or CSR sparse format")
     if B.layout != torch.strided:
         raise ValueError("B must be a dense (strided) tensor")
     if A.dim() == 3 and A.size(0) != B.size(0):
         raise ValueError("If batched, A and B must have the same batch size")
-    if A.size(-1) != B.size(-2):
-        raise ValueError(f"Incompatible inner dimensions: A[..., {A.size(-1)}] vs B[..., {B.size(-2)}]")
+    inner = B.size(0) if B.dim() == 1 else B.size(-2)
+    if A.size(-1) != inner:
+        raise ValueError(f"Incompatible inner dimensions: A[..., {A.size(-1)}] vs B[..., {inner}]")
 
+    if B.dim() == 1:
+        return cast(torch.Tensor, SparseMatMul.apply(A, B.unsqueeze(-1))).squeeze(-1)
+    if A.dim() == 2 and B.dim() > 2:
+        # Fold the batch dimensions of B into its columns, (*batch, m, p) -> (m, batch * p), and unfold the result
+        B_cols = B.movedim(-2, 0).reshape(inner, -1)
+        C_cols = cast(torch.Tensor, SparseMatMul.apply(A, B_cols))
+        return C_cols.reshape(A.size(0), *B.shape[:-2], B.size(-1)).movedim(0, -2)
     return cast(torch.Tensor, SparseMatMul.apply(A, B))
 
 
