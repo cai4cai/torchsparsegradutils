@@ -68,6 +68,10 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     :func:`torch.sparse.mm` backprop), computing only gradients at the nonzero
     entries of :math:`A` to reduce memory use.
 
+    COO operands are coalesced before multiplication, independently of whether
+    gradients are required. For a fixed unbatched COO operator reused across calls, coalesce
+    it once beforehand to avoid repeatedly sorting and merging its coordinates.
+
     See Also
     --------
     torch.sparse.mm : PyTorch's native sparse ``@`` dense.
@@ -147,13 +151,14 @@ class SparseMatMul(torch.autograd.Function):
         grad_flag = A.requires_grad or B.requires_grad
 
         A, B = A.detach(), B.detach()
-        # Return one gradient per coordinate; COO construction distributes it to duplicates.
-        if A.layout == torch.sparse_coo and ctx.needs_input_grad[0]:
-            A = A.coalesce()
-
         if ctx.batch_size is not None:
             A = sparse_block_diag(*A)
             B = B.reshape(-1, B.size(-1))
+
+        # Canonicalize after assembly, including its single-block shortcut.
+        # Return one gradient per coordinate; COO construction distributes it to duplicates.
+        if A.layout == torch.sparse_coo:
+            A = A.coalesce()
 
         # CUDA CSR kernels can misread strided single-column operands.
         # Copy only at the kernel boundary, retaining the saved input tensor.
@@ -211,8 +216,7 @@ class SparseMatMul(torch.autograd.Function):
 
             # Create a sparse matrix of the gradient with respect to the nnz of A
             if A.layout == torch.sparse_coo:
-                # Coalescing above (or block-diagonal assembly) gives sorted, unique coordinates.
-                gradA = torch.sparse_coo_tensor(A._indices(), gradA, A.shape, is_coalesced=True)
+                gradA = torch.sparse_coo_tensor(A._indices(), gradA, A.shape, is_coalesced=A.is_coalesced())
             elif A.layout == torch.sparse_csr:
                 gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
 

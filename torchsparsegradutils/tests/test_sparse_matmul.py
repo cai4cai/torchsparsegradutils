@@ -389,16 +389,18 @@ def test_torch_sparse_mm_errors_on_batched(layout, device, value_dtype, index_dt
         torch.sparse.mm(A, B)
 
 
-@pytest.mark.parametrize("batched", [False, True])
-def test_sparse_mm_duplicate_coo_value_gradients(device, batched):
+@pytest.mark.parametrize("batch_size", [None, 1, 2])
+def test_sparse_mm_duplicate_coo_value_gradients(device, batch_size):
     # Unsorted duplicates include a coordinate whose values cancel to zero.
     indices = torch.tensor([[1, 0, 0, 1, 1], [2, 0, 0, 1, 2]], device=device)
     values = torch.tensor([1.0, 2.0, 3.0, 4.0, -1.0], dtype=torch.float64, device=device)
     shape = (2, 3)
-    if batched:
-        indices = torch.cat([torch.stack([torch.full_like(indices[0], batch), *indices]) for batch in range(2)], dim=1)
-        values = torch.cat([values, 2 * values])
-        shape = (2, *shape)
+    if batch_size is not None:
+        indices = torch.cat(
+            [torch.stack([torch.full_like(indices[0], batch), *indices]) for batch in range(batch_size)], dim=1
+        )
+        values = torch.cat([(batch + 1) * values for batch in range(batch_size)])
+        shape = (batch_size, *shape)
     values.requires_grad_()
     reference_values = values.detach().clone().requires_grad_()
     A = torch.sparse_coo_tensor(indices, values, shape)
@@ -406,8 +408,8 @@ def test_sparse_mm_duplicate_coo_value_gradients(device, batched):
         tuple(indices), reference_values, accumulate=True
     )
     B = torch.arange(1, 7, dtype=values.dtype, device=device).reshape(3, 2)
-    if batched:
-        B = torch.stack([B, B + 1])
+    if batch_size is not None:
+        B = torch.stack([B + batch for batch in range(batch_size)])
     B.requires_grad_()
     reference_B = B.detach().clone().requires_grad_()
 
@@ -428,18 +430,18 @@ def test_sparse_mm_duplicate_coo_value_gradients(device, batched):
 
 
 @pytest.mark.parametrize("matrix_grad,rhs_grad", [(False, False), (False, True), (True, False), (True, True)])
-@pytest.mark.parametrize("batched", [False, True])
-def test_duplicate_coo_leaf_gradient_modes(device, batched, matrix_grad, rhs_grad):
+@pytest.mark.parametrize("batch_size", [None, 1, 2])
+def test_duplicate_coo_leaf_gradient_modes(device, batch_size, matrix_grad, rhs_grad):
     indices = torch.tensor([[1, 0, 0, 1, 1], [2, 0, 0, 1, 2]], device=device)
     values = torch.tensor([1.0, 2.0, 3.0, 4.0, -1.0], dtype=torch.float64, device=device)
     a = torch.sparse_coo_tensor(indices, values, (2, 3))
-    if batched:
-        a = torch.stack([a, a])
+    if batch_size is not None:
+        a = torch.stack([a] * batch_size)
     a = a.detach().requires_grad_(matrix_grad)
     dense_a = a.to_dense().detach().requires_grad_(matrix_grad)
     b = torch.arange(1, 7, device=device, dtype=values.dtype).reshape(3, 2)
-    if batched:
-        b = torch.stack([b, b + 1])
+    if batch_size is not None:
+        b = torch.stack([b + batch for batch in range(batch_size)])
     b.requires_grad_(rhs_grad)
     dense_b = b.detach().clone().requires_grad_(rhs_grad)
     actual, expected = sparse_mm(a, b), dense_a @ dense_b
@@ -456,7 +458,28 @@ def test_duplicate_coo_leaf_gradient_modes(device, batched, matrix_grad, rhs_gra
         if tensor is a:
             mask = torch.tensor([[True, False, False], [False, True, True]], device=device)
             torch.testing.assert_close(actual_grad.to_dense(), reference_grad * mask)
-            if not batched:
+            if batch_size is None:
                 assert actual_grad.is_coalesced()
         else:
             torch.testing.assert_close(actual_grad, reference_grad)
+
+
+@pytest.mark.parametrize("batch_size", [None, 1, 2])
+def test_duplicate_coo_forward_independent_of_requires_grad(device, batch_size):
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    indices = torch.randint(500, (2, 20000), generator=generator)
+    values = torch.randn(20000, generator=generator)
+    a = torch.sparse_coo_tensor(indices, values, (500, 500)).to(device)
+    b = torch.randn(500, 4, generator=generator).to(device)
+    if batch_size is not None:
+        a = torch.stack([a] * batch_size)
+        b = torch.stack([b] * batch_size)
+    frozen = sparse_mm(a, b)
+    trainable = sparse_mm(a.detach().requires_grad_(), b)
+    with torch.no_grad():
+        inference = sparse_mm(a.detach().requires_grad_(), b)
+    # CPU is bitwise reproducible; repeated CUDA COO reductions can differ in rounding.
+    tolerance = 0 if device.type == "cpu" else 1e-5
+    torch.testing.assert_close(trainable, frozen, rtol=tolerance, atol=tolerance)
+    torch.testing.assert_close(inference, frozen, rtol=tolerance, atol=tolerance)
+    torch.testing.assert_close(frozen, a.to_dense() @ b, rtol=1e-5, atol=1e-5)
