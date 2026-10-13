@@ -479,6 +479,7 @@ def test_duplicate_coo_forward_independent_of_requires_grad(device, batch_size):
     with torch.no_grad():
         inference = sparse_mm(a.detach().requires_grad_(), b)
     # CPU is bitwise reproducible; repeated CUDA COO reductions can differ in rounding.
+    # The CPU cases detect grad-dependent preparation; CUDA tolerance can hide it.
     tolerance = 0 if device.type == "cpu" else 1e-5
     torch.testing.assert_close(trainable, frozen, rtol=tolerance, atol=tolerance)
     torch.testing.assert_close(inference, frozen, rtol=tolerance, atol=tolerance)

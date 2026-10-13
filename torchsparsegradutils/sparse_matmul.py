@@ -71,6 +71,9 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     COO operands are coalesced before multiplication, independently of whether
     gradients are required. For a fixed unbatched COO operator reused across calls, coalesce
     it once beforehand to avoid repeatedly sorting and merging its coordinates.
+    In tested PyTorch versions (2.5 and 2.14 nightly), batched COO slices lose the
+    coalesced flag, so pre-coalescing a batch does not avoid sorting each item
+    again on subsequent calls.
 
     See Also
     --------

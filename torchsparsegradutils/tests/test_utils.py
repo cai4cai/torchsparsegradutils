@@ -304,6 +304,9 @@ def test_sparse_block_diag_coalesced_contract(device, empty_shape):
     assert (actual.values() == 0).sum().item() == 2
     expected = torch.block_diag(empty.to_dense(), a.to_dense(), empty.to_dense(), a.to_dense())
     torch.testing.assert_close(actual.to_dense(), expected)
-    actual_grad = torch.autograd.grad(actual.values().sum(), values, retain_graph=True)[0]
-    expected_grad = torch.autograd.grad(expected.sum(), values)[0]
+    # Unequal coordinate weights expose gradients routed to the wrong values.
+    weights = torch.arange(1, expected.numel() + 1, dtype=expected.dtype, device=device).reshape(expected.shape)
+    weighted_actual = (actual.values() * weights[tuple(actual.indices())]).sum()
+    actual_grad = torch.autograd.grad(weighted_actual, values, retain_graph=True)[0]
+    expected_grad = torch.autograd.grad((expected * weights).sum(), values)[0]
     torch.testing.assert_close(actual_grad, expected_grad)
