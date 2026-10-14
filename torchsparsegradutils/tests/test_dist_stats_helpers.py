@@ -13,6 +13,7 @@ including:
 import numpy as np
 import pytest
 import torch
+from scipy.linalg import eigvalsh
 from scipy.stats import chi2, f
 from test_config import DEVICES
 
@@ -52,6 +53,24 @@ def batch_size_fixture(request):
     return request.param
 
 
+@pytest.fixture(params=[32, 256], ids=["n32", "n256"])
+def sampled_gaussian_data(request, dimension, batch_size_fixture):
+    """Use the same correlated CPU samples on every device, without global RNG state."""
+    rng_state = torch.random.get_rng_state()
+    generator = torch.Generator(device="cpu").manual_seed(12345)
+    n, p, batches = request.param, dimension, batch_size_fixture
+    mean = torch.arange(p, dtype=torch.float64).expand(batches, -1) / p
+    mean = mean + torch.arange(batches, dtype=torch.float64).unsqueeze(-1)
+    factor = torch.diag(torch.linspace(0.8, 1.5, p, dtype=torch.float64))
+    factor = factor + torch.tril(torch.full((p, p), 0.2, dtype=torch.float64), diagonal=-1)
+    factor = factor.unsqueeze(0) * (1 + torch.arange(batches, dtype=torch.float64)[:, None, None] / 4)
+    covariance = factor @ factor.transpose(-1, -2)
+    noise = torch.randn(n, batches, p, generator=generator, dtype=torch.float64)
+    samples = torch.einsum("nbj,bij->nbi", noise, factor) + mean
+    assert torch.equal(torch.random.get_rng_state(), rng_state)
+    return samples, mean, covariance
+
+
 class TestMeanHotellingT2Test:
     """Test suite for the Hotelling T² test for multivariate means."""
 
@@ -67,38 +86,32 @@ class TestMeanHotellingT2Test:
         torch.testing.assert_close(statistic, torch.zeros_like(statistic), atol=0, rtol=0)
         assert threshold == pytest.approx(dimension * (n - 1) / (n - dimension) * f.ppf(0.9, dimension, n - dimension))
 
-    def test_wrong_mean_should_fail(self, device, dimension):
-        """Test that significantly wrong means fail the test."""
-        n = 100_000
-        batch_size = 2
+    @pytest.mark.parametrize("mean_shift", [0.0, 1.0], ids=["true-mean", "shifted-mean"])
+    @pytest.mark.parametrize("confidence", [0.5, 0.95])
+    def test_sampled_mean_matches_reference(self, device, sampled_gaussian_data, mean_shift, confidence):
+        """Sample moments give the independently calculated statistic and decision."""
+        samples, true_mean, _ = sampled_gaussian_data
+        n, batches, p = samples.shape
+        hypothesized_mean = true_mean + mean_shift
+        # NumPy computes its own sample moments; solve avoids the helper's explicit inverse.
+        sample_array = samples.numpy()
+        differences = sample_array.mean(axis=0) - hypothesized_mean.numpy()
+        reference_covs = [np.cov(sample_array[:, i, :], rowvar=False, ddof=1) for i in range(batches)]
+        expected = np.array([n * d @ np.linalg.solve(cov, d) for d, cov in zip(differences, reference_covs)])
+        expected_threshold = p * (n - 1) / (n - p) * f.ppf(confidence, p, n - p)
 
-        # True parameters
-        true_mean = torch.zeros(batch_size, dimension, device=device)
-        true_cov = torch.eye(dimension, device=device).unsqueeze(0).repeat(batch_size, 1, 1)
-
-        # Generate samples from the true distribution
-        from torch.distributions import MultivariateNormal
-
-        dist = MultivariateNormal(true_mean, true_cov)
-        samples = dist.sample((n,))
-
-        # Compute sample statistics
-        sample_mean = samples.mean(0)
-        sample_cov = torch.stack([torch.cov(samples[:, i, :].T) for i in range(batch_size)])
-
-        # Test against significantly wrong mean
-        wrong_mean = true_mean + 1.0  # Shift by 1
-
-        # NOTE: value of confidence_level doesn't seem to make a difference here
-        # With a mean that wrong it always fails the test
-        result, t2_stat, t2_thresh = mean_hotelling_t2_test(
-            sample_mean, wrong_mean, sample_cov, n, confidence_level=0.75
+        device_samples = samples.to(device)
+        sample_mean = device_samples.mean(dim=0)
+        sample_cov = torch.stack([torch.cov(device_samples[:, i, :].T) for i in range(batches)])
+        result, statistic, threshold = mean_hotelling_t2_test(
+            sample_mean, hypothesized_mean.to(device), sample_cov, n, confidence_level=confidence
         )
-
-        # Should fail for all batches
-        assert not result.any().item(), (
-            f"Test should fail with wrong parameters. T² stats: {t2_stat}, threshold: {t2_thresh}"
-        )
+        np.testing.assert_allclose(statistic.cpu().numpy(), expected, rtol=1e-10, atol=1e-10)
+        assert threshold == pytest.approx(expected_threshold, rel=1e-12)
+        # A true model can legitimately be rejected; compare with the fixed sample's reference decision.
+        np.testing.assert_array_equal(result.cpu().numpy(), expected <= expected_threshold)
+        if mean_shift:
+            assert not result.any().item()
 
     def test_input_validation(self):
         """Test input validation and edge cases."""
@@ -158,35 +171,33 @@ class TestCovNagaoTest:
         torch.testing.assert_close(statistic, torch.zeros_like(statistic), atol=1e-20, rtol=0)
         assert threshold == pytest.approx(chi2.ppf(0.95, dimension * (dimension + 1) / 2))
 
-    def test_wrong_covariance_should_fail(self, device, dimension):
-        """Test that significantly wrong covariances fail the test."""
-        n = 10000
-        batch_size = 2
+    @pytest.mark.parametrize("covariance_scale", [1.0, 4.0], ids=["true-covariance", "scaled-covariance"])
+    @pytest.mark.parametrize("confidence", [0.5, 0.95])
+    def test_sampled_covariance_matches_reference(self, device, sampled_gaussian_data, covariance_scale, confidence):
+        """Use generalized eigenvalues as an independent reference for whitening."""
+        samples, _, true_cov = sampled_gaussian_data
+        n, batches, p = samples.shape
+        reference_cov = true_cov * covariance_scale
+        sample_array = samples.numpy()
+        expected = []
+        for i in range(batches):
+            empirical_cov = np.cov(sample_array[:, i, :], rowvar=False, ddof=1)
+            # Eigenvalues of (empirical, reference) equal those of the whitened covariance.
+            eigenvalues = eigvalsh(empirical_cov, reference_cov[i].numpy())
+            expected.append(n / 2 * np.sum((eigenvalues - 1) ** 2))
+        expected = np.array(expected)
+        expected_threshold = chi2.ppf(confidence, p * (p + 1) / 2)
 
-        # True parameters
-        true_mean = torch.zeros(batch_size, dimension, device=device)
-        true_cov = torch.eye(dimension, device=device).unsqueeze(0).repeat(batch_size, 1, 1)
-
-        # Generate samples from the true distribution
-        from torch.distributions import MultivariateNormal
-
-        dist = MultivariateNormal(true_mean, true_cov)
-        samples = dist.sample((n,))
-
-        # Compute sample covariance
-        sample_cov = torch.stack([torch.cov(samples[:, i, :].T) for i in range(batch_size)])
-
-        # Test against significantly wrong covariance (scaled by 2)
-        wrong_cov = true_cov * 2.0
-
-        # NOTE: value of confidence_level doesn't seem to make a difference here
-        # With covariance that wrong it always fails the test
-        result, t_n_stat, chi2_thresh = cov_nagao_test(sample_cov, wrong_cov, n, confidence_level=0.75)
-
-        # Should fail for all batches
-        assert not result.any().item(), (
-            f"Test should fail with wrong parameters. T_N stats: {t_n_stat}, threshold: {chi2_thresh}"
+        device_samples = samples.to(device)
+        empirical_cov = torch.stack([torch.cov(device_samples[:, i, :].T) for i in range(batches)])
+        result, statistic, threshold = cov_nagao_test(
+            empirical_cov, reference_cov.to(device), n, confidence_level=confidence
         )
+        np.testing.assert_allclose(statistic.cpu().numpy(), expected, rtol=1e-10, atol=1e-10)
+        assert threshold == pytest.approx(expected_threshold, rel=1e-12)
+        np.testing.assert_array_equal(result.cpu().numpy(), expected <= expected_threshold)
+        if covariance_scale != 1:
+            assert not result.any().item()
 
     def test_return_types_and_shapes_cov(self):
         """Test that return types and shapes are correct for covariance test."""
