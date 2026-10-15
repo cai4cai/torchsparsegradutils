@@ -4,8 +4,8 @@ Unit tests for statistical distribution validation helpers.
 This module provides comprehensive tests for the Hotelling T² test and Nagao
 covariance test functions, validating their behavior under various conditions
 including:
-- Correct parameters (should pass at reasonable confidence levels)
-- Incorrect parameters (should fail at reasonable confidence levels)
+- True-model samples (statistics and decisions match independent references)
+- Strongly shifted or scaled hypotheses (rejected for the fixed samples)
 - Edge cases (small samples, different dimensions, etc.)
 - Confidence level sensitivity
 """
@@ -86,7 +86,7 @@ class TestMeanHotellingT2Test:
         torch.testing.assert_close(statistic, torch.zeros_like(statistic), atol=0, rtol=0)
         assert threshold == pytest.approx(dimension * (n - 1) / (n - dimension) * f.ppf(0.9, dimension, n - dimension))
 
-    @pytest.mark.parametrize("mean_shift", [0.0, 1.0], ids=["true-mean", "shifted-mean"])
+    @pytest.mark.parametrize("mean_shift", [0.0, 2.0], ids=["true-mean", "shifted-mean"])
     @pytest.mark.parametrize("confidence", [0.5, 0.95])
     def test_sampled_mean_matches_reference(self, device, sampled_gaussian_data, mean_shift, confidence):
         """Sample moments give the independently calculated statistic and decision."""
@@ -184,6 +184,8 @@ class TestCovNagaoTest:
             empirical_cov = np.cov(sample_array[:, i, :], rowvar=False, ddof=1)
             # Eigenvalues of (empirical, reference) equal those of the whitened covariance.
             eigenvalues = eigvalsh(empirical_cov, reference_cov[i].numpy())
+            # Preserve the helper's sample-size multiplier, not the residual n - 1
+            # degrees of freedom of this unbiased covariance estimate.
             expected.append(n / 2 * np.sum((eigenvalues - 1) ** 2))
         expected = np.array(expected)
         expected_threshold = chi2.ppf(confidence, p * (p + 1) / 2)
