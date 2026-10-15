@@ -163,7 +163,8 @@ class SparseMatMul(torch.autograd.Function):
         if A.layout == torch.sparse_coo:
             A = A.coalesce()
 
-        # CUDA CSR kernels can misread strided single-column operands.
+        # PyTorch 2.5 CUDA CSR multiplication misread strided single-column operands
+        # in our regression tests; the same cases passed on PyTorch 2.14 nightly.
         # Copy only at the kernel boundary, retaining the saved input tensor.
         x = torch.sparse.mm(A, B.contiguous())
 

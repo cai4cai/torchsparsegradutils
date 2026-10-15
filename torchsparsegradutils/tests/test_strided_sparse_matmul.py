@@ -1,8 +1,8 @@
 import pytest
 import torch
+from test_config import DEVICES, SPARSE_LAYOUTS, VALUE_DTYPES
 
 from torchsparsegradutils import sparse_mm
-from torchsparsegradutils.tests.test_config import DEVICES, SPARSE_LAYOUTS, VALUE_DTYPES
 from torchsparsegradutils.utils import stack_csr
 
 
