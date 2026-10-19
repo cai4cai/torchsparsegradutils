@@ -413,7 +413,7 @@ def test_sparse_mm_duplicate_coo_value_gradients(device, batch_size):
     B.requires_grad_()
     reference_B = B.detach().clone().requires_grad_()
 
-    actual = sparse_mm(A, B)
+    actual = sparse_mm(A, B, coalesce_strategy="when_needed")
     expected = reference_A @ reference_B
     upstream = torch.arange(1, actual.numel() + 1, dtype=values.dtype, device=device).reshape(actual.shape)
     actual_grads = torch.autograd.grad(actual, (values, B), upstream)
@@ -444,7 +444,7 @@ def test_duplicate_coo_leaf_gradient_modes(device, batch_size, matrix_grad, rhs_
         b = torch.stack([b + batch for batch in range(batch_size)])
     b.requires_grad_(rhs_grad)
     dense_b = b.detach().clone().requires_grad_(rhs_grad)
-    actual, expected = sparse_mm(a, b), dense_a @ dense_b
+    actual, expected = sparse_mm(a, b, coalesce_strategy="when_needed"), dense_a @ dense_b
     torch.testing.assert_close(actual, expected)
     assert not a.is_coalesced()
     if not (matrix_grad or rhs_grad):
@@ -465,7 +465,8 @@ def test_duplicate_coo_leaf_gradient_modes(device, batch_size, matrix_grad, rhs_
 
 
 @pytest.mark.parametrize("batch_size", [None, 1, 2])
-def test_duplicate_coo_forward_independent_of_requires_grad(device, batch_size):
+@pytest.mark.parametrize("strategy", ["error", "when_needed", "forward"])
+def test_duplicate_coo_forward_independent_of_requires_grad(device, batch_size, strategy):
     generator = torch.Generator(device="cpu").manual_seed(0)
     indices = torch.randint(500, (2, 20000), generator=generator)
     values = torch.randn(20000, generator=generator)
@@ -474,10 +475,12 @@ def test_duplicate_coo_forward_independent_of_requires_grad(device, batch_size):
     if batch_size is not None:
         a = torch.stack([a] * batch_size)
         b = torch.stack([b] * batch_size)
-    frozen = sparse_mm(a, b)
-    trainable = sparse_mm(a.detach().requires_grad_(), b)
+    if strategy == "error":
+        a = a.coalesce()
+    frozen = sparse_mm(a, b, coalesce_strategy=strategy)
+    trainable = sparse_mm(a.detach().requires_grad_(), b, coalesce_strategy=strategy)
     with torch.no_grad():
-        inference = sparse_mm(a.detach().requires_grad_(), b)
+        inference = sparse_mm(a.detach().requires_grad_(), b, coalesce_strategy=strategy)
     # CPU is bitwise reproducible; repeated CUDA COO reductions can differ in rounding.
     # The CPU cases detect grad-dependent preparation; CUDA tolerance can hide it.
     tolerance = 0 if device.type == "cpu" else 1e-5
@@ -509,9 +512,9 @@ def test_duplicate_coo_cpu_without_sparse_gradient_avoids_coalescing(batch_size,
     monkeypatch.setattr(torch.Tensor, "coalesce", unexpected_coalesce)
     if mode == "no_grad":
         with torch.no_grad():
-            actual = sparse_mm(a, b)
+            actual = sparse_mm(a, b, coalesce_strategy="when_needed")
     else:
-        actual = sparse_mm(a, b)
+        actual = sparse_mm(a, b, coalesce_strategy="when_needed")
     torch.testing.assert_close(actual, expected)
     if mode == "rhs_gradient":
         actual_grad = torch.autograd.grad(actual.sum(), b)[0]
