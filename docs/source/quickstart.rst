@@ -46,17 +46,18 @@ or select an explicit keyword-only ``coalesce_strategy``:
 * ``"when_needed"``: prepare unique coordinates for sparse-input gradients on
   CPU; on CUDA, coalesce in forward and reuse the native kernel's preparation.
 * ``"assume_unique"``: trust that coordinates are unique, without checking or
-  explicitly sorting. Duplicates can produce incorrect gradients. Native CUDA
+  policy-driven sorting. Batched helpers may still coalesce, as described below.
+  Duplicates can produce incorrect gradients. Native CUDA
   kernels may still sort internally.
 * ``"forward"``: coalesce before multiplication on every device and reuse the
   prepared operand for backward.
 
 These options do not modify the caller's tensor. CSR inputs accept all four
 options without additional preparation. Batched COO validation happens before
-slicing, and known coalesced ordering is preserved without re-sorting each item.
-Batched multiplication maps indices directly into a block-diagonal sparse matrix
-without sorting individual items. Sparse-input gradients are processed one item
-at a time to reduce temporary memory; this adds kernel launches for large batches.
+slicing. The existing block-diagonal assembly and gradient-splitting helpers
+may still coalesce internally, including with ``"assume_unique"``. Extracted items
+lose their coalesced flag, so pre-coalescing a batch does not avoid those sorts. Improving
+shared batching and its gradient memory use is deferred to a separate change.
 
 Batched Operations
 ~~~~~~~~~~~~~~~~~~
