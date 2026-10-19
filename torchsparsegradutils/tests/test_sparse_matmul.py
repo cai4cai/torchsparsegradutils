@@ -484,3 +484,38 @@ def test_duplicate_coo_forward_independent_of_requires_grad(device, batch_size):
     torch.testing.assert_close(trainable, frozen, rtol=tolerance, atol=tolerance)
     torch.testing.assert_close(inference, frozen, rtol=tolerance, atol=tolerance)
     torch.testing.assert_close(frozen, a.to_dense() @ b, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("batch_size", [None, 1])
+@pytest.mark.parametrize("mode", ["inference", "rhs_gradient", "no_grad"])
+def test_duplicate_coo_cpu_without_sparse_gradient_avoids_coalescing(batch_size, mode, monkeypatch):
+    device = torch.device("cpu")
+    indices = torch.tensor([[1, 0, 0, 1, 1], [2, 0, 0, 1, 2]], device=device)
+    values = torch.tensor([1.0, 2.0, 3.0, 4.0, -1.0], dtype=torch.float64, device=device)
+    a = torch.sparse_coo_tensor(indices, values, (2, 3))
+    b = torch.arange(1, 7, dtype=values.dtype, device=device).reshape(3, 2)
+    if batch_size is not None:
+        a, b = torch.stack([a]), torch.stack([b])
+    a.requires_grad_(mode == "no_grad")
+    b.requires_grad_(mode == "rhs_gradient")
+    reference_a = a.to_dense().detach()
+    reference_b = b.detach().clone().requires_grad_(mode == "rhs_gradient")
+    expected = reference_a @ reference_b
+
+    def unexpected_coalesce(*args, **kwargs):
+        pytest.fail("No explicit COO coalescing is needed without a sparse-input gradient")
+
+    # Guard the extra sorting introduced by the wrapper, independently of timing noise.
+    monkeypatch.setattr(torch.Tensor, "coalesce", unexpected_coalesce)
+    if mode == "no_grad":
+        with torch.no_grad():
+            actual = sparse_mm(a, b)
+    else:
+        actual = sparse_mm(a, b)
+    torch.testing.assert_close(actual, expected)
+    if mode == "rhs_gradient":
+        actual_grad = torch.autograd.grad(actual.sum(), b)[0]
+        expected_grad = torch.autograd.grad(expected.sum(), reference_b)[0]
+        torch.testing.assert_close(actual_grad, expected_grad)
+    else:
+        assert actual.grad_fn is None

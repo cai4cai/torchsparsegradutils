@@ -68,12 +68,14 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     :func:`torch.sparse.mm` backprop), computing only gradients at the nonzero
     entries of :math:`A` to reduce memory use.
 
-    COO operands are coalesced before multiplication, independently of whether
-    gradients are required. For a fixed unbatched COO operator reused across calls, coalesce
-    it once beforehand to avoid repeatedly sorting and merging its coordinates.
-    In tested PyTorch versions (2.5 and 2.14 nightly), batched COO slices lose the
-    coalesced flag, so pre-coalescing a batch does not avoid sorting each item
-    again on subsequent calls.
+    On CPU, unbatched COO operands are multiplied as supplied; duplicates are
+    coalesced only when computing the sparse-input gradient. On CUDA, COO operands
+    are coalesced before multiplication because the native kernel would otherwise
+    coalesce internally; saving that result avoids repeating the sort for backward.
+    Forward preparation is independent of whether gradients are required.
+    Pre-coalescing a reused unbatched operator avoids repeated sorting. Multi-item
+    batches still coalesce each matrix during block-diagonal assembly; extracting
+    matrices from a coalesced batch may lose their flag and require sorting again.
 
     See Also
     --------
@@ -158,9 +160,9 @@ class SparseMatMul(torch.autograd.Function):
             A = sparse_block_diag(*A)
             B = B.reshape(-1, B.size(-1))
 
-        # Canonicalize after assembly, including its single-block shortcut.
-        # Return one gradient per coordinate; COO construction distributes it to duplicates.
-        if A.layout == torch.sparse_coo:
+        # Native CUDA COO multiplication coalesces internally. Save the canonical
+        # operand so sparse-input backward can reuse it instead of sorting again.
+        if A.layout == torch.sparse_coo and A.is_cuda:
             A = A.coalesce()
 
         # PyTorch 2.5 CUDA CSR multiplication misread strided single-column operands
@@ -195,8 +197,11 @@ class SparseMatMul(torch.autograd.Function):
 
             # We start by getting the i and j indices:
 
+            # Return one gradient per coordinate; COO construction distributes it
+            # to duplicate input values. Keep A unchanged for the RHS gradient.
+            A_for_grad = A.coalesce() if A.layout == torch.sparse_coo else A
             if A.layout == torch.sparse_coo:
-                A_row_idx, A_col_idx = A._indices()
+                A_row_idx, A_col_idx = A_for_grad.indices()
             elif A.layout == torch.sparse_csr:
                 A_col_idx = A.col_indices()
                 A_crow_idx = A.crow_indices()
@@ -220,7 +225,9 @@ class SparseMatMul(torch.autograd.Function):
 
             # Create a sparse matrix of the gradient with respect to the nnz of A
             if A.layout == torch.sparse_coo:
-                gradA = torch.sparse_coo_tensor(A._indices(), gradA, A.shape, is_coalesced=A.is_coalesced())
+                gradA = torch.sparse_coo_tensor(
+                    A_for_grad.indices(), gradA, A.shape, is_coalesced=A_for_grad.is_coalesced()
+                )
             elif A.layout == torch.sparse_csr:
                 gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
 
