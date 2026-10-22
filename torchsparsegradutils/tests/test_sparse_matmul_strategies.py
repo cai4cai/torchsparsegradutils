@@ -124,6 +124,31 @@ def test_csr_accepts_every_strategy(device, strategy):
     torch.testing.assert_close(gb, torch.ones_like(b))
 
 
+@pytest.mark.parametrize("device", DEVICES, ids=str)
+@pytest.mark.parametrize("strategy", STRATEGIES)
+def test_coo_gradient_flag_preserves_known_ordering(device, strategy):
+    # Unique coordinates need not be sorted: assume_unique must not mark them coalesced.
+    indices = torch.tensor([[1, 0, 1], [2, 0, 1]], device=device)
+    values = torch.tensor([1.0, 2.0, 4.0], dtype=torch.float64, device=device)
+    a = torch.sparse_coo_tensor(indices, values, (2, 3))
+    if strategy == "error":
+        a = a.coalesce()
+    a.requires_grad_()
+    b = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=a.dtype, device=device)
+    upstream = torch.tensor([[2.0, 3.0], [5.0, 7.0]], dtype=a.dtype, device=device)
+
+    # Also reject a false True flag at construction, before downstream ops trust it.
+    with torch.sparse.check_sparse_tensor_invariants():
+        out = sparse_mm(a, b, coalesce_strategy=strategy)
+        (grad_a,) = torch.autograd.grad(out, a, upstream)
+
+    assert grad_a.is_coalesced() == (strategy != "assume_unique")
+    if strategy == "assume_unique":
+        torch.testing.assert_close(grad_a._indices(), indices)
+    mask = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]], dtype=a.dtype, device=device)
+    torch.testing.assert_close(grad_a.to_dense(), (upstream @ b.t()) * mask)
+
+
 def test_invalid_strategy_and_keyword_only():
     a, b = torch.eye(2).to_sparse(), torch.ones(2, 1)
     with pytest.raises(ValueError, match="coalesce_strategy"):
