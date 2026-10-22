@@ -291,6 +291,18 @@ def cov_nagao_test(
 
     Notes
     -----
+    The statistic uses the supplied sample size ``n`` directly as its multiplier;
+    it does not subtract a degree of freedom for estimating the mean. For an
+    unbiased covariance estimated from ``n`` mean-centred observations, the
+    residual degrees of freedom are ``n - 1``. The returned statistic is therefore
+    ``n / (n - 1)`` times Nagao's original statistic for that covariance: on
+    page 702, equation (3.3) of [1d]_, the multiplier uses residual degrees of
+    freedom, defined there as the number of observations minus one.
+
+    The chi-square threshold is an asymptotic approximation, not an exact
+    finite-sample calibration. With small samples relative to the dimension,
+    true covariances may be rejected more often than ``1 - confidence_level``.
+
     This test is often more stable than raw Frobenius norm tests when
     the reference covariance :math:`\boldsymbol{\Sigma}_0` is ill-conditioned.
 

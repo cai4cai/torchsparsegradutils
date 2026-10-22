@@ -19,7 +19,7 @@ The core function :func:`~torchsparsegradutils.sparse_mm` performs memory-effici
    # Create a sparse matrix in COO format
    indices = torch.tensor([[0, 1, 1], [2, 0, 2]], dtype=torch.int64)
    values = torch.tensor([3., 4., 5.])
-   A = torch.sparse_coo_tensor(indices, values, (2, 3))
+   A = torch.sparse_coo_tensor(indices, values, (2, 3)).coalesce()
    A.requires_grad_(True)
 
    # Create a dense matrix
@@ -34,6 +34,30 @@ The core function :func:`~torchsparsegradutils.sparse_mm` performs memory-effici
    loss.backward()
    print(f"A gradient is sparse: {A.grad.is_sparse}")  # True
    print(f"A gradient nnz: {A.grad._nnz()}")  # Number of non-zeros
+
+COO coalescing policy
+~~~~~~~~~~~~~~~~~~~~
+
+``sparse_mm`` now rejects uncoalesced COO inputs by default, even when their
+coordinates are unique. Prepare a reused operator with ``A = A.coalesce()``,
+or select an explicit keyword-only ``coalesce_strategy``:
+
+* ``"error"`` (default): require the caller's COO tensor to be coalesced.
+* ``"when_needed"``: prepare unique coordinates for sparse-input gradients on
+  CPU; on CUDA, coalesce in forward and reuse the native kernel's preparation.
+* ``"assume_unique"``: trust that coordinates are unique, without checking or
+  policy-driven sorting. Batched helpers may still coalesce, as described below.
+  Duplicates can produce incorrect gradients. Native CUDA
+  kernels may still sort internally.
+* ``"forward"``: coalesce before multiplication on every device and reuse the
+  prepared operand for backward.
+
+These options do not modify the caller's tensor. CSR inputs accept all four
+options without additional preparation. Batched COO validation happens before
+slicing. The existing block-diagonal assembly and gradient-splitting helpers
+may still coalesce internally, including with ``"assume_unique"``. Extracted items
+lose their coalesced flag, so pre-coalescing a batch does not avoid those sorts. Improving
+shared batching and its gradient memory use is deferred to a separate change.
 
 Batched Operations
 ~~~~~~~~~~~~~~~~~~
@@ -51,7 +75,7 @@ torchsparsegradutils supports batched operations, for sparse_mm and triangular_s
    # Method 1: Stack individual sparse matrices
    A1 = torch.sparse_coo_tensor([[0, 1], [0, 1]], [1., 2.], (2, 2))
    A2 = torch.sparse_coo_tensor([[0, 1], [1, 0]], [3., 4.], (2, 2))
-   A_batch = torch.stack([A1, A2])  # Shape: (2, 2, 2)
+   A_batch = torch.stack([A1, A2]).coalesce()  # Shape: (2, 2, 2)
 
    # Dense batch
    B = torch.randn(batch_size, 2, 3)

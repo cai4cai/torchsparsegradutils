@@ -16,7 +16,7 @@ def test_sparse_mm_example():
     # Create a sparse matrix in COO format
     indices = torch.tensor([[0, 1, 1], [2, 0, 2]], dtype=torch.int64)
     values = torch.tensor([3.0, 4.0, 5.0])
-    A = torch.sparse_coo_tensor(indices, values, (2, 3))
+    A = torch.sparse_coo_tensor(indices, values, (2, 3)).coalesce()
     A.requires_grad_(True)
 
     # Create a dense matrix
@@ -44,7 +44,7 @@ def test_batched_operations():
     # Method 1: Stack individual sparse matrices
     A1 = torch.sparse_coo_tensor([[0, 1], [0, 1]], [1.0, 2.0], (2, 2))
     A2 = torch.sparse_coo_tensor([[0, 1], [1, 0]], [3.0, 4.0], (2, 2))
-    A_batch = torch.stack([A1, A2])  # Shape: (2, 2, 2)
+    A_batch = torch.stack([A1, A2]).coalesce()  # Shape: (2, 2, 2)
 
     # Dense batch
     B = torch.randn(batch_size, 2, 3)
