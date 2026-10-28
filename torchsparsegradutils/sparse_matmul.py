@@ -2,6 +2,7 @@ from typing import Literal, cast
 
 import torch
 
+from torchsparsegradutils._compat import sparse_mm_compat
 from torchsparsegradutils.utils import sparse_block_diag, sparse_block_diag_split, stack_csr
 
 CoalesceStrategy = Literal["error", "when_needed", "assume_unique", "forward"]
@@ -190,10 +191,7 @@ class SparseMatMul(torch.autograd.Function):
         ):
             A = A.coalesce()
 
-        # PyTorch 2.5 CUDA CSR multiplication misread strided single-column operands
-        # in our regression tests; the same cases passed on PyTorch 2.14 nightly.
-        # Copy only at the kernel boundary, retaining the saved input tensor.
-        x = torch.sparse.mm(A, B.contiguous())
+        x = sparse_mm_compat(A, B)
 
         ctx.save_for_backward(A, B)
 
@@ -273,7 +271,7 @@ class SparseMatMul(torch.autograd.Function):
                 grad_for_B = grad
 
             # Now compute the dense gradient with respect to B
-            gradB = torch.sparse.mm(A.t(), grad_for_B.contiguous())
+            gradB = sparse_mm_compat(A.t(), grad_for_B)
 
             if ctx.batch_size is not None:
                 gradB = gradB.view(ctx.B_shape)

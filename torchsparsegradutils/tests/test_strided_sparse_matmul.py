@@ -1,5 +1,8 @@
+import importlib
+
 import pytest
 import torch
+from packaging.version import Version
 from test_config import DEVICES, SPARSE_LAYOUTS, VALUE_DTYPES
 
 from torchsparsegradutils import sparse_mm
@@ -73,3 +76,73 @@ def test_contiguous_singleton_strides_dense_reference(device, dtype, layout):
     expected_a, expected_b = torch.autograd.grad(expected, (dense_a, b), gradient)
     torch.testing.assert_close(actual_a.to_dense(), expected_a * (dense_a != 0))
     torch.testing.assert_close(actual_b, expected_b)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("layout", SPARSE_LAYOUTS)
+@pytest.mark.parametrize("operand_kind", ["column_slice", "multi_slice", "transpose", "contiguous", "singleton_stride"])
+def test_stride_workaround_copies_only_affected_operands(device, layout, operand_kind, monkeypatch):
+    dense_a = torch.tensor([[2.0, 0.0, 1.0], [0.0, -3.0, 4.0]], device=device, dtype=torch.float64)
+    a = dense_a.to_sparse_coo() if layout == torch.sparse_coo else dense_a.to_sparse_csr()
+
+    def operand(rows):
+        data = torch.arange(1, 1 + rows * 4, device=device, dtype=dense_a.dtype)
+        if operand_kind == "column_slice":
+            return data.reshape(rows, 4)[:, 1:2]
+        if operand_kind == "multi_slice":
+            return data.reshape(rows, 4)[:, ::2]
+        if operand_kind == "transpose":
+            return data.reshape(4, rows).t()
+        if operand_kind == "singleton_stride":
+            return data.reshape(4, rows).t()[:, :1]
+        return data.reshape(rows, 4)
+
+    b = operand(3).requires_grad_()
+    upstream = operand(2)
+    calls = []
+    native_mm = torch.sparse.mm
+
+    def record_mm(sparse, dense):
+        calls.append((sparse.layout, dense))
+        return native_mm(sparse, dense)
+
+    monkeypatch.setattr(torch.sparse, "mm", record_mm)
+    actual = sparse_mm(a, b)
+    (grad_b,) = torch.autograd.grad(actual, b, upstream)
+    torch.testing.assert_close(actual, dense_a @ b)
+    torch.testing.assert_close(grad_b, dense_a.t() @ upstream)
+    assert len(calls) == 2
+    assert calls[0][0] == layout
+    assert calls[1][0] == (torch.sparse_csc if layout == torch.sparse_csr else torch.sparse_coo)
+    for (_, passed), original in zip(calls, (b, upstream)):
+        needs_copy = (
+            torch.version.cuda is not None
+            and Version(torch.version.cuda) < Version("12.6")
+            and a.is_cuda
+            and layout == torch.sparse_csr
+            and operand_kind == "column_slice"
+        )
+        if needs_copy:
+            assert passed.data_ptr() != original.data_ptr()
+            assert passed.is_contiguous()
+        else:
+            # Observe the actual native-call boundary: unchanged storage and strides.
+            assert passed.data_ptr() == original.data_ptr()
+            assert passed.stride() == original.stride()
+
+
+@pytest.mark.parametrize(
+    "cuda_version,expected",
+    [(None, False), ("11.8", True), ("12.4", True), ("12.5", True), ("12.6", False), ("13.2", False)],
+)
+def test_stride_guard_uses_cuda_build_not_torch_release(cuda_version, expected, monkeypatch):
+    from torchsparsegradutils import _compat
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(torch.version, "cuda", cuda_version)
+            patch.setattr(torch, "__version__", "2.99.0")
+            importlib.reload(_compat)
+            assert _compat._SPARSE_MM_STRIDE_WORKAROUND is expected
+    finally:
+        importlib.reload(_compat)
