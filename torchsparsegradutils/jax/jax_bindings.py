@@ -39,6 +39,8 @@ import torch
 from jax import Array as JAXArray, dlpack as jax_dlpack
 from torch.utils import dlpack as torch_dlpack  # kept for completeness
 
+from torchsparsegradutils._compat import sparse_mm_compat
+
 
 def j2t(x_jax: JAXArray) -> torch.Tensor:
     r"""Convert a JAX array to a PyTorch tensor (DLPack zero-copy if possible).
@@ -153,7 +155,7 @@ def spmm_t4j(A: torch.Tensor) -> Callable[[JAXArray], JAXArray]:
         )
 
     def closure(x: JAXArray) -> JAXArray:
-        return t2j(torch.sparse.mm(A, j2t(x)))
+        return t2j(sparse_mm_compat(A, j2t(x)))
 
     return closure
 

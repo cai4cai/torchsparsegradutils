@@ -113,3 +113,37 @@ def test_j2t_and_t2j_csr(device, jax_io_setup):
     x_j1_csr = tsgujax.t2j_csr(x_t_csr)
     assert x_j1_csr.shape == x_j_csr.shape
     assert np.allclose(np.asarray(x_j1_csr.todense()), np.asarray(x_j_csr.todense()))
+
+
+@pytest.mark.parametrize("layout", [torch.sparse_coo, torch.sparse_csr])
+@pytest.mark.parametrize("pattern", ["column", "slice", "transpose"])
+def test_spmm_t4j_compat_preserves_converted_operand(device, layout, pattern, monkeypatch):
+    import importlib
+
+    bindings = importlib.import_module("torchsparsegradutils.jax.jax_bindings")
+    jax_device = jax.devices("cpu" if device.type == "cpu" else "gpu")[0]
+    data = jax.device_put(np.arange(1, 13, dtype=np.float32).reshape(3, 4), jax_device)
+    x = data[:, 1:2] if pattern == "column" else data[:, ::2] if pattern == "slice" else data.T
+    dense_a = torch.arange(1, 1 + 2 * x.shape[0], device=device, dtype=torch.float32).reshape(2, x.shape[0])
+    a = dense_a.to_sparse_coo() if layout == torch.sparse_coo else dense_a.to_sparse_csr()
+    converted, operands = [], []
+    convert, native_mm = bindings.j2t, torch.sparse.mm
+
+    def record_conversion(value):
+        result = convert(value)
+        converted.append(result)
+        return result
+
+    def record_mm(sparse, dense):
+        operands.append(dense)
+        return native_mm(sparse, dense)
+
+    monkeypatch.setattr(bindings, "j2t", record_conversion)
+    monkeypatch.setattr(torch.sparse, "mm", record_mm)
+    result = bindings.spmm_t4j(a)(x)
+    assert len(converted) == len(operands) == 1
+    torch.testing.assert_close(convert(result), dense_a @ converted[0])
+    # These real JAX conversions are contiguous and need no workaround copy.
+    assert converted[0].is_contiguous()
+    assert operands[0].data_ptr() == converted[0].data_ptr()
+    assert operands[0].stride() == converted[0].stride()
