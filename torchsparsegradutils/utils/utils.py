@@ -491,6 +491,9 @@ def sparse_block_diag(*sparse_tensors: torch.Tensor) -> torch.Tensor:
     torch.Tensor
         A sparse tensor in the same layout as the inputs with shape
         ``(sum_i n_i, sum_i m_i)``, where each block ``i`` has shape ``(n_i, m_i)``.
+        With multiple COO inputs, the result is coalesced: coordinates are sorted
+        and duplicates are summed, including entries that sum to zero. A single
+        input is returned unchanged, preserving its existing coalesced flag.
 
     Raises
     ------
@@ -597,8 +600,9 @@ def sparse_block_diag(*sparse_tensors: torch.Tensor) -> torch.Tensor:
         cols_all = torch.cat(col_parts, dim=0)
         vals_all = torch.cat(val_parts, dim=0)
 
+        # Each block is coalesced; increasing row offsets preserve global ordering.
         return torch.sparse_coo_tensor(
-            torch.stack([rows_all, cols_all], dim=0), vals_all, size=(total_rows, total_cols)
+            torch.stack([rows_all, cols_all], dim=0), vals_all, size=(total_rows, total_cols), is_coalesced=True
         )
 
     # ---- CSR path ----

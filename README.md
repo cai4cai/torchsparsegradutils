@@ -146,7 +146,7 @@ from torchsparsegradutils import sparse_mm
 # Create sparse matrix in COO format
 indices = torch.tensor([[0, 1, 1], [2, 0, 2]], dtype=torch.int64)
 values = torch.tensor([3., 4., 5.], requires_grad=True)
-A = torch.sparse_coo_tensor(indices, values, (2, 3))
+A = torch.sparse_coo_tensor(indices, values, (2, 3)).coalesce()
 
 # Dense matrix
 B = torch.randn(3, 4, requires_grad=True)
