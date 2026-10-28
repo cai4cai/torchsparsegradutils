@@ -1,3 +1,5 @@
+import math
+
 import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, get_confidence_level
@@ -573,3 +575,46 @@ def test_native_unbatched_requirement():
 
     with pytest.raises(ValueError, match="scale_tril must be two-dimensional"):
         SparseMultivariateNormalNative(loc, batched_scale_tril)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("sample_shape", [(), (1,), (4,)])
+@pytest.mark.parametrize("strided_noise", [False, True])
+def test_native_rsample_compat_dense_gradients(device, sample_shape, strided_noise, monkeypatch):
+    import importlib
+
+    from torchsparsegradutils import _compat
+
+    module = importlib.import_module("torchsparsegradutils.distributions.sparse_multivariate_normal")
+    factor = torch.tensor([[2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [4.0, 2.0, 5.0]], device=device, dtype=torch.float64)
+    sparse_factor = factor.to_sparse_csr().requires_grad_()
+    dense_factor = factor.clone().requires_grad_()
+    loc = torch.zeros(3, device=device, dtype=factor.dtype, requires_grad=True)
+    dense_loc = loc.detach().clone().requires_grad_()
+    shape = (*sample_shape, 3)
+    count = math.prod(shape)
+    noise = torch.arange(1, 2 * count + 1, device=device, dtype=factor.dtype).reshape(*sample_shape, 6)[..., ::2]
+    if not strided_noise:
+        noise = noise.contiguous()
+    monkeypatch.setattr(module, "_standard_normal", lambda shape, dtype, device: noise)
+    native_mm = torch.sparse.mm
+    operands = []
+
+    def record_mm(a, b):
+        operands.append(b)
+        return native_mm(a, b)
+
+    monkeypatch.setattr(torch.sparse, "mm", record_mm)
+    actual = SparseMultivariateNormalNative(loc, sparse_factor).rsample(torch.Size(sample_shape))
+    expected = dense_loc + noise @ dense_factor.t()
+    weight = torch.arange(1, actual.numel() + 1, device=device, dtype=factor.dtype).reshape(actual.shape)
+    ga, gl = torch.autograd.grad(actual, (sparse_factor, loc), weight)
+    expected_a, expected_l = torch.autograd.grad(expected, (dense_factor, dense_loc), weight)
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(ga.to_dense(), expected_a * (factor != 0))
+    torch.testing.assert_close(gl, expected_l)
+    assert len(operands) == 1
+    needs_copy = (
+        _compat._SPARSE_MM_STRIDE_WORKAROUND and sparse_factor.is_cuda and strided_noise and sample_shape != (4,)
+    )
+    assert (operands[0].data_ptr() != noise.data_ptr()) == needs_copy
