@@ -100,6 +100,33 @@ def test_strategy_duplicate_value_gradients(device, batch_size, strategy):
 
 
 @pytest.mark.parametrize("device", DEVICES, ids=str)
+@pytest.mark.parametrize("strategy", ["when_needed", "forward"])
+def test_duplicate_coo_matrix_gradient_and_value_parameter_gradients(device, strategy):
+    # A[0, 0] = 2 + 3. For loss = 4 * A[0, 0], the matrix derivative is 4,
+    # and each independently trainable constructor value also has derivative 4.
+    indices = torch.tensor([[0, 0], [0, 0]], device=device)
+    values = torch.tensor([2.0, 3.0], dtype=torch.float64, device=device, requires_grad=True)
+    a = torch.sparse_coo_tensor(indices, values, (1, 1))
+    sparse_leaf = a.detach().requires_grad_()
+    b = torch.tensor([[4.0]], dtype=values.dtype, device=device)
+
+    sparse_mm(sparse_leaf, b, coalesce_strategy=strategy).sum().backward()
+    sparse_mm(a, b, coalesce_strategy=strategy).sum().backward()
+
+    # The sparse leaf stores two entries, but its matrix gradient stores one.
+    assert sparse_leaf._nnz() == 2
+    assert sparse_leaf.grad.is_coalesced()
+    assert sparse_leaf.grad._nnz() == 1
+    torch.testing.assert_close(sparse_leaf.grad.indices(), indices[:, :1])
+    torch.testing.assert_close(sparse_leaf.grad.values(), b.reshape(1))
+    # Constructor backward distributes the derivative without doubling it.
+    torch.testing.assert_close(values.grad, torch.tensor([4.0, 4.0], dtype=values.dtype, device=device))
+    assert not a.is_coalesced()
+    torch.testing.assert_close(a._indices(), indices)
+    torch.testing.assert_close(a._values(), values.detach())
+
+
+@pytest.mark.parametrize("device", DEVICES, ids=str)
 @pytest.mark.parametrize("batch_size", [None, 1, 3])
 @pytest.mark.parametrize("duplicates", [False, True])
 def test_default_rejects_unflagged_coo(device, batch_size, duplicates):

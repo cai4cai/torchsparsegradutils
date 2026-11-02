@@ -86,6 +86,14 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor, *, coalesce_strategy: CoalesceSt
     :func:`torch.sparse.mm` backprop), computing only gradients at the nonzero
     entries of :math:`A` to reduce memory use.
 
+    A sparse COO gradient need not preserve the input's stored entry count or
+    order. With duplicate coordinates, ``"when_needed"`` and ``"forward"``
+    return one gradient contribution per coordinate, rather than per duplicate
+    entry. To train individual stored values, keep the dense ``values`` tensor
+    passed to ``torch.sparse_coo_tensor`` as the leaf parameter. Constructor
+    backward gives each duplicate value the derivative at its coordinate.
+    Do not match a sparse leaf's gradient values to its input values by position.
+
     Unlike earlier versions, uncoalesced COO inputs raise by default. Batched
     inputs are checked before slicing. The existing block-diagonal batching
     assembly and gradient-splitting helpers may still coalesce internally,
