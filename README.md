@@ -156,9 +156,18 @@ C = sparse_mm(A, B)
 loss = C.sum()
 loss.backward()  # Gradients preserved in sparse format
 
-print(f"A.grad: {A.grad}")  # Sparse gradient
+print(f"values.grad: {values.grad}")  # Gradients for the original values
 print(f"B.grad: {B.grad}")  # Dense gradient
 ```
+
+COO inputs must be coalesced when gradient recording is enabled and `A.requires_grad`
+is true. Use `A.coalesce()` before calling `sparse_mm`, or pass
+`assume_unique=True` if you know the coordinates are unique (possibly unsorted).
+That promise is unchecked; duplicate coordinates can produce incorrect A gradients.
+Uncoalesced inputs are accepted for inference and B-only gradients (when A does
+not require gradients). The returned
+A gradient preserves the stored indices and ordering of the actual input, including
+batched COO. See the [quickstart](docs/source/quickstart.rst) for duplicate-value training.
 
 ### Sparse Linear System Solving
 

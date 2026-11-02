@@ -38,26 +38,39 @@ The core function :func:`~torchsparsegradutils.sparse_mm` performs memory-effici
 COO coalescing policy
 ~~~~~~~~~~~~~~~~~~~~
 
-``sparse_mm`` now rejects uncoalesced COO inputs by default, even when their
-coordinates are unique. Prepare a reused operator with ``A = A.coalesce()``,
-or select an explicit keyword-only ``coalesce_strategy``:
+``sparse_mm(A, B, *, assume_unique=False)`` requires a coalesced COO input
+when gradient recording is enabled and ``A.requires_grad`` is true. Otherwise,
+uncoalesced inputs are accepted, including for inference and B-only gradients
+when ``A.requires_grad`` is false.
+This check is disabled under ``torch.no_grad()`` and ``torch.inference_mode()``.
+Inference mode takes precedence even with ``torch.enable_grad()`` nested inside it.
 
-* ``"error"`` (default): require the caller's COO tensor to be coalesced.
-* ``"when_needed"``: prepare unique coordinates for sparse-input gradients on
-  CPU; on CUDA, coalesce in forward and reuse the native kernel's preparation.
-* ``"assume_unique"``: trust that coordinates are unique, without checking or
-  policy-driven sorting. Batched helpers may still coalesce, as described below.
-  Duplicates can produce incorrect gradients. Native CUDA
-  kernels may still sort internally.
-* ``"forward"``: coalesce before multiplication on every device and reuse the
-  prepared operand for backward.
+Compared with earlier releases, an uncoalesced trainable COO input now raises
+by default: call ``A.coalesce()`` first, or pass ``assume_unique=True`` only when
+coordinates are known to be unique.
 
-These options do not modify the caller's tensor. CSR inputs accept all four
-options without additional preparation. Batched COO validation happens before
-slicing. The existing block-diagonal assembly and gradient-splitting helpers
-may still coalesce internally, including with ``"assume_unique"``. Extracted items
-lose their coalesced flag, so pre-coalescing a batch does not avoid those sorts. Improving
-shared batching and its gradient memory use is deferred to a separate change.
+Pass ``A.coalesce()`` explicitly when A contains duplicate coordinates. To train
+the original values independently, keep them as the leaf parameter:
+
+.. code-block:: python
+
+   values = torch.tensor([2., 3.], requires_grad=True)
+   indices = torch.tensor([[0, 0], [0, 0]])
+   A = torch.sparse_coo_tensor(indices, values, (1, 1)).coalesce()
+   sparse_mm(A, torch.tensor([[4.]])).sum().backward()
+   # values.grad is tensor([4., 4.])
+
+Rebuild A from trainable values for each new training step. For a frozen operator,
+coalesce once and reuse it. If coordinates are already unique but unsorted,
+``assume_unique=True`` skips the check. This is an unchecked promise: duplicates
+can give incorrect A gradients. CSR inputs do not need this option.
+
+The returned A gradient preserves the stored indices, entry count and order of
+the actual input to ``sparse_mm``, including for batched COO. This does not promise
+to preserve duplicates in an earlier tensor that was coalesced before the call.
+Neither option modifies the input. Native kernels and block-diagonal batch
+assembly may still sort internally. Pre-coalescing a batch does not eliminate
+per-item sorting; broader batching performance and memory work remains separate.
 
 Batched Operations
 ~~~~~~~~~~~~~~~~~~

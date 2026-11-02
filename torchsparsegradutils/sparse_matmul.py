@@ -1,14 +1,12 @@
-from typing import Literal, cast
+from typing import cast
 
 import torch
 
 from torchsparsegradutils._compat import sparse_mm_compat
 from torchsparsegradutils.utils import sparse_block_diag, sparse_block_diag_split, stack_csr
 
-CoalesceStrategy = Literal["error", "when_needed", "assume_unique", "forward"]
 
-
-def sparse_mm(A: torch.Tensor, B: torch.Tensor, *, coalesce_strategy: CoalesceStrategy = "error") -> torch.Tensor:
+def sparse_mm(A: torch.Tensor, B: torch.Tensor, *, assume_unique: bool = False) -> torch.Tensor:
     r"""Sparse–dense matrix multiplication with memory-efficient gradients.
 
      Computes :math:`\mathbf{C} = \mathbf{A}\,\mathbf{B}` where
@@ -51,19 +49,16 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor, *, coalesce_strategy: CoalesceSt
         Right operand. Must have the same number of dimensions as ``A`` and
         matching batch size / inner dimension ``m``.
 
-    coalesce_strategy : {"error", "when_needed", "assume_unique", "forward"}, keyword-only
-        COO preparation policy; ignored for CSR after validating the option.
-        The default, ``"error"``, rejects an uncoalesced COO input, even if its
-        coordinates happen to be unique. Call ``A.coalesce()`` once and reuse it,
-        or explicitly choose another strategy.
-        ``"when_needed"`` coalesces for the sparse-input gradient on CPU and
-        before forward multiplication on CUDA, reusing native kernel preparation.
-        ``"assume_unique"`` skips policy-driven coalescing: the caller guarantees
-        unique coordinates, which may be unsorted. Existing batching helpers
-        may still coalesce (see Notes). Duplicates can give incorrect
-        gradients; this promise is not checked. Native kernels may still sort.
-        ``"forward"`` coalesces before multiplication on every device and reuses
-        that operand for backward. None of these policies mutates the input.
+    assume_unique : bool, keyword-only, default=False
+        For COO inputs, skip the coalesced-input check when True: the caller
+        guarantees unique coordinates, which may be unsorted. This promise is
+        not checked; duplicates can produce incorrect gradients for A.
+        By default, COO inputs must be flagged coalesced when gradient recording
+        is enabled and A.requires_grad is True. Call A.coalesce() before passing
+        it here, or use assume_unique=True only for known-unique coordinates.
+        Uncoalesced inputs are accepted for inference and for B-only
+        differentiation when A.requires_grad is False.
+        Ignored for CSR after validating that the option is a bool.
 
     Returns
     -------
@@ -75,8 +70,8 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor, *, coalesce_strategy: CoalesceSt
     ValueError
         If ``A`` or ``B`` are not tensors; if ranks are < 2 or not both 2D/3D;
         if layouts are incompatible (``A`` not COO/CSR or ``B`` not dense);
-        if shapes are incompatible (batch or inner dims); if the strategy is invalid;
-        or if ``"error"`` receives an uncoalesced COO tensor.
+        if shapes are incompatible (batch or inner dims); if assume_unique is not a bool;
+        or if an uncoalesced COO input requires a gradient without assume_unique=True.
     RuntimeError
         If the underlying sparse matmul fails.
 
@@ -86,21 +81,29 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor, *, coalesce_strategy: CoalesceSt
     :func:`torch.sparse.mm` backprop), computing only gradients at the nonzero
     entries of :math:`A` to reduce memory use.
 
-    A sparse COO gradient need not preserve the input's stored entry count or
-    order. With duplicate coordinates, ``"when_needed"`` and ``"forward"``
-    return one gradient contribution per coordinate, rather than per duplicate
-    entry. To train individual stored values, keep the dense ``values`` tensor
-    passed to ``torch.sparse_coo_tensor`` as the leaf parameter. Constructor
-    backward gives each duplicate value the derivative at its coordinate.
-    Do not match a sparse leaf's gradient values to its input values by position.
+    The gradient returned for a valid COO input preserves its stored coordinates,
+    entry count, ordering and coalesced flag, including explicit zero entries.
+    This applies to the tensor passed to sparse_mm, not to an earlier tensor
+    containing duplicates that the caller coalesced. To train individual duplicate
+    values, keep the dense values tensor as the leaf parameter and pass
+    torch.sparse_coo_tensor(indices, values, shape).coalesce() here. PyTorch
+    distributes the coordinate derivative to each original value during backward.
 
-    Unlike earlier versions, uncoalesced COO inputs raise by default. Batched
-    inputs are checked before slicing. The existing block-diagonal batching
-    assembly and gradient-splitting helpers may still coalesce internally,
-    including with ``"assume_unique"``. Extracted items lose their coalesced flag,
-    so preparing a batch once does not avoid these repeated sorts. This limitation
-    is independent of the selected policy and will be addressed separately.
-    Pre-coalescing a reused unbatched operator avoids repeated sorting.
+    Compared with earlier releases, uncoalesced trainable COO inputs now raise
+    by default. Pass A.coalesce(), or assume_unique=True for known-unique indices.
+
+    Outside inference_mode(), the default check uses torch.is_grad_enabled()
+    and A.requires_grad. It is disabled under no_grad(), but cannot anticipate a later
+    autograd.grad call that requests only B while A also requires gradients.
+    With reentrant checkpointing, validation occurs during backward recomputation.
+    Inference mode takes precedence even if enable_grad() is nested inside it.
+
+    Neither option mutates the input or explicitly coalesces unbatched operands.
+    Native kernels and the existing block-diagonal batching assembly may still
+    sort internally. Extracted batch items may lose their coalesced flag, so
+    preparing a batch once does not avoid those sorts. The original COO indices
+    are retained for its gradient, independently of the assembly's ordering.
+    Broader batching performance and memory improvements are separate work.
 
     See Also
     --------
@@ -160,15 +163,25 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor, *, coalesce_strategy: CoalesceSt
     if A.size(-1) != B.size(-2):
         raise ValueError(f"Incompatible inner dimensions: A[..., {A.size(-1)}] vs B[..., {B.size(-2)}]")
 
-    if coalesce_strategy not in ("error", "when_needed", "assume_unique", "forward"):
-        raise ValueError("coalesce_strategy must be 'error', 'when_needed', 'assume_unique', or 'forward'")
-    if A.layout == torch.sparse_coo and coalesce_strategy == "error" and not A.is_coalesced():
+    if not isinstance(assume_unique, bool):
+        raise ValueError("assume_unique must be a bool")
+    if torch.is_inference_mode_enabled():
+        # Unlike native ops, Function.apply can attach a grad_fn when enable_grad
+        # is nested inside inference_mode. Keep inference calls gradient-free.
+        with torch.no_grad():
+            return cast(torch.Tensor, SparseMatMul.apply(A, B))
+    if (
+        A.layout == torch.sparse_coo
+        and torch.is_grad_enabled()
+        and A.requires_grad
+        and not assume_unique
+        and not A.is_coalesced()
+    ):
         raise ValueError(
-            "Uncoalesced COO input: call A.coalesce() first or explicitly select "
-            "coalesce_strategy='when_needed', 'forward', or 'assume_unique' "
-            "(only if coordinates are unique)."
+            "Uncoalesced COO input requiring a gradient: call A.coalesce() first "
+            "or pass assume_unique=True only if coordinates are unique."
         )
-    return cast(torch.Tensor, SparseMatMul.apply(A, B, coalesce_strategy))
+    return cast(torch.Tensor, SparseMatMul.apply(A, B))
 
 
 class SparseMatMul(torch.autograd.Function):
@@ -181,27 +194,29 @@ class SparseMatMul(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, A, B, coalesce_strategy):
-        ctx.coalesce_strategy = coalesce_strategy
+    def forward(ctx, A, B):
         ctx.batch_size = B.size()[0] if B.dim() == 3 else None
         ctx.A_shape = A.size()  # (b), n, m
         ctx.B_shape = B.size()  # (b), m, p
 
+        # Preserve COO storage order before batch assembly sorts the slices.
+        # Save only indices, not another copy of the original values.
+        coo_indices = A._indices() if A.layout == torch.sparse_coo and ctx.needs_input_grad[0] else None
+        ctx.coo_is_coalesced = A.is_coalesced() if A.layout == torch.sparse_coo else None
         A, B = A.detach(), B.detach()
         if ctx.batch_size is not None:
-            A = sparse_block_diag(*A)
+            if torch.is_inference_mode_enabled() and not A.is_inference():
+                # Sparse unbind can fail for tensors created outside inference_mode
+                # (observed on 2.5 and 2.14 nightly). Keep assembly gradient-free.
+                with torch.inference_mode(False), torch.no_grad():
+                    A = sparse_block_diag(*A)
+            else:
+                A = sparse_block_diag(*A)
             B = B.reshape(-1, B.size(-1))
-
-        # Apply the explicit policy after the existing block-diagonal assembly.
-        # Native CUDA COO multiplication coalesces internally in when_needed mode.
-        if A.layout == torch.sparse_coo and (
-            coalesce_strategy == "forward" or (coalesce_strategy == "when_needed" and A.is_cuda)
-        ):
-            A = A.coalesce()
 
         x = sparse_mm_compat(A, B)
 
-        ctx.save_for_backward(A, B)
+        ctx.save_for_backward(A, B, coo_indices)
 
         if ctx.batch_size is not None:
             x = x.view(ctx.batch_size, ctx.A_shape[-2], ctx.B_shape[-1])
@@ -210,7 +225,7 @@ class SparseMatMul(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad):  # type: ignore[override]
-        A, B = ctx.saved_tensors
+        A, B, coo_indices = ctx.saved_tensors
 
         gradA = None
         gradB = None
@@ -227,13 +242,14 @@ class SparseMatMul(torch.autograd.Function):
 
             # We start by getting the i and j indices:
 
-            # Return one gradient per coordinate; COO construction distributes it
-            # to duplicate input values. Keep A unchanged for the RHS gradient.
-            A_for_grad = (
-                A.coalesce() if A.layout == torch.sparse_coo and ctx.coalesce_strategy != "assume_unique" else A
-            )
             if A.layout == torch.sparse_coo:
-                A_row_idx, A_col_idx = A_for_grad._indices()
+                if ctx.batch_size is None:
+                    A_row_idx, A_col_idx = coo_indices
+                else:
+                    batch_idx, row_idx, col_idx = coo_indices
+                    # Address block-diagonal rows in the original stored order.
+                    A_row_idx = batch_idx * ctx.A_shape[-2] + row_idx
+                    A_col_idx = batch_idx * ctx.A_shape[-1] + col_idx
             elif A.layout == torch.sparse_csr:
                 A_col_idx = A.col_indices()
                 A_crow_idx = A.crow_indices()
@@ -257,19 +273,13 @@ class SparseMatMul(torch.autograd.Function):
 
             # Create a sparse matrix of the gradient with respect to the nnz of A
             if A.layout == torch.sparse_coo:
-                gradA = torch.sparse_coo_tensor(
-                    A_for_grad._indices(), gradA, A.shape, is_coalesced=A_for_grad.is_coalesced()
-                )
+                gradA = torch.sparse_coo_tensor(coo_indices, gradA, ctx.A_shape, is_coalesced=ctx.coo_is_coalesced)
             elif A.layout == torch.sparse_csr:
                 gradA = torch.sparse_csr_tensor(A.crow_indices(), A_col_idx, gradA, A.shape)
 
-            if ctx.batch_size is not None:
+            if ctx.batch_size is not None and A.layout == torch.sparse_csr:
                 shapes = ctx.A_shape[0] * (ctx.A_shape[-2:],)
-                gradA = sparse_block_diag_split(gradA, *shapes)
-                if A.layout == torch.sparse_coo:
-                    gradA = torch.stack([*gradA])
-                else:
-                    gradA = stack_csr([*gradA])  # NOTE: torch.stack does not work for csr tensors
+                gradA = stack_csr(list(sparse_block_diag_split(gradA, *shapes)))
 
         # -------- Only compute gradB if needed --------
         if ctx.needs_input_grad[1]:
@@ -284,4 +294,4 @@ class SparseMatMul(torch.autograd.Function):
             if ctx.batch_size is not None:
                 gradB = gradB.view(ctx.B_shape)
 
-        return gradA, gradB, None
+        return gradA, gradB
