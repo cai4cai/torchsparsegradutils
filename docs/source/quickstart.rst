@@ -68,9 +68,11 @@ can give incorrect A gradients. CSR inputs do not need this option.
 The returned A gradient preserves the stored indices, entry count and order of
 the actual input to ``sparse_mm``, including for batched COO. This does not promise
 to preserve duplicates in an earlier tensor that was coalesced before the call.
-Neither option modifies the input. Native kernels and block-diagonal batch
-assembly may still sort internally. Pre-coalescing a batch does not eliminate
-per-item sorting; broader batching performance and memory work remains separate.
+Neither option modifies the input. Native kernels may still sort internally.
+For COO batches with more than one item, block-diagonal assembly coalesces
+extracted items that are not flagged as coalesced. Extracted items may lose that
+flag, so pre-coalescing a batch may not avoid further per-item coalescing.
+Broader batching performance and memory work remains separate.
 
 Batched Operations
 ~~~~~~~~~~~~~~~~~~

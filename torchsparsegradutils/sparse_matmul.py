@@ -99,9 +99,10 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor, *, assume_unique: bool = False) 
     Inference mode takes precedence even if enable_grad() is nested inside it.
 
     Neither option mutates the input or explicitly coalesces unbatched operands.
-    Native kernels and the existing block-diagonal batching assembly may still
-    sort internally. Extracted batch items may lose their coalesced flag, so
-    preparing a batch once does not avoid those sorts. The original COO indices
+    Native kernels may still sort internally. For COO batches with more than
+    one item, block-diagonal assembly coalesces extracted items that are not
+    flagged as coalesced. Extracted items may lose that flag, so pre-coalescing
+    a batch may not avoid further per-item coalescing. The original COO indices
     are retained for its gradient, independently of the assembly's ordering.
     Broader batching performance and memory improvements are separate work.
 
@@ -199,7 +200,7 @@ class SparseMatMul(torch.autograd.Function):
         ctx.A_shape = A.size()  # (b), n, m
         ctx.B_shape = B.size()  # (b), m, p
 
-        # Preserve COO storage order before batch assembly sorts the slices.
+        # Preserve COO storage order before batch assembly may reorder the slices.
         # Save only indices, not another copy of the original values.
         coo_indices = A._indices() if A.layout == torch.sparse_coo and ctx.needs_input_grad[0] else None
         ctx.coo_is_coalesced = A.is_coalesced() if A.layout == torch.sparse_coo else None

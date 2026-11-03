@@ -310,3 +310,30 @@ def test_sparse_block_diag_coalesced_contract(device, empty_shape):
     actual_grad = torch.autograd.grad(weighted_actual, values, retain_graph=True)[0]
     expected_grad = torch.autograd.grad((expected * weights).sum(), values)[0]
     torch.testing.assert_close(actual_grad, expected_grad)
+
+
+def test_sparse_block_diag_skips_coalescing_flagged_blocks(device, monkeypatch):
+    a = torch.sparse_coo_tensor(
+        torch.tensor([[0, 1], [2, 0]], device=device),
+        torch.tensor([2.0, 3.0], device=device),
+        (2, 3),
+    ).coalesce()
+    b = torch.sparse_coo_tensor(
+        torch.tensor([[0, 2], [1, 0]], device=device),
+        torch.tensor([4.0, 5.0], device=device),
+        (3, 2),
+    ).coalesce()
+    expected = torch.block_diag(a.to_dense(), b.to_dense())
+
+    def unexpected_coalesce(self):
+        pytest.fail("Already-coalesced blocks must not be coalesced again")
+
+    # Test the helper's contract without depending on PyTorch's batch-slice flags.
+    with monkeypatch.context() as patch, torch.sparse.check_sparse_tensor_invariants():
+        patch.setattr(torch.Tensor, "coalesce", unexpected_coalesce)
+        actual = sparse_block_diag(a, b)
+
+    assert actual.is_coalesced()
+    assert actual._nnz() == 4
+    torch.testing.assert_close(actual.indices(), torch.tensor([[0, 1, 2, 4], [2, 0, 4, 3]], device=device))
+    torch.testing.assert_close(actual.to_dense(), expected)
