@@ -224,6 +224,52 @@ class TestCovNagaoTest:
 class TestIntegrationBehavior:
     """Integration tests for expected statistical behavior."""
 
+    def test_large_sample_true_model_acceptance(self, device):
+        """A fixed large sample exercises acceptance, not repeated-sample calibration."""
+        n, p, confidence = 100_000, 3, 0.95
+        generator = torch.Generator(device="cpu").manual_seed(0)
+        true_mean = torch.tensor([0.5, -1.0, 2.0], dtype=torch.float64)
+        factor = torch.tensor([[1.0, 0.0, 0.0], [0.3, 1.2, 0.0], [-0.2, 0.4, 0.8]], dtype=torch.float64)
+        true_cov = factor @ factor.T
+        samples = torch.randn(n, p, generator=generator, dtype=torch.float64) @ factor.T + true_mean
+
+        # Independent moments and algebra, as in the smaller sampled tests.
+        sample_array = samples.numpy()
+        reference_cov = np.cov(sample_array, rowvar=False, ddof=1)
+        difference = sample_array.mean(axis=0) - true_mean.numpy()
+        expected_mean = n * difference @ np.linalg.solve(reference_cov, difference)
+        eigenvalues = eigvalsh(reference_cov, true_cov.numpy())
+        # Pin the current multiplier; the Nagao n - 1 correction is separate work.
+        expected_cov = n / 2 * np.sum((eigenvalues - 1) ** 2)
+        mean_threshold = p * (n - 1) / (n - p) * f.ppf(confidence, p, n - p)
+        cov_threshold = chi2.ppf(confidence, p * (p + 1) / 2)
+        # Seed 0 was selected for comfortable acceptance; other seeds can legitimately reject.
+        # A changed RNG stream may require reviewing this fixture independently of the helpers.
+        assert 0 < expected_mean < 0.8 * mean_threshold, (
+            f"Seed-0 mean fixture lost its acceptance margin: {expected_mean=}, {mean_threshold=}. "
+            "Check for an RNG stream change before attributing this to the helper."
+        )
+        assert 0 < expected_cov < 0.8 * cov_threshold, (
+            f"Seed-0 covariance fixture lost its acceptance margin: {expected_cov=}, {cov_threshold=}. "
+            "Check for an RNG stream change before attributing this to the helper."
+        )
+
+        device_samples = samples.to(device)
+        sample_mean = device_samples.mean(dim=0).unsqueeze(0)
+        sample_cov = torch.cov(device_samples.T).unsqueeze(0)
+        mean_result, mean_stat, actual_mean_threshold = mean_hotelling_t2_test(
+            sample_mean, true_mean.to(device).unsqueeze(0), sample_cov, n, confidence_level=confidence
+        )
+        cov_result, cov_stat, actual_cov_threshold = cov_nagao_test(
+            sample_cov, true_cov.to(device).unsqueeze(0), n, confidence_level=confidence
+        )
+        np.testing.assert_allclose(mean_stat.cpu().numpy(), [expected_mean], rtol=1e-10, atol=1e-10)
+        np.testing.assert_allclose(cov_stat.cpu().numpy(), [expected_cov], rtol=1e-10, atol=1e-10)
+        assert actual_mean_threshold == pytest.approx(mean_threshold, rel=1e-12)
+        assert actual_cov_threshold == pytest.approx(cov_threshold, rel=1e-12)
+        assert mean_result.all().item()
+        assert cov_result.all().item()
+
     def test_confidence_level_ordering(self):
         """Test that higher confidence levels are more permissive."""
         p, batch_size, n = 3, 1, 1000
