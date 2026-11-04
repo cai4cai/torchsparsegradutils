@@ -184,9 +184,8 @@ class TestCovNagaoTest:
             empirical_cov = np.cov(sample_array[:, i, :], rowvar=False, ddof=1)
             # Eigenvalues of (empirical, reference) equal those of the whitened covariance.
             eigenvalues = eigvalsh(empirical_cov, reference_cov[i].numpy())
-            # Preserve the helper's sample-size multiplier, not the residual n - 1
-            # degrees of freedom of this unbiased covariance estimate.
-            expected.append(n / 2 * np.sum((eigenvalues - 1) ** 2))
+            # Nagao uses residual degrees of freedom after estimating the mean.
+            expected.append((n - 1) / 2 * np.sum((eigenvalues - 1) ** 2))
         expected = np.array(expected)
         expected_threshold = chi2.ppf(confidence, p * (p + 1) / 2)
 
@@ -200,6 +199,26 @@ class TestCovNagaoTest:
         np.testing.assert_array_equal(result.cpu().numpy(), expected <= expected_threshold)
         if covariance_scale != 1:
             assert not result.any().item()
+
+    @pytest.mark.parametrize("n, expected_stat, accepted", [(5, 6.125, True), (9, 12.25, False)])
+    def test_residual_degrees_of_freedom(self, device, n, expected_stat, accepted):
+        """An unbiased variance of 11/4 gives (n-1)/2 * (7/4)^2.
+
+        At n=5 the corrected statistic is below the 99% chi-square cutoff,
+        while the old n/2 multiplier gives 7.65625 and incorrectly rejects.
+        """
+        empirical = torch.tensor([[[2.75]]], device=device, dtype=torch.float64)
+        reference = torch.ones_like(empirical)
+        result, statistic, threshold = cov_nagao_test(empirical, reference, n, confidence_level=0.99)
+        torch.testing.assert_close(statistic, torch.tensor([expected_stat], dtype=torch.float64), rtol=0, atol=0)
+        assert threshold == pytest.approx(chi2.ppf(0.99, 1))
+        assert result.item() == accepted
+
+    @pytest.mark.parametrize("n", [-1, 0, 1])
+    def test_covariance_requires_at_least_two_observations(self, n):
+        covariance = torch.ones(1, 1, 1)
+        with pytest.raises(ValueError, match="at least 2 observations"):
+            cov_nagao_test(covariance, covariance, n)
 
     def test_return_types_and_shapes_cov(self):
         """Test that return types and shapes are correct for covariance test."""
@@ -239,8 +258,8 @@ class TestIntegrationBehavior:
         difference = sample_array.mean(axis=0) - true_mean.numpy()
         expected_mean = n * difference @ np.linalg.solve(reference_cov, difference)
         eigenvalues = eigvalsh(reference_cov, true_cov.numpy())
-        # Pin the current multiplier; the Nagao n - 1 correction is separate work.
-        expected_cov = n / 2 * np.sum((eigenvalues - 1) ** 2)
+        # Account for estimating the mean in the unbiased sample covariance.
+        expected_cov = (n - 1) / 2 * np.sum((eigenvalues - 1) ** 2)
         mean_threshold = p * (n - 1) / (n - p) * f.ppf(confidence, p, n - p)
         cov_threshold = chi2.ppf(confidence, p * (p + 1) / 2)
         # Seed 0 was selected for comfortable acceptance; other seeds can legitimately reject.
@@ -308,9 +327,9 @@ class TestIntegrationBehavior:
             sample_mean, true_mean, sample_cov, n, confidence_level=confidence
         )
         cov_result, cov_stat, cov_threshold = cov_nagao_test(sample_cov, true_cov, n, confidence_level=confidence)
-        # T² = n * sum(mean_i² / variance_i); Nagao = n/2 * sum((variance_i - 1)²).
+        # T² = n * sum(mean_i² / variance_i); Nagao = (n-1)/2 * sum((variance_i - 1)²).
         torch.testing.assert_close(mean_stat.cpu(), torch.tensor([35 / 6, 550 / 3], dtype=torch.float64))
-        torch.testing.assert_close(cov_stat.cpu(), torch.tensor([4.0, 250.0], dtype=torch.float64))
+        torch.testing.assert_close(cov_stat.cpu(), torch.tensor([3.96, 247.5], dtype=torch.float64))
         assert mean_threshold == pytest.approx(99 / 49 * f.ppf(confidence, 2, 98))
         assert cov_threshold == pytest.approx(chi2.ppf(confidence, 3))
         # The first mean falls outside the 90% region but inside the 99% region.

@@ -481,6 +481,7 @@ Results are automatically saved to `torchsparsegradutils/benchmarks/results/` as
   - Uses F-distribution for threshold calculation with proper degrees of freedom
   - Higher confidence levels create larger (more permissive) acceptance regions
 - **`cov_nagao_test(emp_cov, ref_cov, n, confidence_level=0.95)`**: Nagao's test for covariance matrix equality using confidence regions
+  - `emp_cov` is the unbiased covariance centred on the sample mean (as returned by `torch.cov` with `correction=1`); `n` is the number of observations, at least 2. The statistic uses `(n - 1) / 2` to account for estimating the mean.
   - Tests whether hypothesized covariance matrix is consistent with empirical covariance
   - Uses χ² distribution with appropriate degrees of freedom
   - Standardizes covariance matrices for improved numerical stability
