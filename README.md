@@ -146,7 +146,7 @@ from torchsparsegradutils import sparse_mm
 # Create sparse matrix in COO format
 indices = torch.tensor([[0, 1, 1], [2, 0, 2]], dtype=torch.int64)
 values = torch.tensor([3., 4., 5.], requires_grad=True)
-A = torch.sparse_coo_tensor(indices, values, (2, 3))
+A = torch.sparse_coo_tensor(indices, values, (2, 3)).coalesce()
 
 # Dense matrix
 B = torch.randn(3, 4, requires_grad=True)
@@ -156,9 +156,18 @@ C = sparse_mm(A, B)
 loss = C.sum()
 loss.backward()  # Gradients preserved in sparse format
 
-print(f"A.grad: {A.grad}")  # Sparse gradient
+print(f"values.grad: {values.grad}")  # Gradients for the original values
 print(f"B.grad: {B.grad}")  # Dense gradient
 ```
+
+COO inputs must be coalesced when gradient recording is enabled and `A.requires_grad`
+is true. Use `A.coalesce()` before calling `sparse_mm`, or pass
+`assume_unique=True` if you know the coordinates are unique (possibly unsorted).
+That promise is unchecked; duplicate coordinates can produce incorrect A gradients.
+Uncoalesced inputs are accepted for inference and B-only gradients (when A does
+not require gradients). The returned
+A gradient preserves the stored indices and ordering of the actual input, including
+batched COO. See the [quickstart](docs/source/quickstart.rst) for duplicate-value training.
 
 ### Sparse Linear System Solving
 
@@ -472,6 +481,7 @@ Results are automatically saved to `torchsparsegradutils/benchmarks/results/` as
   - Uses F-distribution for threshold calculation with proper degrees of freedom
   - Higher confidence levels create larger (more permissive) acceptance regions
 - **`cov_nagao_test(emp_cov, ref_cov, n, confidence_level=0.95)`**: Nagao's test for covariance matrix equality using confidence regions
+  - `emp_cov` is the unbiased covariance centred on the sample mean (as returned by `torch.cov` with `correction=1`); `n` is the number of observations, at least 2. The statistic uses `(n - 1) / 2` to account for estimating the mean.
   - Tests whether hypothesized covariance matrix is consistent with empirical covariance
   - Uses χ² distribution with appropriate degrees of freedom
   - Standardizes covariance matrices for improved numerical stability

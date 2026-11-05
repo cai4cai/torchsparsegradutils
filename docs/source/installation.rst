@@ -84,7 +84,7 @@ To verify your installation:
    # Create a simple sparse matrix
    indices = torch.tensor([[0, 1], [1, 0]])
    values = torch.tensor([1.0, 2.0])
-   A = torch.sparse_coo_tensor(indices, values, (2, 2))
+   A = torch.sparse_coo_tensor(indices, values, (2, 2)).coalesce()
    B = torch.randn(2, 3)
 
    result = sparse_mm(A, B)
