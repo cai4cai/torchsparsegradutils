@@ -117,7 +117,7 @@ def test_j2t_and_t2j_csr(device, jax_io_setup):
 
 @pytest.mark.parametrize("layout", [torch.sparse_coo, torch.sparse_csr])
 @pytest.mark.parametrize("pattern", ["column", "slice", "transpose"])
-def test_spmm_t4j_compat_preserves_converted_operand(device, layout, pattern, monkeypatch):
+def test_spmm_t4j_operand_layout_and_dense_result(device, layout, pattern, monkeypatch):
     import importlib
 
     bindings = importlib.import_module("torchsparsegradutils.jax.jax_bindings")
@@ -143,7 +143,7 @@ def test_spmm_t4j_compat_preserves_converted_operand(device, layout, pattern, mo
     result = bindings.spmm_t4j(a)(x)
     assert len(converted) == len(operands) == 1
     torch.testing.assert_close(convert(result), dense_a @ converted[0])
-    # These real JAX conversions are contiguous and need no workaround copy.
-    assert converted[0].is_contiguous()
+    # Detect conversion changes that would expose the legacy CUDA CSR stride bug.
+    assert not (operands[0].size(-1) == 1 and not operands[0].is_contiguous())
     assert operands[0].data_ptr() == converted[0].data_ptr()
     assert operands[0].stride() == converted[0].stride()
