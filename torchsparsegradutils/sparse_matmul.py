@@ -89,8 +89,8 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor, *, assume_unique: bool = False) 
     torch.sparse_coo_tensor(indices, values, shape).coalesce() here. PyTorch
     distributes the coordinate derivative to each original value during backward.
 
-    Compared with earlier releases, uncoalesced trainable COO inputs now raise
-    by default. Pass A.coalesce(), or assume_unique=True for known-unique indices.
+    To satisfy the COO input requirement, pass A.coalesce(), or use
+    assume_unique=True only for known-unique indices.
 
     Outside inference_mode(), the default check uses torch.is_grad_enabled()
     and A.requires_grad. It is disabled under no_grad(), but cannot anticipate a later
@@ -104,7 +104,6 @@ def sparse_mm(A: torch.Tensor, B: torch.Tensor, *, assume_unique: bool = False) 
     flagged as coalesced. Extracted items may lose that flag, so pre-coalescing
     a batch may not avoid further per-item coalescing. The original COO indices
     are retained for its gradient, independently of the assembly's ordering.
-    Broader batching performance and memory improvements are separate work.
 
     See Also
     --------

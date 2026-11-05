@@ -45,9 +45,8 @@ when ``A.requires_grad`` is false.
 This check is disabled under ``torch.no_grad()`` and ``torch.inference_mode()``.
 Inference mode takes precedence even with ``torch.enable_grad()`` nested inside it.
 
-Compared with earlier releases, an uncoalesced trainable COO input now raises
-by default: call ``A.coalesce()`` first, or pass ``assume_unique=True`` only when
-coordinates are known to be unique.
+To satisfy the COO input requirement, call ``A.coalesce()`` first, or pass
+``assume_unique=True`` only when coordinates are known to be unique.
 
 Pass ``A.coalesce()`` explicitly when A contains duplicate coordinates. To train
 the original values independently, keep them as the leaf parameter:
@@ -72,7 +71,6 @@ Neither option modifies the input. Native kernels may still sort internally.
 For COO batches with more than one item, block-diagonal assembly coalesces
 extracted items that are not flagged as coalesced. Extracted items may lose that
 flag, so pre-coalescing a batch may not avoid further per-item coalescing.
-Broader batching performance and memory work remains separate.
 
 Batched Operations
 ~~~~~~~~~~~~~~~~~~
