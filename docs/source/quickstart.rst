@@ -36,7 +36,7 @@ The core function :func:`~torchsparsegradutils.sparse_mm` performs memory-effici
    print(f"A gradient nnz: {A.grad._nnz()}")  # Number of non-zeros
 
 COO coalescing policy
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
 
 ``sparse_mm(A, B, *, assume_unique=False)`` requires a coalesced COO input
 when gradient recording is enabled and ``A.requires_grad`` is true. Otherwise,
