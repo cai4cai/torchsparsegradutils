@@ -7,7 +7,6 @@ from torch.distributions.distribution import Distribution
 from torch.distributions.utils import _standard_normal
 
 from torchsparsegradutils import sparse_mm as spmm, sparse_triangular_solve as spts
-from torchsparsegradutils._compat import sparse_mm_compat
 
 # from .contraints import sparse_strictly_lower_triangular
 
@@ -397,7 +396,7 @@ class SparseMultivariateNormalNative(Distribution):
 
     This distribution models :math:`x \sim \mathcal N(\mu, \Sigma)` where the
     covariance is parameterized via a sparse Cholesky factor
-    :math:`\Sigma = L L^\top`. Sampling uses ``torch.sparse.mm`` through a stride-compatibility helper so
+    :math:`\Sigma = L L^\top`. Sampling uses ``torch.sparse.mm`` directly so
     gradients propagate to the CSR values of ``L``.
 
     **Scope & limitations**
@@ -555,10 +554,10 @@ class SparseMultivariateNormalNative(Distribution):
         # We need to use torch.sparse.mm(scale_tril, eps.T).T
         if eps.dim() == 1:
             # Single sample case
-            x = sparse_mm_compat(self._scale_tril, eps.unsqueeze(-1)).squeeze(-1)
+            x = torch.sparse.mm(self._scale_tril, eps.unsqueeze(-1)).squeeze(-1)
         else:
             # Multiple samples case
-            x = sparse_mm_compat(self._scale_tril, eps.t()).t()
+            x = torch.sparse.mm(self._scale_tril, eps.t()).t()
 
         return self.loc + x
 

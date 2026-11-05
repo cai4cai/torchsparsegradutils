@@ -1,5 +1,3 @@
-import math
-
 import pytest
 import torch
 from test_config import DEVICES, INDEX_DTYPES, VALUE_DTYPES, get_confidence_level
@@ -579,11 +577,9 @@ def test_native_unbatched_requirement():
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("sample_shape", [(), (1,), (4,)])
-@pytest.mark.parametrize("strided_noise", [False, True])
-def test_native_rsample_compat_dense_gradients(device, sample_shape, strided_noise, monkeypatch):
+def test_native_rsample_operand_layout_and_dense_gradients(device, sample_shape, monkeypatch):
+    """Real generated noise never supplies a strided single column to native mm."""
     import importlib
-
-    from torchsparsegradutils import _compat
 
     module = importlib.import_module("torchsparsegradutils.distributions.sparse_multivariate_normal")
     factor = torch.tensor([[2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [4.0, 2.0, 5.0]], device=device, dtype=torch.float64)
@@ -591,12 +587,15 @@ def test_native_rsample_compat_dense_gradients(device, sample_shape, strided_noi
     dense_factor = factor.clone().requires_grad_()
     loc = torch.zeros(3, device=device, dtype=factor.dtype, requires_grad=True)
     dense_loc = loc.detach().clone().requires_grad_()
-    shape = (*sample_shape, 3)
-    count = math.prod(shape)
-    noise = torch.arange(1, 2 * count + 1, device=device, dtype=factor.dtype).reshape(*sample_shape, 6)[..., ::2]
-    if not strided_noise:
-        noise = noise.contiguous()
-    monkeypatch.setattr(module, "_standard_normal", lambda shape, dtype, device: noise)
+    standard_normal = module._standard_normal
+    generated_noise = []
+
+    def record_noise(shape, dtype, device):
+        noise = standard_normal(shape, dtype=dtype, device=device)
+        generated_noise.append(noise)
+        return noise
+
+    monkeypatch.setattr(module, "_standard_normal", record_noise)
     native_mm = torch.sparse.mm
     operands = []
 
@@ -606,6 +605,11 @@ def test_native_rsample_compat_dense_gradients(device, sample_shape, strided_noi
 
     monkeypatch.setattr(torch.sparse, "mm", record_mm)
     actual = SparseMultivariateNormalNative(loc, sparse_factor).rsample(torch.Size(sample_shape))
+    assert len(generated_noise) == len(operands) == 1
+    noise = generated_noise[0]
+    # A future noise-layout change must not expose the legacy CUDA CSR stride bug.
+    assert not (operands[0].size(-1) == 1 and not operands[0].is_contiguous())
+    assert operands[0].data_ptr() == noise.data_ptr()
     expected = dense_loc + noise @ dense_factor.t()
     weight = torch.arange(1, actual.numel() + 1, device=device, dtype=factor.dtype).reshape(actual.shape)
     ga, gl = torch.autograd.grad(actual, (sparse_factor, loc), weight)
@@ -613,8 +617,3 @@ def test_native_rsample_compat_dense_gradients(device, sample_shape, strided_noi
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(ga.to_dense(), expected_a * (factor != 0))
     torch.testing.assert_close(gl, expected_l)
-    assert len(operands) == 1
-    needs_copy = (
-        _compat._SPARSE_MM_STRIDE_WORKAROUND and sparse_factor.is_cuda and strided_noise and sample_shape != (4,)
-    )
-    assert (operands[0].data_ptr() != noise.data_ptr()) == needs_copy
