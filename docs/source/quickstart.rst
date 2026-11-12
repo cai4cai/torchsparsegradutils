@@ -19,7 +19,7 @@ The core function :func:`~torchsparsegradutils.sparse_mm` performs memory-effici
    # Create a sparse matrix in COO format
    indices = torch.tensor([[0, 1, 1], [2, 0, 2]], dtype=torch.int64)
    values = torch.tensor([3., 4., 5.])
-   A = torch.sparse_coo_tensor(indices, values, (2, 3))
+   A = torch.sparse_coo_tensor(indices, values, (2, 3)).coalesce()
    A.requires_grad_(True)
 
    # Create a dense matrix
@@ -34,6 +34,43 @@ The core function :func:`~torchsparsegradutils.sparse_mm` performs memory-effici
    loss.backward()
    print(f"A gradient is sparse: {A.grad.is_sparse}")  # True
    print(f"A gradient nnz: {A.grad._nnz()}")  # Number of non-zeros
+
+COO coalescing policy
+~~~~~~~~~~~~~~~~~~~~~
+
+``sparse_mm(A, B, *, assume_unique=False)`` requires a coalesced COO input
+when gradient recording is enabled and ``A.requires_grad`` is true. Otherwise,
+uncoalesced inputs are accepted, including for inference and B-only gradients
+when ``A.requires_grad`` is false.
+This check is disabled under ``torch.no_grad()`` and ``torch.inference_mode()``.
+Inference mode takes precedence even with ``torch.enable_grad()`` nested inside it.
+
+To satisfy the COO input requirement, call ``A.coalesce()`` first, or pass
+``assume_unique=True`` only when coordinates are known to be unique.
+
+Pass ``A.coalesce()`` explicitly when A contains duplicate coordinates. To train
+the original values independently, keep them as the leaf parameter:
+
+.. code-block:: python
+
+   values = torch.tensor([2., 3.], requires_grad=True)
+   indices = torch.tensor([[0, 0], [0, 0]])
+   A = torch.sparse_coo_tensor(indices, values, (1, 1)).coalesce()
+   sparse_mm(A, torch.tensor([[4.]])).sum().backward()
+   # values.grad is tensor([4., 4.])
+
+Rebuild A from trainable values for each new training step. For a frozen operator,
+coalesce once and reuse it. If coordinates are already unique but unsorted,
+``assume_unique=True`` skips the check. This is an unchecked promise: duplicates
+can give incorrect A gradients. CSR inputs do not need this option.
+
+The returned A gradient preserves the stored indices, entry count and order of
+the actual input to ``sparse_mm``, including for batched COO. This does not promise
+to preserve duplicates in an earlier tensor that was coalesced before the call.
+Neither option modifies the input. Native kernels may still sort internally.
+For COO batches with more than one item, block-diagonal assembly coalesces
+extracted items that are not flagged as coalesced. Extracted items may lose that
+flag, so pre-coalescing a batch may not avoid further per-item coalescing.
 
 Batched Operations
 ~~~~~~~~~~~~~~~~~~
@@ -51,7 +88,7 @@ torchsparsegradutils supports batched operations, for sparse_mm and triangular_s
    # Method 1: Stack individual sparse matrices
    A1 = torch.sparse_coo_tensor([[0, 1], [0, 1]], [1., 2.], (2, 2))
    A2 = torch.sparse_coo_tensor([[0, 1], [1, 0]], [3., 4.], (2, 2))
-   A_batch = torch.stack([A1, A2])  # Shape: (2, 2, 2)
+   A_batch = torch.stack([A1, A2]).coalesce()  # Shape: (2, 2, 2)
 
    # Dense batch
    B = torch.randn(batch_size, 2, 3)

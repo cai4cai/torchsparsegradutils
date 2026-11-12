@@ -573,3 +573,47 @@ def test_native_unbatched_requirement():
 
     with pytest.raises(ValueError, match="scale_tril must be two-dimensional"):
         SparseMultivariateNormalNative(loc, batched_scale_tril)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("sample_shape", [(), (1,), (4,)])
+def test_native_rsample_operand_layout_and_dense_gradients(device, sample_shape, monkeypatch):
+    """Real generated noise never supplies a strided single column to native mm."""
+    import importlib
+
+    module = importlib.import_module("torchsparsegradutils.distributions.sparse_multivariate_normal")
+    factor = torch.tensor([[2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [4.0, 2.0, 5.0]], device=device, dtype=torch.float64)
+    sparse_factor = factor.to_sparse_csr().requires_grad_()
+    dense_factor = factor.clone().requires_grad_()
+    loc = torch.zeros(3, device=device, dtype=factor.dtype, requires_grad=True)
+    dense_loc = loc.detach().clone().requires_grad_()
+    standard_normal = module._standard_normal
+    generated_noise = []
+
+    def record_noise(shape, dtype, device):
+        noise = standard_normal(shape, dtype=dtype, device=device)
+        generated_noise.append(noise)
+        return noise
+
+    monkeypatch.setattr(module, "_standard_normal", record_noise)
+    native_mm = torch.sparse.mm
+    operands = []
+
+    def record_mm(a, b):
+        operands.append(b)
+        return native_mm(a, b)
+
+    monkeypatch.setattr(torch.sparse, "mm", record_mm)
+    actual = SparseMultivariateNormalNative(loc, sparse_factor).rsample(torch.Size(sample_shape))
+    assert len(generated_noise) == len(operands) == 1
+    noise = generated_noise[0]
+    # A future noise-layout change must not expose the legacy CUDA CSR stride bug.
+    assert not (operands[0].size(-1) == 1 and not operands[0].is_contiguous())
+    assert operands[0].data_ptr() == noise.data_ptr()
+    expected = dense_loc + noise @ dense_factor.t()
+    weight = torch.arange(1, actual.numel() + 1, device=device, dtype=factor.dtype).reshape(actual.shape)
+    ga, gl = torch.autograd.grad(actual, (sparse_factor, loc), weight)
+    expected_a, expected_l = torch.autograd.grad(expected, (dense_factor, dense_loc), weight)
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(ga.to_dense(), expected_a * (factor != 0))
+    torch.testing.assert_close(gl, expected_l)

@@ -247,7 +247,7 @@ def cov_nagao_test(
 
     .. math::
 
-        T_N = \frac{n}{2} \cdot \left\|\mathbf{W} - \mathbf{I}\right\|_F^2
+        T_N = \frac{n-1}{2} \cdot \left\|\mathbf{W} - \mathbf{I}\right\|_F^2
 
     Where :math:`\|\cdot\|_F` is the Frobenius norm.
 
@@ -269,12 +269,14 @@ def cov_nagao_test(
     Parameters
     ----------
     emp_cov : torch.Tensor, shape (B, p, p)
-        Empirical (sample) covariance matrix where B is the batch size and p
-        is the dimension.
+        Unbiased sample covariance after subtracting the sample mean, with
+        normalization by ``n - 1`` (as in ``torch.cov`` with ``correction=1``).
+        B is the batch size and p is the dimension.
     ref_cov : torch.Tensor, shape (B, p, p)
         Reference (hypothesized) covariance matrix.
     n : int
-        Sample size used to compute the empirical covariance matrix.
+        Number of observations used to compute the empirical covariance matrix
+        (at least 2), not the residual degrees of freedom.
     confidence_level : float, default=0.95
         Confidence level for the region. Higher values create larger regions
         (easier to pass). Must be in (0, 1).
@@ -291,6 +293,19 @@ def cov_nagao_test(
 
     Notes
     -----
+    The statistic uses ``(n - 1) / 2`` because estimating the sample mean
+    leaves ``n - 1`` residual degrees of freedom. This matches Nagao's original
+    statistic for the unbiased sample covariance: page 702, equation (3.3)
+    of [1d]_, where the paper's ``n`` denotes the number of observations minus
+    one. Here the argument ``n`` denotes the number of observations itself.
+    A sample-mean-centred covariance normalized by ``n`` (``correction=0``)
+    must first be multiplied by ``n / (n - 1)``. Covariances centred on a
+    known population mean are outside this convention.
+
+    The chi-square threshold is an asymptotic approximation, not an exact
+    finite-sample calibration. With small samples relative to the dimension,
+    true covariances may be rejected more often than ``1 - confidence_level``.
+
     This test is often more stable than raw Frobenius norm tests when
     the reference covariance :math:`\boldsymbol{\Sigma}_0` is ill-conditioned.
 
@@ -344,6 +359,9 @@ def cov_nagao_test(
     >>> print(f"T_N statistic: {t_n_stat.item():.3f}, threshold: {threshold:.3f}")
     T_N statistic: ..., threshold: ...
     """
+    if n < 2:
+        raise ValueError("n must be at least 2 observations for an unbiased sample covariance")
+
     B, p, _ = emp_cov.shape
 
     # Compute L such that Σ₀ = L·Lᵀ
@@ -359,8 +377,8 @@ def cov_nagao_test(
     diff = W - torch.eye(p, device=emp_cov.device, dtype=emp_cov.dtype)
     # diff = Σ₀^{-½} Σ̂ Σ₀^{-½} − I
 
-    # T_N = (n/2) * ||diff||_F^2
-    T_N = (n / 2.0) * (diff * diff).sum(dim=(-2, -1))  # Frobenius norm squared
+    # T_N = ((n - 1)/2) * ||diff||_F^2
+    T_N = ((n - 1) / 2.0) * (diff * diff).sum(dim=(-2, -1))  # Frobenius norm squared
 
     # Degrees of freedom ν = ½ p(p+1)
     nu = 0.5 * p * (p + 1)
