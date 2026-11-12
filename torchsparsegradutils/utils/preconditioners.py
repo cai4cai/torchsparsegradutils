@@ -142,6 +142,8 @@ class MatrixPreconditioner(Preconditioner):
     M_inv : torch.Tensor, sparse COO or CSR of shape ``(n, n)``, or dense (strided) of shape ``(*batch, n, n)``
         Matrix approximating :math:`\mathbf{A}^{-1}`. A batched dense matrix is broadcast against the input as
         :func:`torch.matmul` does. It is not detached: see the module notes on gradients.
+        A COO matrix requiring gradients must be explicitly coalesced before application,
+        following the :func:`~torchsparsegradutils.sparse_mm` contract.
     symmetric : bool, default=False
         Declare :math:`\mathbf{M}^{-1}` symmetric, so :meth:`transpose` returns ``self`` instead of a transposed
         copy. Not checked.
@@ -185,4 +187,8 @@ class MatrixPreconditioner(Preconditioner):
             M_inv_t = self.M_inv.transpose(0, 1).to_sparse_csr()
         else:
             M_inv_t = self.M_inv.transpose(-2, -1)
+            if M_inv_t.layout == torch.sparse_coo:
+                # Transposition clears the coalesced flag. Restore the contract
+                # required by sparse_mm when differentiating this preconditioner.
+                M_inv_t = M_inv_t.coalesce()
         return MatrixPreconditioner(M_inv_t)

@@ -207,13 +207,17 @@ def test_matrix_preconditioner_rejects_invalid_shapes():
 
 
 @pytest.mark.parametrize("layout", [torch.sparse_coo, torch.sparse_csr], ids=["coo", "csr"])
-def test_matrix_preconditioner_sparse_gradient(device, layout):
+@pytest.mark.parametrize("transpose", [False, True])
+def test_matrix_preconditioner_sparse_gradient(device, layout, transpose):
     M_dense = torch.tensor([[2.0, 1.0, 0.0], [0.0, 3.0, 0.0], [1.0, 0.0, 4.0]], dtype=torch.float64, device=device)
     M = _to_layout(M_dense, layout).requires_grad_(True)
     X = torch.randn(2, 3, 2, dtype=torch.float64, device=device)
-    MatrixPreconditioner(M)(X).sum().backward()
+    P = MatrixPreconditioner(M)
+    (P.T if transpose else P)(X).sum().backward()
     assert M.grad.layout == layout
     expected = (torch.ones_like(X) @ X.mT).sum(0)
+    if transpose:
+        expected = expected.T
     torch.testing.assert_close(M.grad.to_dense()[M_dense != 0], expected[M_dense != 0])
 
 
