@@ -485,3 +485,27 @@ def test_generic_symmetric_solve_reuses_plain_callable_for_backward(device):
     B_ref = B.detach().clone().requires_grad_(True)
     torch.linalg.solve(A_dense, B_ref).sum().backward()
     torch.testing.assert_close(B.grad, B_ref.grad, rtol=1e-6, atol=1e-6)
+
+
+def test_generic_solve_only_transposes_A_for_a_transpose_preconditioner_class(device, monkeypatch):
+    import torchsparsegradutils.sparse_solve as sparse_solve_module
+
+    calls = []
+    original = sparse_solve_module._transpose
+
+    def counting_transpose(A):
+        calls.append(A.shape)
+        return original(A)
+
+    monkeypatch.setattr(sparse_solve_module, "_transpose", counting_transpose)
+    A = _badly_scaled_spd(8, device).to_sparse_csr().requires_grad_(True)
+    B = torch.randn(8, 2, dtype=torch.float64, device=device, requires_grad=True)
+
+    # Both solvers given and an instance preconditioner: nothing needs A.T, in the forward or the backward pass
+    X = sparse_generic_solve(A, B, solve=linear_cg, transpose_solve=linear_cg, preconditioner=JacobiPreconditioner(A))
+    X.sum().backward()
+    assert calls == []
+
+    # A class given as transpose_preconditioner is built from A.T
+    sparse_generic_solve(A.detach(), B.detach(), solve=linear_cg, transpose_preconditioner=JacobiPreconditioner)
+    assert len(calls) == 1

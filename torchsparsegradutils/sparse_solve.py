@@ -277,12 +277,15 @@ def _transpose(A: torch.Tensor) -> torch.Tensor:
     return A.T
 
 
-def _as_preconditioner(preconditioner, A: torch.Tensor):
-    """Build a Preconditioner subclass from ``A`` and wrap a matrix; pass other callables through."""
+def _as_preconditioner(preconditioner, matrix: Callable[[], torch.Tensor]):
+    """Build a Preconditioner subclass from ``matrix()`` and wrap a tensor; pass other callables through.
+
+    ``matrix`` is only called for a class, so that e.g. a transposed copy of A is only made when needed.
+    """
     if isinstance(preconditioner, type):
         if not issubclass(preconditioner, Preconditioner):
             raise TypeError(f"preconditioner class must be a Preconditioner subclass, got {preconditioner.__name__}")
-        return cast(Callable[[torch.Tensor], Preconditioner], preconditioner)(A.detach())
+        return cast(Callable[[torch.Tensor], Preconditioner], preconditioner)(matrix().detach())
     if isinstance(preconditioner, torch.Tensor):
         return MatrixPreconditioner(preconditioner)
     if not callable(preconditioner):
@@ -309,9 +312,9 @@ def _transpose_preconditioner(preconditioner, name: str, missing: str):
 def _resolve_preconditioners(A, preconditioner, transpose_preconditioner, need_transpose):
     """Return the (forward, transpose) preconditioner pair, deriving a missing member by transposition."""
     if preconditioner is not None:
-        preconditioner = _as_preconditioner(preconditioner, A)
+        preconditioner = _as_preconditioner(preconditioner, lambda: A)
     if transpose_preconditioner is not None:
-        transpose_preconditioner = _as_preconditioner(transpose_preconditioner, _transpose(A))
+        transpose_preconditioner = _as_preconditioner(transpose_preconditioner, lambda: _transpose(A))
     if preconditioner is None and transpose_preconditioner is not None:
         preconditioner = _transpose_preconditioner(
             transpose_preconditioner, "transpose_preconditioner", "preconditioner"
@@ -603,7 +606,7 @@ def sparse_generic_symmetric_solve(
     if solve is None:
         solve = minres
     if preconditioner is not None:
-        preconditioner = _as_preconditioner(preconditioner, A)
+        preconditioner = _as_preconditioner(preconditioner, lambda: A)
         if (
             solve in (minres, linear_cg)
             and isinstance(preconditioner, Preconditioner)
