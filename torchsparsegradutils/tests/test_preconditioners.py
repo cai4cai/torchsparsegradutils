@@ -286,7 +286,14 @@ def test_solvers_accept_tensor_preconditioner(device, solver):
     A = _badly_scaled_spd(8, device)
     b = torch.randn(8, 1, dtype=torch.float64, device=device)
     M_inv = torch.diag(1.0 / torch.diagonal(A))
-    x = solver(A, b, preconditioner=M_inv)
+    # Request sufficient solve accuracy for the dense-reference assertion.
+    if solver in (linear_cg, minres):
+        kwargs = {"tolerance": 1e-10}
+    elif solver is gmres:
+        kwargs = {"settings": GMRESSettings(rtol=1e-10)}
+    else:
+        kwargs = {"settings": BICGSTABSettings(reltol=1e-10, abstol=0.0)}
+    x = solver(A, b, preconditioner=M_inv, **kwargs)
     torch.testing.assert_close(x, torch.linalg.solve(A, b), rtol=1e-5, atol=1e-5)
 
 
@@ -296,7 +303,8 @@ def test_solvers_accept_sparse_tensor_preconditioner_with_batched_rhs(device, so
     A = _badly_scaled_spd(8, device)
     B = torch.randn(3, 8, 2, dtype=torch.float64, device=device)
     M_inv = _to_layout(torch.diag(1.0 / torch.diagonal(A)), layout)
-    X = solver(A, B, preconditioner=M_inv)
+    kwargs = {"settings": GMRESSettings(rtol=1e-10)} if solver is gmres else {"tolerance": 1e-10}
+    X = solver(A, B, preconditioner=M_inv, **kwargs)
     torch.testing.assert_close(X, torch.linalg.solve(A, B), rtol=1e-5, atol=1e-5)
 
 
