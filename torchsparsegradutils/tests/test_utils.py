@@ -283,3 +283,57 @@ def test_sparse_eye(shapes, layout, values_dtype, indices_dtype, device):
     if len(size) == 2:
         expected = torch.eye(size[-1], dtype=values_dtype, device=device)
         assert torch.equal(Id.to_dense(), expected)
+
+
+@pytest.mark.parametrize("empty_shape", [(0, 3), (2, 0), (2, 3)])
+def test_sparse_block_diag_coalesced_contract(device, empty_shape):
+    indices = torch.tensor([[1, 0, 0, 1, 1], [2, 0, 0, 1, 2]], device=device)
+    values = torch.tensor([1.0, 2.0, 3.0, 4.0, -1.0], device=device, requires_grad=True)
+    a = torch.sparse_coo_tensor(indices, values, (2, 3))
+    empty = torch.sparse_coo_tensor(
+        torch.empty((2, 0), dtype=torch.long, device=device), torch.empty(0, device=device), empty_shape
+    )
+    # The single-input shortcut is intentionally identity-preserving, even with duplicates.
+    assert sparse_block_diag(a) is a
+    assert not a.is_coalesced()
+    # Check the advertised sorted/unique invariant, including zero-size blocks and stored zeros.
+    with torch.sparse.check_sparse_tensor_invariants():
+        actual = sparse_block_diag(empty, a, empty, a)
+    assert actual.is_coalesced()
+    assert actual._nnz() == 6
+    assert (actual.values() == 0).sum().item() == 2
+    expected = torch.block_diag(empty.to_dense(), a.to_dense(), empty.to_dense(), a.to_dense())
+    torch.testing.assert_close(actual.to_dense(), expected)
+    # Unequal coordinate weights expose gradients routed to the wrong values.
+    weights = torch.arange(1, expected.numel() + 1, dtype=expected.dtype, device=device).reshape(expected.shape)
+    weighted_actual = (actual.values() * weights[tuple(actual.indices())]).sum()
+    actual_grad = torch.autograd.grad(weighted_actual, values, retain_graph=True)[0]
+    expected_grad = torch.autograd.grad((expected * weights).sum(), values)[0]
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
+def test_sparse_block_diag_skips_coalescing_flagged_blocks(device, monkeypatch):
+    a = torch.sparse_coo_tensor(
+        torch.tensor([[0, 1], [2, 0]], device=device),
+        torch.tensor([2.0, 3.0], device=device),
+        (2, 3),
+    ).coalesce()
+    b = torch.sparse_coo_tensor(
+        torch.tensor([[0, 2], [1, 0]], device=device),
+        torch.tensor([4.0, 5.0], device=device),
+        (3, 2),
+    ).coalesce()
+    expected = torch.block_diag(a.to_dense(), b.to_dense())
+
+    def unexpected_coalesce(self):
+        pytest.fail("Already-coalesced blocks must not be coalesced again")
+
+    # Test the helper's contract without depending on PyTorch's batch-slice flags.
+    with monkeypatch.context() as patch, torch.sparse.check_sparse_tensor_invariants():
+        patch.setattr(torch.Tensor, "coalesce", unexpected_coalesce)
+        actual = sparse_block_diag(a, b)
+
+    assert actual.is_coalesced()
+    assert actual._nnz() == 4
+    torch.testing.assert_close(actual.indices(), torch.tensor([[0, 1, 2, 4], [2, 0, 4, 3]], device=device))
+    torch.testing.assert_close(actual.to_dense(), expected)

@@ -93,7 +93,7 @@ Quick Start
    # Create sparse matrix
    indices = torch.tensor([[0, 1, 1], [2, 0, 2]])
    values = torch.tensor([3., 4., 5.])
-   A = torch.sparse_coo_tensor(indices, values, (2, 3))
+   A = torch.sparse_coo_tensor(indices, values, (2, 3)).coalesce()
 
    # Dense matrix
    B = torch.randn(3, 4)

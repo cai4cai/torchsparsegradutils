@@ -167,21 +167,28 @@ BAD_TEST_DATA = [
         torch.tensor([0, 1]).to_sparse(),
         torch.rand(6, 2),
         ValueError,
-        "Both A and B should be at least 2-dimensional tensors",
+        "A should be a 2D or batched 3D tensor",
     ),
     (
         "bad_dim_B",
         torch.rand(4, 6).to_sparse(),
-        torch.rand(6),
+        torch.tensor(1.0),
         ValueError,
-        "Both A and B should be at least 2-dimensional tensors",
+        "B should be at least 1-dimensional",
     ),
     (
         "bad_dim_mismatch",
-        torch.rand(4, 6).to_sparse(),
-        torch.rand(1, 6, 2),
+        torch.stack([torch.rand(4, 6).to_sparse()]),
+        torch.rand(6, 2),
         ValueError,
-        "A and B must both be 2D or both be 3D tensors",
+        "If A is batched (3D), B must be 3D",
+    ),
+    (
+        "bad_inner_vector",
+        torch.rand(4, 6).to_sparse(),
+        torch.rand(4),
+        ValueError,
+        "Incompatible inner dimensions: A[..., 6] vs B[..., 4]",
     ),
     (
         "bad_format",
@@ -210,6 +217,39 @@ def test_sparse_mm_error(bad_inputs):
     with pytest.raises(expected_error) as e:
         sparse_mm(A, B)
     assert str(e.value) == error_msg
+
+
+@pytest.mark.parametrize("B_shape", [(6,), (3, 6, 2), (2, 3, 6, 2)], ids=["vector", "batch", "batch2"])
+def test_sparse_mm_broadcasts_unbatched_A(layout, device, value_dtype, B_shape):
+    A_dense = torch.randn(4, 6, dtype=value_dtype, device=device)
+    A_dense[A_dense.abs() < 0.5] = 0
+    A = (A_dense.to_sparse_csr() if layout == torch.sparse_csr else A_dense.to_sparse_coo()).requires_grad_(True)
+    B = torch.randn(B_shape, dtype=value_dtype, device=device, requires_grad=True)
+    A_ref = A_dense.clone().requires_grad_(True)
+    B_ref = B.detach().clone().requires_grad_(True)
+
+    C = sparse_mm(A, B)
+    C_ref = A_ref @ B_ref
+    atol, rtol = Tolerances.direct(value_dtype)
+    torch.testing.assert_close(C, C_ref, atol=atol, rtol=rtol)
+
+    G = torch.randn_like(C)
+    C.backward(G)
+    C_ref.backward(G)
+    torch.testing.assert_close(B.grad, B_ref.grad, atol=atol, rtol=rtol)
+    assert A.grad.layout == layout
+    mask = A_dense != 0
+    torch.testing.assert_close(A.grad.to_dense()[mask], A_ref.grad[mask], atol=atol, rtol=rtol)
+
+
+@pytest.mark.parametrize(
+    "B_shape", [(0,), (0, 2), (4, 0, 2), (2, 4, 0, 2)], ids=["vector", "matrix", "batch", "batch2"]
+)
+def test_sparse_mm_zero_inner_dimension(layout, B_shape):
+    A_dense = torch.zeros(3, 0, dtype=torch.float64)
+    A = A_dense.to_sparse_csr() if layout == torch.sparse_csr else A_dense.to_sparse_coo()
+    B = torch.zeros(B_shape, dtype=torch.float64)
+    torch.testing.assert_close(sparse_mm(A, B), A_dense @ B)
 
 
 ################################## Memory Usage Tests: #####################################
@@ -387,3 +427,179 @@ def test_torch_sparse_mm_errors_on_batched(layout, device, value_dtype, index_dt
     # native torch.sparse.mm should error on batched inputs
     with pytest.raises(RuntimeError):
         torch.sparse.mm(A, B)
+
+
+@pytest.mark.parametrize("batch_size", [None, 1, 2])
+def test_sparse_mm_duplicate_coo_value_gradients(device, batch_size):
+    # Unsorted duplicates include a coordinate whose values cancel to zero.
+    indices = torch.tensor([[1, 0, 0, 1, 1], [2, 0, 0, 1, 2]], device=device)
+    values = torch.tensor([1.0, 2.0, 3.0, 4.0, -1.0], dtype=torch.float64, device=device)
+    shape = (2, 3)
+    if batch_size is not None:
+        indices = torch.cat(
+            [torch.stack([torch.full_like(indices[0], batch), *indices]) for batch in range(batch_size)], dim=1
+        )
+        values = torch.cat([(batch + 1) * values for batch in range(batch_size)])
+        shape = (batch_size, *shape)
+    values.requires_grad_()
+    reference_values = values.detach().clone().requires_grad_()
+    A = torch.sparse_coo_tensor(indices, values, shape)
+    reference_A = torch.zeros(shape, dtype=values.dtype, device=device).index_put(
+        tuple(indices), reference_values, accumulate=True
+    )
+    B = torch.arange(1, 7, dtype=values.dtype, device=device).reshape(3, 2)
+    if batch_size is not None:
+        B = torch.stack([B + batch for batch in range(batch_size)])
+    B.requires_grad_()
+    reference_B = B.detach().clone().requires_grad_()
+
+    actual = sparse_mm(A.coalesce(), B)
+    expected = reference_A @ reference_B
+    upstream = torch.arange(1, actual.numel() + 1, dtype=values.dtype, device=device).reshape(actual.shape)
+    actual_grads = torch.autograd.grad(actual, (values, B), upstream)
+    expected_grads = torch.autograd.grad(expected, (reference_values, reference_B), upstream)
+
+    torch.testing.assert_close(actual, expected)
+    for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(actual_grad, expected_grad)
+    # Canonicalization must not mutate the user's sparse tensor or lose zero-coordinate gradients.
+    assert not A.is_coalesced()
+    torch.testing.assert_close(A._indices(), indices)
+    torch.testing.assert_close(A._values(), values.detach())
+    assert torch.all(actual_grads[0] != 0)
+
+
+@pytest.mark.parametrize("matrix_grad,rhs_grad", [(False, False), (False, True), (True, False), (True, True)])
+@pytest.mark.parametrize("batch_size", [None, 1, 2])
+def test_duplicate_coo_leaf_gradient_modes(device, batch_size, matrix_grad, rhs_grad):
+    indices = torch.tensor([[1, 0, 0, 1, 1], [2, 0, 0, 1, 2]], device=device)
+    values = torch.tensor([1.0, 2.0, 3.0, 4.0, -1.0], dtype=torch.float64, device=device)
+    a = torch.sparse_coo_tensor(indices, values, (2, 3))
+    if batch_size is not None:
+        a = torch.stack([a] * batch_size)
+    a = a.detach().requires_grad_(matrix_grad)
+    dense_a = a.to_dense().detach().requires_grad_(matrix_grad)
+    b = torch.arange(1, 7, device=device, dtype=values.dtype).reshape(3, 2)
+    if batch_size is not None:
+        b = torch.stack([b + batch for batch in range(batch_size)])
+    b.requires_grad_(rhs_grad)
+    dense_b = b.detach().clone().requires_grad_(rhs_grad)
+    actual, expected = sparse_mm(a.coalesce() if matrix_grad else a, b), dense_a @ dense_b
+    torch.testing.assert_close(actual, expected)
+    assert not a.is_coalesced()
+    if not (matrix_grad or rhs_grad):
+        assert not actual.requires_grad
+        return
+    inputs = tuple(x for x in (a, b) if x.requires_grad)
+    reference_inputs = tuple(x for x in (dense_a, dense_b) if x.requires_grad)
+    actual_grads = torch.autograd.grad(actual.sum(), inputs)
+    reference_grads = torch.autograd.grad(expected.sum(), reference_inputs)
+    for tensor, actual_grad, reference_grad in zip(inputs, actual_grads, reference_grads):
+        if tensor is a:
+            mask = torch.tensor([[True, False, False], [False, True, True]], device=device)
+            torch.testing.assert_close(actual_grad.to_dense(), reference_grad * mask)
+            if batch_size is None:
+                assert actual_grad.is_coalesced()
+        else:
+            torch.testing.assert_close(actual_grad, reference_grad)
+
+
+@pytest.mark.parametrize("batch_size", [None, 1, 2])
+def test_coalesced_coo_forward_independent_of_requires_grad(device, batch_size):
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    indices = torch.randint(500, (2, 20000), generator=generator)
+    values = torch.randn(20000, generator=generator)
+    a = torch.sparse_coo_tensor(indices, values, (500, 500)).to(device)
+    b = torch.randn(500, 4, generator=generator).to(device)
+    if batch_size is not None:
+        a = torch.stack([a] * batch_size)
+        b = torch.stack([b] * batch_size)
+    a = a.coalesce()
+    frozen = sparse_mm(a, b)
+    trainable = sparse_mm(a.detach().requires_grad_(), b)
+    with torch.no_grad():
+        inference = sparse_mm(a.detach().requires_grad_(), b)
+    # CPU is bitwise reproducible; repeated CUDA COO reductions can differ in rounding.
+    # The CPU cases detect grad-dependent preparation; CUDA tolerance can hide it.
+    tolerance = 0 if device.type == "cpu" else 1e-5
+    torch.testing.assert_close(trainable, frozen, rtol=tolerance, atol=tolerance)
+    torch.testing.assert_close(inference, frozen, rtol=tolerance, atol=tolerance)
+    torch.testing.assert_close(frozen, a.to_dense() @ b, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("batch_size", [None, 1])
+@pytest.mark.parametrize("mode", ["inference", "rhs_gradient", "no_grad"])
+def test_duplicate_coo_cpu_without_sparse_gradient_avoids_coalescing(batch_size, mode, monkeypatch):
+    device = torch.device("cpu")
+    indices = torch.tensor([[1, 0, 0, 1, 1], [2, 0, 0, 1, 2]], device=device)
+    values = torch.tensor([1.0, 2.0, 3.0, 4.0, -1.0], dtype=torch.float64, device=device)
+    a = torch.sparse_coo_tensor(indices, values, (2, 3))
+    b = torch.arange(1, 7, dtype=values.dtype, device=device).reshape(3, 2)
+    if batch_size is not None:
+        a, b = torch.stack([a]), torch.stack([b])
+    a.requires_grad_(mode == "no_grad")
+    b.requires_grad_(mode == "rhs_gradient")
+    reference_a = a.to_dense().detach()
+    reference_b = b.detach().clone().requires_grad_(mode == "rhs_gradient")
+    expected = reference_a @ reference_b
+
+    def unexpected_coalesce(*args, **kwargs):
+        pytest.fail("No explicit COO coalescing is needed without a sparse-input gradient")
+
+    # Guard the extra sorting introduced by the wrapper, independently of timing noise.
+    monkeypatch.setattr(torch.Tensor, "coalesce", unexpected_coalesce)
+    if mode == "no_grad":
+        with torch.no_grad():
+            actual = sparse_mm(a, b)
+    else:
+        actual = sparse_mm(a, b)
+    torch.testing.assert_close(actual, expected)
+    if mode == "rhs_gradient":
+        actual_grad = torch.autograd.grad(actual.sum(), b)[0]
+        expected_grad = torch.autograd.grad(expected.sum(), reference_b)[0]
+        torch.testing.assert_close(actual_grad, expected_grad)
+    else:
+        assert actual.grad_fn is None
+
+
+@pytest.mark.parametrize("shape", [(3,), (2, 3, 2), (2, 1, 3, 2)])
+def test_broadcast_coo_uniqueness_contract(device, shape):
+    indices = torch.tensor([[1, 0, 1], [2, 0, 1]], device=device)
+    values = torch.tensor([2.0, 3.0, 0.0], dtype=torch.float64, device=device)
+    A = torch.sparse_coo_tensor(indices, values, (2, 3), requires_grad=True)
+    B = torch.arange(1, 1 + torch.Size(shape).numel(), dtype=values.dtype, device=device).reshape(shape)
+    B.requires_grad_()
+    with pytest.raises(ValueError, match="Uncoalesced COO"):
+        sparse_mm(A, B)
+    with pytest.raises(ValueError, match="must be a bool"):
+        sparse_mm(A, B, assume_unique="yes")
+    actual = sparse_mm(A, B, assume_unique=True)
+    dense_A = A.to_dense().detach().requires_grad_()
+    dense_B = B.detach().clone().requires_grad_()
+    expected = dense_A @ dense_B
+    torch.testing.assert_close(actual, expected)
+    grad_A, grad_B = torch.autograd.grad(actual.sum(), (A, B))
+    ref_A, ref_B = torch.autograd.grad(expected.sum(), (dense_A, dense_B))
+    torch.testing.assert_close(grad_A._indices(), indices)
+    torch.testing.assert_close(grad_A._values(), ref_A[indices[0], indices[1]])
+    torch.testing.assert_close(grad_B, ref_B)
+
+
+@pytest.mark.parametrize("shape", [(3,), (2, 3, 2), (2, 1, 3, 2)])
+@pytest.mark.parametrize("mode", ["no_grad", "inference", "inference_enable_grad"])
+def test_broadcast_duplicate_coo_without_grad(device, shape, mode):
+    indices = torch.tensor([[1, 0, 0], [2, 0, 0]], device=device)
+    values = torch.tensor([2.0, 3.0, 4.0], dtype=torch.float64, device=device)
+    A = torch.sparse_coo_tensor(indices, values, (2, 3), requires_grad=True)
+    B = torch.ones(shape, dtype=values.dtype, device=device, requires_grad=True)
+    expected = A.to_dense().detach() @ B.detach()
+    context = torch.no_grad if mode == "no_grad" else torch.inference_mode
+    with context():
+        if mode == "inference_enable_grad":
+            with torch.enable_grad():
+                actual = sparse_mm(A, B)
+        else:
+            actual = sparse_mm(A, B)
+    torch.testing.assert_close(actual, expected)
+    assert not actual.requires_grad
+    assert actual.grad_fn is None

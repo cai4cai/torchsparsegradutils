@@ -4,12 +4,14 @@ from .gmres import GMRESInfo, GMRESSettings, gmres
 from .linear_cg import CGInfo, LinearCGSettings, linear_cg
 from .lsmr import lsmr
 from .minres import MINRESInfo, MINRESSettings, minres
+from .preconditioners import JacobiPreconditioner, MatrixPreconditioner, Preconditioner
 from .random_sparse import rand_sparse, rand_sparse_tri
 from .utils import (
     convert_coo_to_csr,
     convert_coo_to_csr_indices_values,
     sparse_block_diag,
     sparse_block_diag_split,
+    sparse_diagonal,
     sparse_eye,
     stack_csr,
 )
@@ -27,6 +29,9 @@ __all__ = [
     "GMRESSettings",
     "GMRESInfo",
     "lsmr",
+    "Preconditioner",
+    "JacobiPreconditioner",
+    "MatrixPreconditioner",
     "convert_coo_to_csr_indices_values",
     "convert_coo_to_csr",
     "sparse_block_diag",
@@ -35,6 +40,7 @@ __all__ = [
     "sparse_block_diag_split",
     "stack_csr",
     "sparse_eye",
+    "sparse_diagonal",
     "mean_hotelling_t2_test",
     "cov_nagao_test",
 ]

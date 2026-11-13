@@ -33,6 +33,14 @@ Iterative Solvers
    :undoc-members:
    :show-inheritance:
 
+Preconditioners
+---------------
+
+.. automodule:: torchsparsegradutils.utils.preconditioners
+   :members:
+   :special-members: __call__
+   :show-inheritance:
+
 Sparse Utilities
 -----------------
 
