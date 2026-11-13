@@ -560,3 +560,46 @@ def test_duplicate_coo_cpu_without_sparse_gradient_avoids_coalescing(batch_size,
         torch.testing.assert_close(actual_grad, expected_grad)
     else:
         assert actual.grad_fn is None
+
+
+@pytest.mark.parametrize("shape", [(3,), (2, 3, 2), (2, 1, 3, 2)])
+def test_broadcast_coo_uniqueness_contract(device, shape):
+    indices = torch.tensor([[1, 0, 1], [2, 0, 1]], device=device)
+    values = torch.tensor([2.0, 3.0, 0.0], dtype=torch.float64, device=device)
+    A = torch.sparse_coo_tensor(indices, values, (2, 3), requires_grad=True)
+    B = torch.arange(1, 1 + torch.Size(shape).numel(), dtype=values.dtype, device=device).reshape(shape)
+    B.requires_grad_()
+    with pytest.raises(ValueError, match="Uncoalesced COO"):
+        sparse_mm(A, B)
+    with pytest.raises(ValueError, match="must be a bool"):
+        sparse_mm(A, B, assume_unique="yes")
+    actual = sparse_mm(A, B, assume_unique=True)
+    dense_A = A.to_dense().detach().requires_grad_()
+    dense_B = B.detach().clone().requires_grad_()
+    expected = dense_A @ dense_B
+    torch.testing.assert_close(actual, expected)
+    grad_A, grad_B = torch.autograd.grad(actual.sum(), (A, B))
+    ref_A, ref_B = torch.autograd.grad(expected.sum(), (dense_A, dense_B))
+    torch.testing.assert_close(grad_A._indices(), indices)
+    torch.testing.assert_close(grad_A._values(), ref_A[indices[0], indices[1]])
+    torch.testing.assert_close(grad_B, ref_B)
+
+
+@pytest.mark.parametrize("shape", [(3,), (2, 3, 2), (2, 1, 3, 2)])
+@pytest.mark.parametrize("mode", ["no_grad", "inference", "inference_enable_grad"])
+def test_broadcast_duplicate_coo_without_grad(device, shape, mode):
+    indices = torch.tensor([[1, 0, 0], [2, 0, 0]], device=device)
+    values = torch.tensor([2.0, 3.0, 4.0], dtype=torch.float64, device=device)
+    A = torch.sparse_coo_tensor(indices, values, (2, 3), requires_grad=True)
+    B = torch.ones(shape, dtype=values.dtype, device=device, requires_grad=True)
+    expected = A.to_dense().detach() @ B.detach()
+    context = torch.no_grad if mode == "no_grad" else torch.inference_mode
+    with context():
+        if mode == "inference_enable_grad":
+            with torch.enable_grad():
+                actual = sparse_mm(A, B)
+        else:
+            actual = sparse_mm(A, B)
+    torch.testing.assert_close(actual, expected)
+    assert not actual.requires_grad
+    assert actual.grad_fn is None
